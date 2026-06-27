@@ -1,0 +1,9 @@
+{
+  "default": false,
+  "flow": "source",
+  "id": "kvm-abcdef:screen",
+  "label": "Captured screen",
+  "media": "display",
+  "node": "kvm-abcdef",
+  "origin": "screen"
+}

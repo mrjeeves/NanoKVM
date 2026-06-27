@@ -2,6 +2,12 @@
 
 set -e
 
+# Cross-compiles the NanoKVM server for RISC-V (CGO/libkvm enabled).
+#
+# Note: the native AllMyStuff mesh bridge (server/service/mesh) is pure Go and
+# builds CGO-free on any host — `go test ./service/mesh/...` runs on amd64. It's
+# compiled into this same binary; nothing extra is needed here.
+
 # Configuration Variables
 BINARY_NAME="NanoKVM-Server"
 CC_COMPILER="riscv64-unknown-linux-musl-gcc"

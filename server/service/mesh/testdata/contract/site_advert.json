@@ -1,0 +1,7 @@
+{
+  "id": "tcp:80",
+  "label": "KVM Web UI",
+  "loopback": false,
+  "port": 80,
+  "scheme": "http"
+}

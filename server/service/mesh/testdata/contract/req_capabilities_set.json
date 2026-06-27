@@ -1,0 +1,20 @@
+{
+  "capabilities": {
+    "app_version": "0.2.6",
+    "extra": {
+      "summary": {
+        "cpu": "SG2002 (T-Head C906)",
+        "device_count": 2,
+        "os": "linux",
+        "ram_bytes": 268435456
+      }
+    },
+    "tags": [
+      "allmystuff",
+      "kvm",
+      "sites"
+    ]
+  },
+  "network": "cec-backend-client-mesh",
+  "op": "capabilities_set"
+}

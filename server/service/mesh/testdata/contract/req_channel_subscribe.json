@@ -1,0 +1,6 @@
+{
+  "channel": "allmystuff/presence/v1",
+  "client_id": "c7",
+  "network": "cec-backend-client-mesh",
+  "op": "channel_subscribe"
+}

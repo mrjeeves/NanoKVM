@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -14,6 +15,32 @@ import (
 type Token struct {
 	Username string `json:"username"`
 	jwt.RegisteredClaims
+}
+
+// meshAuthKeyType is a private context-key type so the mesh-auth marker can't
+// collide with any other context value.
+type meshAuthKeyType struct{}
+
+// MeshAuthKey is the request-context key set on a request that arrived over the
+// AllMyStuff mesh "sites" tunnel. Mesh roster membership replaces the KVM login
+// for these requests, so the token check below treats them as authenticated.
+var MeshAuthKey = meshAuthKeyType{}
+
+// WithMeshAuth returns a copy of r whose context is marked mesh-authenticated.
+// The mesh site-tunnel HTTP handler wraps every tunneled request with this so
+// the in-process gin engine serves it without a login cookie, while ordinary
+// LAN/direct requests (which never pass through here) are unaffected.
+func WithMeshAuth(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), MeshAuthKey, true))
+}
+
+// isMeshAuthed reports whether r was marked mesh-authenticated by WithMeshAuth.
+func isMeshAuthed(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	v, ok := r.Context().Value(MeshAuthKey).(bool)
+	return ok && v
 }
 
 func CheckToken() gin.HandlerFunc {
@@ -53,6 +80,14 @@ func allowByToken(c *gin.Context) bool {
 	conf := config.GetInstance()
 
 	if conf.Authentication == "disable" {
+		return true
+	}
+
+	// A request tunneled in over the AllMyStuff mesh is authenticated by the
+	// mesh roster (the daemon proved the peer's identity before any byte
+	// reached us), so the KVM login is bypassed for it. Normal LAN/direct
+	// requests are never marked this way.
+	if isMeshAuthed(c.Request) {
 		return true
 	}
 

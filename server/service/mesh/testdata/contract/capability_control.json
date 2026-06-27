@@ -1,0 +1,9 @@
+{
+  "default": false,
+  "flow": "sink",
+  "id": "kvm-abcdef:control",
+  "label": "Keyboard & mouse",
+  "media": "input",
+  "node": "kvm-abcdef",
+  "origin": "control"
+}
