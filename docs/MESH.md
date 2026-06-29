@@ -84,32 +84,47 @@ mesh:
 
 ## Building & deploying
 
-Both device artifacts — the Go server (with the bridge) and the Rust
-`myownmesh` daemon — build inside the Docker builder image, which carries the Go
-compiler **and** `riscv64-unknown-linux-musl-gcc`. A dev box needs only Docker;
-no Go, Rust, or RISC-V toolchain on the host. The daemon is cross-compiled from a
-sibling MyOwnMesh checkout (override with `just mom=/path …`).
+NanoKVM builds **one** artifact — `server/NanoKVM-Server` (Go, with the bridge) —
+inside the Docker builder image, so a dev box needs only Docker. The MyOwnMesh
+**daemon is not built here**; the bridge connects to an existing `myownmesh
+serve` control socket (the same control-socket reuse AllMyStuff relies on), and
+the MyOwnMesh version this server targets is pinned in `.myownmesh-rev` (the same
+model AllMyStuff uses for the daemon it ships with).
 
 ```sh
-just setup-risc            # one-time: builder image + Rust toolchain (cached)
-just build-risc            # build server/NanoKVM-Server + kvmapp/system/bin/myownmesh
-just deploy <device-ip>    # scp both + the init script to a running device
+just setup-risc            # one-time: build the Docker builder image
+just build-risc            # build server/NanoKVM-Server   (alias: build-server)
+just deploy <device-ip>    # scp the server + init script to a device
 just reboot <device-ip>
-just verify <device-ip>    # daemon process + /data/myownmesh + /var/log/myownmesh.log
+just verify <device-ip>    # confirm a daemon is serving + its log
 just undeploy <device-ip>  # reversible: remove the init script + reboot
 ```
 
-`just build-server` / `just build-daemon` build either half alone; `make app`
-still builds the server the upstream way. The daemon's own cross-build lives in
-MyOwnMesh (`just build-risc` there); see MyOwnMesh `docs/NANOKVM.md`.
+### Testing against an existing daemon
+
+The bridge dials `$MYOWNMESH_HOME/daemon.sock` and reuses whatever `myownmesh
+serve` is already running — it never spawns or builds a daemon. To test:
+
+1. Run a `myownmesh` daemon you already have (built/installed the normal MyOwnMesh
+   way — **no cross-compile needed for a non-device daemon**): `myownmesh serve`.
+2. Point the bridge at it: set `mesh.home` in `server.yaml` (or `MYOWNMESH_HOME`)
+   to that daemon's home, so `<home>/daemon.sock` resolves to the running socket.
+3. Start `NanoKVM-Server`; the bridge connects, joins `cec-backend-client-mesh`,
+   and advertises the KVM. `just verify` shows the daemon side.
+
+On a device, the daemon is installed separately at `.myownmesh-rev` (build it
+with MyOwnMesh's `just build-risc`, or install a release ≥ that rev), and
+`S94myownmesh` starts it at boot.
 
 ## Packaging
 
 `kvmapp/system/init.d/S94myownmesh` starts the MyOwnMesh daemon with
 `MYOWNMESH_HOME=/data/myownmesh` **before** the NanoKVM server (`S95nanokvm`),
-following the same copy-to-`/tmp`-and-launch pattern. `just build-daemon` stages
-the daemon binary at `/kvmapp/system/bin/myownmesh` (matching `mesh.daemonBin`)
-so it ships in the image. The init script no-ops cleanly if the binary is absent.
+following the same copy-to-`/tmp`-and-launch pattern. The daemon binary is
+expected at `/kvmapp/system/bin/myownmesh` (matching `mesh.daemonBin`), installed
+separately at the `.myownmesh-rev` version — NanoKVM does not build or ship it.
+The init script no-ops cleanly if the binary is absent (the bridge then just
+keeps retrying the socket, so the device stays a normal KVM).
 
 ## Tests
 
