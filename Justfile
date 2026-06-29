@@ -1,20 +1,24 @@
-# NanoKVM — build & deploy the RISC-V server (with the native AllMyStuff bridge).
+# NanoKVM — build & deploy the RISC-V device with the native AllMyStuff bridge.
 #
-# NanoKVM builds ONE artifact: server/NanoKVM-Server (Go, incl. the mesh bridge),
-# inside the Docker builder image — so a dev box needs only Docker (no Go/Rust/
-# RISC-V toolchain on the host).
+# `just build-risc` produces a COMPLETE device build in one step:
+#   server/NanoKVM-Server         the Go server (with the mesh bridge)
+#   kvmapp/system/bin/myownmesh   the MyOwnMesh daemon, pinned in .myownmesh-rev
 #
-# The MyOwnMesh DAEMON is NOT built here. The bridge connects to an existing
-# `myownmesh serve` control socket at $MYOWNMESH_HOME/daemon.sock:
-#   * testing — point it at a daemon you already run (set `mesh.home` /
-#     MYOWNMESH_HOME to that daemon's home); the bridge reuses the socket.
-#   * device  — the daemon is installed separately at the MyOwnMesh version
-#     pinned in .myownmesh-rev (same model AllMyStuff uses), and the init
-#     script (kvmapp/system/init.d/S94myownmesh) starts it at boot.
+# The server builds inside the Docker builder image (Go + riscv64 musl
+# toolchain). The daemon is the version pinned in .myownmesh-rev: `build-risc`
+# downloads the published `myownmesh-linux-riscv64.tar.gz` release asset when one
+# exists (fast), or builds it from the pinned source in the same builder image
+# otherwise — either way you run ONE command. No sibling checkout.
+#
+# For local testing you don't need the daemon here at all: run a `myownmesh
+# serve` you already have and point the bridge at its control socket (set
+# mesh.home / MYOWNMESH_HOME) — see docs/MESH.md.
 
 set shell := ["bash", "-uc"]
 
 image := "nanokvm-builder"
+daemon_dst := "kvmapp/system/bin/myownmesh"
+mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
 
 default: help
 
@@ -25,36 +29,83 @@ help:
 setup-risc:
     @make builder-image
 
-# Build the NanoKVM server (Go, with the mesh bridge). Alias: build-server.
-build-risc:
+# Build a complete device image — the server AND the pinned daemon — in one step.
+build-risc: build-server daemon
+    @echo
+    @echo "Device build complete:"
+    @echo "  server/NanoKVM-Server"
+    @echo "  {{daemon_dst}}"
+    @echo "Deploy: just deploy <device-ip>"
+
+# Build just the NanoKVM server (Go, with the mesh bridge).
+build-server:
     @echo "==> building NanoKVM-Server…"
-    make app
+    @make app
     @test -f server/NanoKVM-Server && echo "OK -> server/NanoKVM-Server"
 
-alias build-server := build-risc
+# Obtain the daemon pinned in .myownmesh-rev and stage it at {{daemon_dst}}:
+# prefer the published release asset; fall back to building it from the pinned
+# source in the Docker builder if no release exists at that rev yet.
+daemon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rev="$(cat .myownmesh-rev)"
+    dst="{{daemon_dst}}"; mkdir -p "$(dirname "$dst")"
+    asset="myownmesh-linux-riscv64.tar.gz"
+    url="{{mom_repo}}/releases/download/${rev}/${asset}"
+    sha() { if command -v sha256sum >/dev/null; then sha256sum -c "$1"; else shasum -a 256 -c "$1"; fi; }
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    echo "==> daemon pinned at ${rev}"
+    if curl -fsSL "$url" -o "$tmp/$asset" && curl -fsSL "$url.sha256" -o "$tmp/$asset.sha256"; then
+      echo "    fetched the published release asset; verifying sha256…"
+      ( cd "$tmp" && sha "$asset.sha256" )
+      tar -xzf "$tmp/$asset" -C "$(dirname "$dst")"
+      chmod +x "$dst"
+      echo "OK (release ${rev}) -> $dst"
+    else
+      echo "    no published ${asset} at ${rev} yet — building it from the pinned source…"
+      src=".myownmesh-src"
+      [ -d "$src/.git" ] || git clone --filter=blob:none "{{mom_repo}}" "$src"
+      git -C "$src" fetch --tags --filter=blob:none origin
+      git -C "$src" checkout --quiet --detach "$rev"
+      src_abs="$(cd "$src" && pwd)"
+      docker run --rm \
+        -v "$src_abs":/s -w /s \
+        -v nanokvm-daemon-home:/root \
+        --entrypoint bash {{image}} -c '
+          set -e
+          export PATH="$PATH:/usr/local/host-tools/gcc/riscv64-linux-musl-x86_64/bin"
+          if ! . "$HOME/.cargo/env" 2>/dev/null; then
+            wget -qO- https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
+            . "$HOME/.cargo/env"
+          fi
+          rustup target add riscv64gc-unknown-linux-musl
+          cargo build --release --bin myownmesh --target riscv64gc-unknown-linux-musl'
+      cp "$src_abs/target/riscv64gc-unknown-linux-musl/release/myownmesh" "$dst"
+      echo "OK (built ${rev}) -> $dst"
+    fi
 
-# Copy the server + the daemon init script to a running device. The myownmesh
-# daemon itself is installed separately (the version pinned in .myownmesh-rev)
-# or is already serving — NanoKVM doesn't build or ship it.
+# Print the pinned MyOwnMesh daemon revision.
+daemon-rev:
+    @cat .myownmesh-rev
+
+# Copy the complete device build (server + daemon + init script) to a device.
 deploy ip:
     #!/usr/bin/env bash
     set -euo pipefail
-    test -f server/NanoKVM-Server || { echo "❌ build first: just build-risc"; exit 1; }
-    echo "==> deploying server to {{ip}}…"
-    scp server/NanoKVM-Server              root@{{ip}}:/kvmapp/server/NanoKVM-Server
+    test -f server/NanoKVM-Server && test -f "{{daemon_dst}}" || { echo "❌ build first: just build-risc"; exit 1; }
+    echo "==> deploying to {{ip}}…"
+    ssh root@{{ip}} 'mkdir -p /kvmapp/system/bin'
+    scp "{{daemon_dst}}"                   root@{{ip}}:/kvmapp/system/bin/myownmesh
     scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/kvmapp/system/init.d/S94myownmesh
-    ssh root@{{ip}} 'chmod +x /kvmapp/server/NanoKVM-Server /kvmapp/system/init.d/S94myownmesh'
-    echo "OK — ensure a myownmesh daemon (>= .myownmesh-rev) is installed/serving, then: just reboot {{ip}}"
-
-# Print the pinned MyOwnMesh daemon revision this server is built against.
-daemon-rev:
-    @cat .myownmesh-rev
+    scp server/NanoKVM-Server              root@{{ip}}:/kvmapp/server/NanoKVM-Server
+    ssh root@{{ip}} 'chmod +x /kvmapp/system/bin/myownmesh /kvmapp/system/init.d/S94myownmesh /kvmapp/server/NanoKVM-Server'
+    echo "OK — just reboot {{ip}} && just verify {{ip}}"
 
 reboot ip:
     @ssh root@{{ip}} reboot || true
 
-# Show the daemon's process, persisted state, and log on a device (or wherever
-# it's serving) — confirms the bridge has a control socket to talk to.
+# Daemon process + persisted state + log on a device.
 verify ip:
     @ssh root@{{ip}} 'echo "--- daemon ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- log ---"; tail -n 40 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"'
 
@@ -63,4 +114,5 @@ undeploy ip:
     @ssh root@{{ip}} 'rm -f /kvmapp/system/init.d/S94myownmesh && reboot' || true
 
 clean-risc:
-    @rm -f server/NanoKVM-Server
+    @rm -rf server/NanoKVM-Server {{daemon_dst}} .myownmesh-src
+    @echo "removed build outputs (Docker image + cargo cache volume kept)"
