@@ -4,6 +4,11 @@
 #   server/NanoKVM-Server         the Go server (with the mesh bridge)
 #   kvmapp/system/bin/myownmesh   the MyOwnMesh daemon, pinned in .myownmesh-rev
 #
+# `just setup-risc` bootstraps everything: it installs + starts a Docker runtime
+# (Colima — lightweight, no Docker Desktop) if you don't have one, then builds
+# the builder image. The cross-toolchain is Linux-only, so a Linux container is
+# how a Mac cross-compiles; setup-risc just makes that painless.
+#
 # The server builds inside the Docker builder image (Go + riscv64 musl
 # toolchain). The daemon is the version pinned in .myownmesh-rev: `build-risc`
 # downloads the published `myownmesh-linux-riscv64.tar.gz` release asset when one
@@ -25,9 +30,43 @@ default: help
 help:
     @just --list
 
-# One-time: build the Docker builder image (Go + riscv64 musl toolchain).
+# One-time: get a Docker-compatible runtime going (installs + starts Colima on a
+# Mac if you don't already have one — no Docker Desktop needed), then build the
+# builder image (Go + riscv64 musl toolchain). Idempotent: re-run any time.
 setup-risc:
-    @make builder-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # 1. Ensure a working Docker daemon. If `docker info` already succeeds (any
+    #    runtime — Colima, Docker Desktop, Linux dockerd), use it as-is.
+    if ! docker info >/dev/null 2>&1; then
+      case "$(uname -s)" in
+        Darwin)
+          command -v brew >/dev/null || { echo "❌ Install Homebrew first: https://brew.sh"; exit 1; }
+          command -v colima >/dev/null || { echo "==> installing colima (lightweight Linux VM)…"; brew install colima; }
+          command -v docker >/dev/null || { echo "==> installing the docker CLI…"; brew install docker; }
+          if ! colima status >/dev/null 2>&1; then
+            echo "==> starting colima (first boot takes a minute)…"
+            # vz + Rosetta runs the amd64 toolchain image fast on Apple Silicon;
+            # falls back to a plain start (qemu emulation) on older macOS/Intel.
+            colima start --vm-type=vz --vz-rosetta 2>/dev/null || colima start
+          fi
+          # Make sure linux/amd64 images (the Sophgo toolchain) can run.
+          docker run --privileged --rm tonistiigi/binfmt --install amd64 >/dev/null 2>&1 || true
+          ;;
+        Linux)
+          echo "❌ Docker isn't available. Install it (e.g. 'sudo apt-get install -y docker.io',"
+          echo "   add yourself to the 'docker' group) or see https://docs.docker.com/engine/install/, then re-run."
+          exit 1 ;;
+        *)
+          echo "❌ Unsupported OS for auto-setup — install a Docker-compatible runtime and re-run."; exit 1 ;;
+      esac
+      docker info >/dev/null 2>&1 || { echo "❌ Docker still not reachable after setup."; exit 1; }
+    fi
+    echo "==> Docker runtime OK"
+    # 2. Build the NanoKVM builder image (Go + riscv64-unknown-linux-musl-gcc).
+    echo "==> building the builder image…"
+    make builder-image
+    echo "OK — now: just build-risc"
 
 # Build a complete device image — the server AND the pinned daemon — in one step.
 build-risc: build-server daemon
