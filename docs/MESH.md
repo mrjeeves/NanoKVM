@@ -82,13 +82,34 @@ mesh:
   daemonBin: /kvmapp/system/bin/myownmesh
 ```
 
+## Building & deploying
+
+Both device artifacts — the Go server (with the bridge) and the Rust
+`myownmesh` daemon — build inside the Docker builder image, which carries the Go
+compiler **and** `riscv64-unknown-linux-musl-gcc`. A dev box needs only Docker;
+no Go, Rust, or RISC-V toolchain on the host. The daemon is cross-compiled from a
+sibling MyOwnMesh checkout (override with `just mom=/path …`).
+
+```sh
+just setup-risc            # one-time: builder image + Rust toolchain (cached)
+just build-risc            # build server/NanoKVM-Server + kvmapp/system/bin/myownmesh
+just deploy <device-ip>    # scp both + the init script to a running device
+just reboot <device-ip>
+just verify <device-ip>    # daemon process + /data/myownmesh + /var/log/myownmesh.log
+just undeploy <device-ip>  # reversible: remove the init script + reboot
+```
+
+`just build-server` / `just build-daemon` build either half alone; `make app`
+still builds the server the upstream way. The daemon's own cross-build lives in
+MyOwnMesh (`just build-risc` there); see MyOwnMesh `docs/NANOKVM.md`.
+
 ## Packaging
 
 `kvmapp/system/init.d/S94myownmesh` starts the MyOwnMesh daemon with
 `MYOWNMESH_HOME=/data/myownmesh` **before** the NanoKVM server (`S95nanokvm`),
-following the same copy-to-`/tmp`-and-launch pattern. Ship the daemon binary at
-`/kvmapp/system/bin/myownmesh` (or adjust both the init script and
-`mesh.daemonBin`). The init script no-ops cleanly if the binary is absent.
+following the same copy-to-`/tmp`-and-launch pattern. `just build-daemon` stages
+the daemon binary at `/kvmapp/system/bin/myownmesh` (matching `mesh.daemonBin`)
+so it ships in the image. The init script no-ops cleanly if the binary is absent.
 
 ## Tests
 
