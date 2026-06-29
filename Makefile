@@ -1,7 +1,8 @@
 # Makefile for NanoKVM Project
 
 # Configuration
-IMAGE_NAME := nanokvm-builder
+IMAGE_NAME := nanokvm-builder            # lean: Go + host-tools (builds the server)
+FULL_IMAGE := nanokvm-builder-full       # adds the MaixCDK SDK (regenerates libkvm)
 UID := $(shell id -u)
 GID := $(shell id -g)
 PWD := $(shell pwd)
@@ -24,7 +25,7 @@ DOCKER_RUN_BASE := docker run --platform=$(PLATFORM) -e UID=$(UID) -e GID=$(GID)
 GO_BUILD_CMD := cd /home/build/NanoKVM/server && go mod tidy && CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 CC=riscv64-unknown-linux-musl-gcc CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" go build
 SUPPORT_BUILD_CMD := . ./home/build/MaixCDK/bin/activate && cd /home/build/NanoKVM/support/sg2002 && ./build kvm_system && ./build kvm_system add_to_kvmapp
 
-.PHONY: help check-root builder-image rebuild-image check-image shell app support all clean
+.PHONY: help check-root builder-image full-image rebuild-image check-image shell app support all clean
 
 # Default target
 all: app support
@@ -36,11 +37,12 @@ help:
 	@echo "Available targets:"
 	@echo "  help          - Show this help message"
 	@echo "  check-image   - Check builder Docker image and show versions"
-	@echo "  builder-image - Build Docker image if not exists"
-	@echo "  rebuild-image - Force rebuild Docker image"
-	@echo "  shell         - Enter interactive builder environment"
-	@echo "  app           - Build Go application server"
-	@echo "  support       - Build hardware support libraries"
+	@echo "  builder-image - Build lean server image (Go + host-tools) if not exists"
+	@echo "  full-image    - Build full image (adds MaixCDK SDK) if not exists"
+	@echo "  rebuild-image - Force rebuild the lean server image"
+	@echo "  shell         - Enter interactive builder environment (full image)"
+	@echo "  app           - Build Go application server (lean image)"
+	@echo "  support       - Build hardware support libraries (full image)"
 	@echo "  all           - Build both app and support (default)"
 	@echo "  clean         - Clean build artifacts"
 	@echo ""
@@ -65,34 +67,46 @@ check-image: check-root
 		docker run --platform=$(PLATFORM) --rm -i $(IMAGE_NAME) riscv64-unknown-linux-musl-gcc -v && \
 		echo ""
 
-# Build Docker image if it doesn't exist
+# Build the lean server builder image if it doesn't exist (Go + host-tools,
+# `--target server`; BuildKit skips the MaixCDK stage). This is what setup-risc
+# and the server build use.
 builder-image: check-root
 	@if ! docker image inspect $(IMAGE_NAME) >/dev/null 2>&1; then \
 		echo "Building Docker image..."; \
-		docker build --platform=$(PLATFORM) -t $(IMAGE_NAME) -f docker/Dockerfile ./; \
+		docker build --platform=$(PLATFORM) --target server -t $(IMAGE_NAME) -f docker/Dockerfile ./; \
 	else \
 		echo "Docker image $(IMAGE_NAME) already exists."; \
 	fi
 
-# Force rebuild Docker image
+# Build the full builder image (server + MaixCDK SDK). Only `support`/`shell`
+# need it; it's slow under emulation, so it is built on demand, not by setup.
+full-image: check-root
+	@if ! docker image inspect $(FULL_IMAGE) >/dev/null 2>&1; then \
+		echo "Building full Docker image (with MaixCDK)..."; \
+		docker build --platform=$(PLATFORM) --target full -t $(FULL_IMAGE) -f docker/Dockerfile ./; \
+	else \
+		echo "Docker image $(FULL_IMAGE) already exists."; \
+	fi
+
+# Force rebuild the lean server builder image
 rebuild-image: check-root
 	@echo "Force rebuilding Docker image..."
-	@docker build --platform=$(PLATFORM) --no-cache -t $(IMAGE_NAME) -f docker/Dockerfile ./
+	@docker build --platform=$(PLATFORM) --no-cache --target server -t $(IMAGE_NAME) -f docker/Dockerfile ./
 
-# Enter interactive shell (equivalent to build.sh with no arguments)
-shell: check-root builder-image
+# Enter interactive shell (full image, MaixCDK activated)
+shell: check-root full-image
 	@echo "Switching into builder..."
-	@$(DOCKER_RUN_BASE) -it $(IMAGE_NAME) /bin/bash -c ". ./home/build/MaixCDK/bin/activate && cd /home/build/NanoKVM ; exec bash"
+	@$(DOCKER_RUN_BASE) -it $(FULL_IMAGE) /bin/bash -c ". ./home/build/MaixCDK/bin/activate && cd /home/build/NanoKVM ; exec bash"
 
-# Build Go application
+# Build Go application (lean server image — no MaixCDK needed)
 app: check-root builder-image
 	@echo "Building app..."
 	@$(DOCKER_RUN_BASE) -it $(IMAGE_NAME) /bin/bash -c '$(GO_BUILD_CMD)'
 
-# Build hardware support libraries
-support: check-root builder-image
+# Build hardware support libraries (full image — regenerates libkvm)
+support: check-root full-image
 	@echo "Building support..."
-	@$(DOCKER_RUN_BASE) -it $(IMAGE_NAME) /bin/bash -c '$(SUPPORT_BUILD_CMD)'
+	@$(DOCKER_RUN_BASE) -it $(FULL_IMAGE) /bin/bash -c '$(SUPPORT_BUILD_CMD)'
 
 # Clean build artifacts
 clean:
