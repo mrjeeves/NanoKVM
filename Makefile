@@ -6,8 +6,13 @@ UID := $(shell id -u)
 GID := $(shell id -g)
 PWD := $(shell pwd)
 
+# The Sophgo host-tools cross-gcc is x86_64-only, so the builder image is amd64
+# and runs under Rosetta/QEMU on Apple Silicon. Pin every build/run to it (no-op
+# on a native amd64 host). Override on other arches with `make PLATFORM=... app`.
+PLATFORM := linux/amd64
+
 # Docker run common parameters
-DOCKER_RUN_BASE := docker run -e UID=$(UID) -e GID=$(GID) -v $(PWD):/home/build/NanoKVM --rm
+DOCKER_RUN_BASE := docker run --platform=$(PLATFORM) -e UID=$(UID) -e GID=$(GID) -v $(PWD):/home/build/NanoKVM --rm
 
 # Build commands
 GO_BUILD_CMD := cd /home/build/NanoKVM/server && go mod tidy && CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 CC=riscv64-unknown-linux-musl-gcc CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" go build
@@ -48,17 +53,17 @@ check-root:
 check-image: check-root
 	@echo "Checking builder image..."
 	@echo "Golang version: " && \
-		docker run --rm -i $(IMAGE_NAME) go version && \
+		docker run --platform=$(PLATFORM) --rm -i $(IMAGE_NAME) go version && \
 		echo "" && \
 		echo "Host-tools version:" && \
-		docker run --rm -i $(IMAGE_NAME) riscv64-unknown-linux-musl-gcc -v && \
+		docker run --platform=$(PLATFORM) --rm -i $(IMAGE_NAME) riscv64-unknown-linux-musl-gcc -v && \
 		echo ""
 
 # Build Docker image if it doesn't exist
 builder-image: check-root
 	@if ! docker image inspect $(IMAGE_NAME) >/dev/null 2>&1; then \
 		echo "Building Docker image..."; \
-		docker build -t $(IMAGE_NAME) -f docker/Dockerfile ./; \
+		docker build --platform=$(PLATFORM) -t $(IMAGE_NAME) -f docker/Dockerfile ./; \
 	else \
 		echo "Docker image $(IMAGE_NAME) already exists."; \
 	fi
@@ -66,7 +71,7 @@ builder-image: check-root
 # Force rebuild Docker image
 rebuild-image: check-root
 	@echo "Force rebuilding Docker image..."
-	@docker build --no-cache -t $(IMAGE_NAME) -f docker/Dockerfile ./
+	@docker build --platform=$(PLATFORM) --no-cache -t $(IMAGE_NAME) -f docker/Dockerfile ./
 
 # Enter interactive shell (equivalent to build.sh with no arguments)
 shell: check-root builder-image

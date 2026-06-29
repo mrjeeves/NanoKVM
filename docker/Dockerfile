@@ -1,4 +1,8 @@
-FROM ubuntu:24.04 AS base_apt
+# Pin the whole build to linux/amd64. The Sophgo host-tools cross-gcc is an
+# x86_64-only binary, so every stage (and the final image) must be amd64 — then
+# it runs under Rosetta/QEMU on Apple Silicon. All other stages derive from
+# base_apt and inherit this platform. On a native amd64 host it is a no-op.
+FROM --platform=linux/amd64 ubuntu:24.04 AS base_apt
 
 # RUN echo 'Acquire::http::Proxy "http://cache.lan:3142";' > /etc/apt/apt.conf.d/00cacher
 RUN userdel -r ubuntu
