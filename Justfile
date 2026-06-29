@@ -124,26 +124,30 @@ daemon-rev:
 
 # ── Download-only path: deploy a release with NO local build (no Docker) ───────
 #
-# `just install <device-ip>` fetches a prebuilt server (this repo's release) and
-# the pinned daemon, then deploys. Nothing is compiled locally. This is the
-# everyday path once releases are published; use `build-risc` only to build from
-# source.
+# `just install <device-ip>` fetches the prebuilt device bundle (server + the
+# pinned daemon, in one NanoKVM release asset) and deploys it. Nothing is
+# compiled locally. This is the everyday path once releases are published; use
+# `build-risc` only to build from source.
 
-# Download a prebuilt server (latest release, or VERSION) + pinned daemon, no build.
-fetch VERSION="latest": daemon
+# One NanoKVM release asset carries the whole device payload: CI bundles the
+# .myownmesh-rev daemon into it (like AllMyStuff bundles the daemon into its
+# app), so this single download has both binaries and no build is needed.
+#
+# Download the device bundle (latest release, or VERSION): server + daemon.
+fetch VERSION="latest":
     #!/usr/bin/env bash
     set -euo pipefail
     sha() { if command -v sha256sum >/dev/null; then sha256sum -c "$1"; else shasum -a 256 -c "$1"; fi; }
-    asset="nanokvm-server-linux-riscv64.tar.gz"
+    asset="nanokvm-mesh-riscv64.tar.gz"
     if [ "{{VERSION}}" = "latest" ]; then
       url="{{nanokvm_repo}}/releases/latest/download/${asset}"
     else
       url="{{nanokvm_repo}}/releases/download/{{VERSION}}/${asset}"
     fi
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-    echo "==> server ({{VERSION}}): ${url}"
+    echo "==> device bundle ({{VERSION}}): ${url}"
     if ! curl -fsSL "$url" -o "$tmp/$asset"; then
-      echo "❌ no ${asset} at {{VERSION}}. Cut a NanoKVM release (push a v* tag) so CI publishes it," >&2
+      echo "❌ no ${asset} at {{VERSION}}. Cut a NanoKVM release (just release X.Y.Z) so CI publishes it," >&2
       echo "   or build locally with 'just build-risc'." >&2
       exit 1
     fi
@@ -152,14 +156,39 @@ fetch VERSION="latest": daemon
     else
       echo "    (no .sha256 published; skipping integrity check)"
     fi
-    tar -xzf "$tmp/$asset" -C server
-    chmod +x server/NanoKVM-Server
-    echo "OK -> server/NanoKVM-Server"
+    mkdir -p server "$(dirname "{{daemon_dst}}")"
+    tar -xzf "$tmp/$asset" -C "$tmp"
+    cp "$tmp/NanoKVM-Server" server/NanoKVM-Server
+    cp "$tmp/myownmesh"      "{{daemon_dst}}"
+    chmod +x server/NanoKVM-Server "{{daemon_dst}}"
+    echo "OK -> server/NanoKVM-Server + {{daemon_dst}}"
     echo "Now: just deploy <device-ip>   (or use 'just install <device-ip>')"
 
-# Fetch prebuilt artifacts (server + pinned daemon) and deploy to a device.
+# Fetch the prebuilt device bundle (server + daemon) and deploy to a device.
 install ip VERSION="latest": (fetch VERSION)
     @just deploy {{ip}}
+
+# Bump the advertised version, commit, push, then push the `vX.Y.Z` tag to
+# trigger the release workflow — which builds the server, bundles the
+# .myownmesh-rev daemon, and publishes nanokvm-mesh-riscv64.tar.gz. Mirrors
+# MyOwnMesh / AllMyStuff.
+#
+# Cut a release (bump version + tag) so CI publishes the device bundle.
+release VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./scripts/bump-version.sh "{{VERSION}}"
+    if ! git diff --quiet server/service/mesh/bridge.go web/package.json; then
+      git add server/service/mesh/bridge.go web/package.json
+      git commit -m "chore(release): {{VERSION}}"
+    fi
+    git push
+    git tag "v{{VERSION}}"
+    git push origin "v{{VERSION}}"
+    echo ""
+    echo "✓ pushed tag v{{VERSION}} — the release workflow is building the device bundle."
+    echo "  It publishes nanokvm-mesh-riscv64.tar.gz (server + pinned daemon)."
+    echo "  Then: just install <device-ip>   (downloads that bundle and deploys)"
 
 # Copy the complete device build (server + daemon + init script) to a device.
 deploy ip:

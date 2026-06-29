@@ -84,21 +84,31 @@ mesh:
 
 ## Deploying a prebuilt release (no local build)
 
-The everyday path needs **no Docker and no toolchain** — it downloads prebuilt
-artifacts and copies them to the device:
+The everyday path needs **no Docker and no toolchain** — it downloads a single
+prebuilt **device bundle** and copies it to the device:
 
 ```sh
-just install <device-ip>          # fetch server + daemon, then deploy
+just install <device-ip>          # fetch the bundle, then deploy
 # or, in two steps:
-just fetch                        # download prebuilt server (latest release) + pinned daemon
+just fetch                        # download the latest device bundle (server + daemon)
 just deploy <device-ip>
 ```
 
-`fetch` pulls the server from **this repo's** GitHub release
-(`nanokvm-server-linux-riscv64.tar.gz`, built by `.github/workflows/release.yml`)
-and the daemon from the **MyOwnMesh** release pinned in `.myownmesh-rev`
-(`myownmesh-linux-riscv64.tar.gz`), verifying each `.sha256`. Pass a tag to pin a
-server version: `just fetch v1.2.3` / `just install <ip> v1.2.3`.
+`fetch` pulls **one** asset from this repo's GitHub release —
+`nanokvm-mesh-riscv64.tar.gz`, built by `.github/workflows/release.yml` — which
+bundles **both** the NanoKVM server **and** the MyOwnMesh daemon pinned in
+`.myownmesh-rev` (the workflow downloads `myownmesh-linux-riscv64.tar.gz` and
+packs it in, the way AllMyStuff bundles the daemon into its app). The `.sha256`
+is verified. Pass a tag to pin a version: `just fetch v1.2.3` / `just install
+<ip> v1.2.3`.
+
+### Cutting a release
+
+`just release X.Y.Z` bumps the advertised version (`appVersion` in
+`server/service/mesh/bridge.go` + `web/package.json`), commits, and pushes the
+`vX.Y.Z` tag. That triggers the release workflow, which builds the server,
+bundles the `.myownmesh-rev` daemon, and publishes `nanokvm-mesh-riscv64.tar.gz`.
+Mirrors MyOwnMesh / AllMyStuff `just release`.
 
 ## Building from source
 

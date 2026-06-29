@@ -1,14 +1,18 @@
 name: Release
 
-# Build NanoKVM-Server for the RISC-V device in CI and publish it as a release
-# asset, so devs (and `just fetch`/`just install`) download a prebuilt server
-# instead of running the Docker builder locally. Triggered by pushing a `v*` tag;
-# workflow_dispatch is a manual escape hatch to (re)build an existing tag.
+# Build the RISC-V device payload in CI and publish it as ONE release asset —
+# the NanoKVM server AND the pinned MyOwnMesh daemon bundled together
+# (nanokvm-mesh-riscv64.tar.gz), like AllMyStuff bundles the daemon into its app.
+# So devs (and `just fetch`/`just install`) download a complete, ready-to-deploy
+# build instead of running the Docker builder locally. Triggered by pushing a
+# `v*` tag (see `just release`); workflow_dispatch re-builds an existing tag.
 #
 # The server is the established `make app` build, just without Docker: it needs
 # only Go + the Sophgo host-tools cross toolchain + the checked-in C906 shared
 # libraries (server/dl_lib) and headers (server/include). The MaixCDK SDK is
-# NOT needed here — it only regenerates libkvm, which is already committed.
+# NOT needed here — it only regenerates libkvm, which is already committed. The
+# daemon is not built here at all: it's downloaded from the MyOwnMesh release
+# pinned in .myownmesh-rev and bundled in.
 
 on:
   push:
@@ -69,23 +73,42 @@ jobs:
           patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
           file NanoKVM-Server
 
-      # Publish just the binary (it drops in beside the device's existing
-      # /kvmapp/server/dl_lib, exactly like `just deploy`). tar.gz + .sha256
-      # mirrors the MyOwnMesh daemon asset so the fetch recipes are symmetric.
-      - name: Package server binary
-        working-directory: server
+      # Bundle the pinned MyOwnMesh daemon INTO the release — like AllMyStuff
+      # bundles the daemon into its app. The daemon is the prebuilt
+      # myownmesh-linux-riscv64.tar.gz from the MyOwnMesh release named in
+      # .myownmesh-rev (MyOwnMesh cross-compiles it with cargo-zigbuild). One
+      # NanoKVM release asset then carries the whole device payload.
+      - name: Bundle the pinned MyOwnMesh daemon
         run: |
           set -e
-          NAME="nanokvm-server-linux-riscv64"
-          mkdir -p ../dist-bin
-          tar -czf "../dist-bin/${NAME}.tar.gz" NanoKVM-Server
-          (cd ../dist-bin && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
-          ls -la ../dist-bin
+          rev="$(cat .myownmesh-rev)"
+          dasset="myownmesh-linux-riscv64.tar.gz"
+          durl="https://github.com/mrjeeves/MyOwnMesh/releases/download/${rev}/${dasset}"
+          echo "==> bundling daemon ${rev}: ${durl}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "/tmp/${dasset}"        "$durl"
+          curl -fsSL --retry 3 --retry-delay 5 -o "/tmp/${dasset}.sha256" "$durl.sha256"
+          ( cd /tmp && sha256sum -c "${dasset}.sha256" )
+          mkdir -p bundle
+          tar -xzf "/tmp/${dasset}" -C bundle            # -> bundle/myownmesh
+          cp server/NanoKVM-Server bundle/NanoKVM-Server
+          chmod +x bundle/NanoKVM-Server bundle/myownmesh
+          file bundle/myownmesh bundle/NanoKVM-Server
+
+      # The device payload: the server + the pinned daemon in one tarball
+      # (+ .sha256). `just fetch`/`install` download this single asset.
+      - name: Package device bundle (server + daemon)
+        run: |
+          set -e
+          NAME="nanokvm-mesh-riscv64"
+          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh
+          sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+          ls -la "${NAME}.tar.gz"*
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
-            dist-bin/nanokvm-server-*
+            nanokvm-mesh-riscv64.tar.gz
+            nanokvm-mesh-riscv64.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
