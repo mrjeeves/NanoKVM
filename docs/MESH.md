@@ -82,26 +82,45 @@ mesh:
   daemonBin: /kvmapp/system/bin/myownmesh
 ```
 
-## Building & deploying
+## Deploying a prebuilt release (no local build)
+
+The everyday path needs **no Docker and no toolchain** — it downloads prebuilt
+artifacts and copies them to the device:
+
+```sh
+just install <device-ip>          # fetch server + daemon, then deploy
+# or, in two steps:
+just fetch                        # download prebuilt server (latest release) + pinned daemon
+just deploy <device-ip>
+```
+
+`fetch` pulls the server from **this repo's** GitHub release
+(`nanokvm-server-linux-riscv64.tar.gz`, built by `.github/workflows/release.yml`)
+and the daemon from the **MyOwnMesh** release pinned in `.myownmesh-rev`
+(`myownmesh-linux-riscv64.tar.gz`), verifying each `.sha256`. Pass a tag to pin a
+server version: `just fetch v1.2.3` / `just install <ip> v1.2.3`.
+
+## Building from source
 
 `just build-risc` produces a **complete device build in one step** — the Go
 server (`server/NanoKVM-Server`, built in the Docker builder image) **and** the
-MyOwnMesh daemon (`kvmapp/system/bin/myownmesh`, the version pinned in
-`.myownmesh-rev`). The daemon is the version AllMyStuff-style pin: `build-risc`
-downloads the published `myownmesh-linux-riscv64.tar.gz` release asset when one
-exists at that rev, or builds it from the pinned source in the same builder image
-otherwise — no sibling checkout, no second command. A dev box needs only Docker.
+MyOwnMesh daemon (`kvmapp/system/bin/myownmesh`). The daemon is never compiled
+here: it's downloaded from the MyOwnMesh release pinned in `.myownmesh-rev`
+(MyOwnMesh cross-compiles it with cargo-zigbuild — a NanoKVM never builds Rust).
+A dev box needs only Docker, and only for the server.
 
 ```sh
 just setup-risc            # one-time: build the Docker builder image
-just build-risc            # server + pinned daemon, in one step
+just build-risc            # server (Docker) + pinned daemon (download), one step
 just deploy <device-ip>    # scp the server + daemon + init script to a device
 just reboot <device-ip>
 just verify <device-ip>    # confirm the daemon is serving + its log
 just undeploy <device-ip>  # reversible: remove the init script + reboot
 ```
 
-(`just build-server` builds only the server; `just daemon` only the daemon.)
+(`just build-server` builds only the server; `just daemon` only downloads the
+daemon. If the pinned MyOwnMesh release has no riscv asset yet, `daemon`/`fetch`
+fail with a clear pointer rather than building the wrong thing.)
 
 ### Testing against an existing daemon
 

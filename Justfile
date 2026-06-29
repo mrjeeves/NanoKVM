@@ -10,10 +10,14 @@
 # how a Mac cross-compiles; setup-risc just makes that painless.
 #
 # The server builds inside the Docker builder image (Go + riscv64 musl
-# toolchain). The daemon is the version pinned in .myownmesh-rev: `build-risc`
-# downloads the published `myownmesh-linux-riscv64.tar.gz` release asset when one
-# exists (fast), or builds it from the pinned source in the same builder image
-# otherwise — either way you run ONE command. No sibling checkout.
+# toolchain). The daemon is NOT built here — it's the prebuilt
+# `myownmesh-linux-riscv64.tar.gz` from the MyOwnMesh release pinned in
+# .myownmesh-rev, downloaded and staged for you. (MyOwnMesh cross-compiles it
+# with cargo-zigbuild; a NanoKVM never builds Rust.)
+#
+# Don't want to build the server either? `just install <device-ip>` downloads a
+# prebuilt server (from THIS repo's release) AND the pinned daemon and deploys
+# them — zero local Docker, zero toolchain.
 #
 # For local testing you don't need the daemon here at all: run a `myownmesh
 # serve` you already have and point the bridge at its control socket (set
@@ -24,6 +28,7 @@ set shell := ["bash", "-uc"]
 image := "nanokvm-builder"
 daemon_dst := "kvmapp/system/bin/myownmesh"
 mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
+nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 
 default: help
 
@@ -82,9 +87,11 @@ build-server:
     @make app
     @test -f server/NanoKVM-Server && echo "OK -> server/NanoKVM-Server"
 
-# Obtain the daemon pinned in .myownmesh-rev and stage it at {{daemon_dst}}:
-# prefer the published release asset; fall back to building it from the pinned
-# source in the Docker builder if no release exists at that rev yet.
+# The daemon is never built here — MyOwnMesh cross-compiles + publishes it, and
+# this fails with a clear pointer (not a wrong build) if the pinned release has
+# no riscv asset yet.
+#
+# Download the pinned MyOwnMesh daemon release and stage it for deploy.
 daemon:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -94,39 +101,65 @@ daemon:
     url="{{mom_repo}}/releases/download/${rev}/${asset}"
     sha() { if command -v sha256sum >/dev/null; then sha256sum -c "$1"; else shasum -a 256 -c "$1"; fi; }
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-    echo "==> daemon pinned at ${rev}"
-    if curl -fsSL "$url" -o "$tmp/$asset" && curl -fsSL "$url.sha256" -o "$tmp/$asset.sha256"; then
-      echo "    fetched the published release asset; verifying sha256…"
-      ( cd "$tmp" && sha "$asset.sha256" )
-      tar -xzf "$tmp/$asset" -C "$(dirname "$dst")"
-      chmod +x "$dst"
-      echo "OK (release ${rev}) -> $dst"
-    else
-      echo "    no published ${asset} at ${rev} yet — building it from the pinned source…"
-      src=".myownmesh-src"
-      [ -d "$src/.git" ] || git clone --filter=blob:none "{{mom_repo}}" "$src"
-      git -C "$src" fetch --tags --filter=blob:none origin
-      git -C "$src" checkout --quiet --detach "$rev"
-      src_abs="$(cd "$src" && pwd)"
-      docker run --rm \
-        -v "$src_abs":/s -w /s \
-        -v nanokvm-daemon-home:/root \
-        --entrypoint bash {{image}} -c '
-          set -e
-          export PATH="$PATH:/usr/local/host-tools/gcc/riscv64-linux-musl-x86_64/bin"
-          if ! . "$HOME/.cargo/env" 2>/dev/null; then
-            wget -qO- https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.88.0
-            . "$HOME/.cargo/env"
-          fi
-          rustup target add riscv64gc-unknown-linux-musl
-          cargo build --release --bin myownmesh --target riscv64gc-unknown-linux-musl'
-      cp "$src_abs/target/riscv64gc-unknown-linux-musl/release/myownmesh" "$dst"
-      echo "OK (built ${rev}) -> $dst"
+    echo "==> daemon pinned at ${rev}: ${url}"
+    if ! curl -fsSL "$url" -o "$tmp/$asset"; then
+      echo "❌ no ${asset} published at ${rev}." >&2
+      echo "   Cut a MyOwnMesh release that includes the riscv64 daemon asset (just release <ver>)," >&2
+      echo "   then set .myownmesh-rev to that tag. Or build it yourself: in a MyOwnMesh checkout run" >&2
+      echo "   'just build-risc' and copy target/riscv64gc-unknown-linux-musl/release/myownmesh to ${dst}." >&2
+      exit 1
     fi
+    if curl -fsSL "$url.sha256" -o "$tmp/$asset.sha256"; then
+      echo "    verifying sha256…"; ( cd "$tmp" && sha "$asset.sha256" )
+    else
+      echo "    (no .sha256 published; skipping integrity check)"
+    fi
+    tar -xzf "$tmp/$asset" -C "$(dirname "$dst")"
+    chmod +x "$dst"
+    echo "OK (release ${rev}) -> $dst"
 
 # Print the pinned MyOwnMesh daemon revision.
 daemon-rev:
     @cat .myownmesh-rev
+
+# ── Download-only path: deploy a release with NO local build (no Docker) ───────
+#
+# `just install <device-ip>` fetches a prebuilt server (this repo's release) and
+# the pinned daemon, then deploys. Nothing is compiled locally. This is the
+# everyday path once releases are published; use `build-risc` only to build from
+# source.
+
+# Download a prebuilt server (latest release, or VERSION) + pinned daemon, no build.
+fetch VERSION="latest": daemon
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sha() { if command -v sha256sum >/dev/null; then sha256sum -c "$1"; else shasum -a 256 -c "$1"; fi; }
+    asset="nanokvm-server-linux-riscv64.tar.gz"
+    if [ "{{VERSION}}" = "latest" ]; then
+      url="{{nanokvm_repo}}/releases/latest/download/${asset}"
+    else
+      url="{{nanokvm_repo}}/releases/download/{{VERSION}}/${asset}"
+    fi
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    echo "==> server ({{VERSION}}): ${url}"
+    if ! curl -fsSL "$url" -o "$tmp/$asset"; then
+      echo "❌ no ${asset} at {{VERSION}}. Cut a NanoKVM release (push a v* tag) so CI publishes it," >&2
+      echo "   or build locally with 'just build-risc'." >&2
+      exit 1
+    fi
+    if curl -fsSL "$url.sha256" -o "$tmp/$asset.sha256"; then
+      echo "    verifying sha256…"; ( cd "$tmp" && sha "$asset.sha256" )
+    else
+      echo "    (no .sha256 published; skipping integrity check)"
+    fi
+    tar -xzf "$tmp/$asset" -C server
+    chmod +x server/NanoKVM-Server
+    echo "OK -> server/NanoKVM-Server"
+    echo "Now: just deploy <device-ip>   (or use 'just install <device-ip>')"
+
+# Fetch prebuilt artifacts (server + pinned daemon) and deploy to a device.
+install ip VERSION="latest": (fetch VERSION)
+    @just deploy {{ip}}
 
 # Copy the complete device build (server + daemon + init script) to a device.
 deploy ip:
@@ -153,5 +186,5 @@ undeploy ip:
     @ssh root@{{ip}} 'rm -f /kvmapp/system/init.d/S94myownmesh && reboot' || true
 
 clean-risc:
-    @rm -rf server/NanoKVM-Server {{daemon_dst}} .myownmesh-src
-    @echo "removed build outputs (Docker image + cargo cache volume kept)"
+    @rm -rf server/NanoKVM-Server {{daemon_dst}}
+    @echo "removed build outputs (Docker builder image kept)"
