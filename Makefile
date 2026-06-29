@@ -11,6 +11,12 @@ PWD := $(shell pwd)
 # on a native amd64 host). Override on other arches with `make PLATFORM=... app`.
 PLATFORM := linux/amd64
 
+# Force BuildKit. The legacy builder can't build a cross-platform multi-stage
+# image (it builds the base stage for the host arch, then later `FROM base AS …`
+# stages demand --platform and fail with "does not provide the specified
+# platform"). BuildKit builds every stage for --platform consistently.
+export DOCKER_BUILDKIT := 1
+
 # Docker run common parameters
 DOCKER_RUN_BASE := docker run --platform=$(PLATFORM) -e UID=$(UID) -e GID=$(GID) -v $(PWD):/home/build/NanoKVM --rm
 
