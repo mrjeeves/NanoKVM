@@ -59,8 +59,10 @@ jobs:
           echo "/usr/local/host-tools/gcc/riscv64-linux-musl-x86_64/bin" >> "$GITHUB_PATH"
 
       # Mirrors the Makefile's GO_BUILD_CMD (the proven `make app` path) plus the
-      # `-o NanoKVM-Server` name and build.sh's RPATH patch so the deployed binary
-      # finds its libs in ./dl_lib on the device.
+      # `-o NanoKVM-Server` name and an RPATH so the deployed binary finds its
+      # libs in ./dl_lib on the device. --force-rpath makes patchelf write
+      # DT_RPATH (not DT_RUNPATH): RUNPATH isn't applied to transitive deps, so
+      # libkvm.so's own libopencv_video.so.409 etc. wouldn't resolve — RPATH is.
       - name: Build NanoKVM-Server (riscv64, CGO/libkvm)
         working-directory: server
         run: |
@@ -70,8 +72,9 @@ jobs:
             CC=riscv64-unknown-linux-musl-gcc \
             CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" \
             go build -o NanoKVM-Server -v
-          patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
+          patchelf --force-rpath --set-rpath '$ORIGIN/dl_lib' NanoKVM-Server
           file NanoKVM-Server
+          readelf -d NanoKVM-Server | grep -iE 'RPATH|RUNPATH' || true
 
       # Bundle the pinned MyOwnMesh daemon INTO the release — like AllMyStuff
       # bundles the daemon into its app. The daemon is the prebuilt
