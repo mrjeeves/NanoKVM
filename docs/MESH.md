@@ -75,12 +75,21 @@ Add a `mesh` block to `/etc/kvm/server.yaml` (defaults shown):
 ```yaml
 mesh:
   enabled: true
-  home: /data/myownmesh
+  home: /data/myownmesh          # identity, rosters, kvm-state.json (persistent)
+  socket: /tmp/myownmesh/daemon.sock  # control socket — MUST be on tmpfs (see below)
   networkId: cec-backend-client-mesh
   label: CEC Backend Client Mesh
-  relays: []            # empty = public venue default
+  relays: []                     # empty = public venue default
   daemonBin: /kvmapp/system/bin/myownmesh
 ```
+
+**Why `socket` is separate from `home`.** The data partition (`/data`) is
+typically **exFAT/FAT**, which can hold regular files (identity, rosters, state)
+but **cannot hold a Unix socket** — `bind()` returns `EPERM`. So the daemon's
+control socket lives on **tmpfs** (`/tmp`). The init script pins the daemon to
+the same path via `$home/config.json` (`{"daemon":{"control_socket":"…"}}`), and
+the bridge dials `mesh.socket`; the two must match. Empty `socket` falls back to
+`$home/daemon.sock` (fine only if `home` is on a socket-capable filesystem).
 
 ## Deploying a prebuilt release (no local build)
 
@@ -150,13 +159,21 @@ with MyOwnMesh's `just build-risc`, or install a release ≥ that rev), and
 
 ## Packaging
 
-`kvmapp/system/init.d/S94myownmesh` starts the MyOwnMesh daemon with
-`MYOWNMESH_HOME=/data/myownmesh` **before** the NanoKVM server (`S95nanokvm`),
-following the same copy-to-`/tmp`-and-launch pattern. `just build-risc` stages
-the pinned daemon at `kvmapp/system/bin/myownmesh` (matching `mesh.daemonBin`),
-so it ships in the image. The init script no-ops cleanly if the binary is absent
-(the bridge then just keeps retrying the socket, so the device stays a normal
-KVM).
+`S94myownmesh` starts the MyOwnMesh daemon with `MYOWNMESH_HOME=/data/myownmesh`
+**before** the NanoKVM server (`S95nanokvm`), following the same
+copy-to-`/tmp`-and-launch pattern. It also writes the tmpfs control-socket
+override into `$home/config.json` on first start (see *Configuration* above).
+`just build-risc` stages the pinned daemon at `kvmapp/system/bin/myownmesh`
+(matching `mesh.daemonBin`), so it ships in the image. The script no-ops cleanly
+if the binary is absent (the bridge then just keeps retrying, so the device stays
+a normal KVM).
+
+**Boot dir.** Buildroot's `rcS` runs init scripts from **`/etc/init.d/`** (via
+`run-parts … start`). In the repo the script lives in `kvmapp/system/init.d/`,
+which the firmware build installs into `/etc/init.d/`. When deploying to an
+already-running device, `just deploy` therefore copies `S94myownmesh` straight
+into `/etc/init.d/` — copying it only into `/kvmapp/system/init.d/` would not
+autostart it.
 
 ## Tests
 

@@ -182,10 +182,15 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	}
 }
 
-// socketPath resolves the daemon control socket path. The myownmesh daemon
-// places it at <data_dir>/daemon.sock; with MYOWNMESH_HOME set the data dir is
-// $MYOWNMESH_HOME, so the socket is $Home/daemon.sock.
+// socketPath resolves the daemon control socket path. We use mesh.Socket (on
+// tmpfs by default) because the daemon's natural default, $Home/daemon.sock, is
+// on /data — typically exFAT/FAT, which can't hold a Unix socket (bind ->
+// EPERM). The init script pins the daemon's control_socket to this same path.
+// Empty mesh.Socket falls back to the daemon's $Home/daemon.sock default.
 func (b *Bridge) socketPath() string {
+	if b.mesh.Socket != "" {
+		return b.mesh.Socket
+	}
 	return filepath.Join(b.mesh.Home, "daemon.sock")
 }
 

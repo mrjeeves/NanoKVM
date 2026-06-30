@@ -34,6 +34,7 @@ var defaultConfig = &Config{
 	Mesh: Mesh{
 		Enabled:   true,
 		Home:      "/data/myownmesh",
+		Socket:    "/tmp/myownmesh/daemon.sock",
 		NetworkId: "cec-backend-client-mesh",
 		Label:     "CEC Backend Client Mesh",
 		Relays:    nil,
@@ -65,6 +66,11 @@ func checkDefaultValue() {
 	// are defaulted — Enabled defaults via the on-disk default config above.
 	if instance.Mesh.Home == "" {
 		instance.Mesh.Home = "/data/myownmesh"
+	}
+	if instance.Mesh.Socket == "" {
+		// tmpfs — /data is exFAT/FAT and can't hold a Unix socket. Must match
+		// the daemon's control_socket (set via $Home/config.json by S94myownmesh).
+		instance.Mesh.Socket = "/tmp/myownmesh/daemon.sock"
 	}
 	if instance.Mesh.NetworkId == "" {
 		instance.Mesh.NetworkId = "cec-backend-client-mesh"
