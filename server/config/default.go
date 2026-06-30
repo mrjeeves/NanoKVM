@@ -33,6 +33,7 @@ var defaultConfig = &Config{
 	},
 	Mesh: Mesh{
 		Enabled:   true,
+		Name:      "CEC-KVM",
 		Home:      "/data/myownmesh",
 		Socket:    "/tmp/myownmesh/daemon.sock",
 		NetworkId: "cec-backend-client-mesh",
@@ -64,6 +65,9 @@ func checkDefaultValue() {
 	// existed (viper leaves the zero value otherwise). We can't distinguish a
 	// user-set Enabled:false from an absent block, so only the string fields
 	// are defaulted — Enabled defaults via the on-disk default config above.
+	if instance.Mesh.Name == "" {
+		instance.Mesh.Name = "CEC-KVM" // default brand/display name on the graph
+	}
 	if instance.Mesh.Home == "" {
 		instance.Mesh.Home = "/data/myownmesh"
 	}
