@@ -68,7 +68,31 @@ setup-risc:
       docker info >/dev/null 2>&1 || { echo "❌ Docker still not reachable after setup."; exit 1; }
     fi
     echo "==> Docker runtime OK"
-    # 2. Build the NanoKVM builder image (Go + riscv64-unknown-linux-musl-gcc).
+    # 2. Ensure the buildx plugin. BuildKit needs it to build the cross-platform
+    #    multi-stage amd64 image (the legacy builder can't), and the Homebrew
+    #    `docker` CLI doesn't bundle it. Checked every run — a Colima that was
+    #    already up skips step 1 entirely, so this can't live inside that block.
+    if ! docker buildx version >/dev/null 2>&1; then
+      case "$(uname -s)" in
+        Darwin)
+          command -v brew >/dev/null || { echo "❌ Install Homebrew first: https://brew.sh"; exit 1; }
+          echo "==> installing docker-buildx…"
+          brew list docker-buildx >/dev/null 2>&1 || brew install docker-buildx
+          # Homebrew installs the binary but leaves the CLI-plugin symlink to you.
+          mkdir -p "${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins"
+          ln -sfn "$(brew --prefix)/opt/docker-buildx/bin/docker-buildx" \
+                  "${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins/docker-buildx"
+          ;;
+        Linux)
+          echo "❌ docker buildx plugin missing. Install it (e.g. 'sudo apt-get install -y docker-buildx-plugin')"
+          echo "   or see https://docs.docker.com/go/buildx/, then re-run."
+          exit 1 ;;
+        *) echo "❌ docker buildx missing and no auto-install for this OS — install it and re-run."; exit 1 ;;
+      esac
+      docker buildx version >/dev/null 2>&1 || { echo "❌ buildx still not available after install."; exit 1; }
+    fi
+    echo "==> buildx OK ($(docker buildx version | head -1))"
+    # 3. Build the NanoKVM builder image (Go + riscv64-unknown-linux-musl-gcc).
     echo "==> building the builder image…"
     make builder-image
     echo "OK — now: just build-risc"
