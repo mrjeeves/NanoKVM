@@ -22,13 +22,17 @@ export DOCKER_BUILDKIT := 1
 DOCKER_RUN_BASE := docker run --platform=$(PLATFORM) -e UID=$(UID) -e GID=$(GID) -v $(PWD):/home/build/NanoKVM --rm
 
 # Build commands
-# NOTE: -ldflags=-extldflags=-Wl,-rpath,$$ORIGIN/dl_lib bakes the runpath so the
-# binary finds libkvm.so (and the C906 libs) in ./dl_lib at runtime. S95nanokvm
-# runs the server from /tmp/server with no LD_LIBRARY_PATH, so without this the
-# binary can't load libkvm.so and exits immediately (the stock build sets the
-# same runpath; build.sh/CI use patchelf for it). $$ escapes for make; $ORIGIN
-# must reach the linker literally.
-GO_BUILD_CMD := cd /home/build/NanoKVM/server && go mod tidy && CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 CC=riscv64-unknown-linux-musl-gcc CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" go build -ldflags=-extldflags=-Wl,-rpath,$$ORIGIN/dl_lib
+# NOTE: bake an RPATH so the binary finds libkvm.so AND its own deps (libopencv*,
+# …) in ./dl_lib at runtime. S95nanokvm runs the server from /tmp/server with no
+# LD_LIBRARY_PATH, so without this it can't load libkvm.so and exits immediately.
+# Two subtleties:
+#   * --disable-new-dtags emits DT_RPATH (not DT_RUNPATH). RUNPATH is NOT applied
+#     to transitive deps, so libkvm.so's libopencv_video.so.409 wouldn't resolve;
+#     RPATH is, so the whole dl_lib chain loads.
+#   * \$$ORIGIN: make turns $$ into $, leaving \$ORIGIN in the recipe; inside the
+#     `bash -c '…'` the backslash keeps bash from expanding $ORIGIN to empty, so
+#     the literal $ORIGIN reaches the linker.
+GO_BUILD_CMD := cd /home/build/NanoKVM/server && go mod tidy && CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 CC=riscv64-unknown-linux-musl-gcc CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" go build -ldflags=-extldflags=-Wl,--disable-new-dtags,-rpath,\$$ORIGIN/dl_lib
 SUPPORT_BUILD_CMD := . ./home/build/MaixCDK/bin/activate && cd /home/build/NanoKVM/support/sg2002 && ./build kvm_system && ./build kvm_system add_to_kvmapp
 
 .PHONY: help check-root builder-image full-image rebuild-image check-image shell app support all clean
