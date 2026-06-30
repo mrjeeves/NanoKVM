@@ -24,6 +24,9 @@ type Mesh struct {
 	// retries on connect failure, so it's safe to leave on even before the
 	// myownmesh daemon is up.
 	Enabled bool `yaml:"enabled"`
+	// Name is the device's display name advertised on the mesh (the graph
+	// label). Defaults to "CEC-KVM". Empty falls back to the hostname/node id.
+	Name string `yaml:"name"`
 	// Home is $MYOWNMESH_HOME — where the daemon's identity, rosters, and our
 	// persisted KVM state (kvm-state.json) live. This is on the device's
 	// writable data partition (/data), which is often exFAT/FAT — fine for

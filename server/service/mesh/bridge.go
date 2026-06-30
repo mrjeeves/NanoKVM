@@ -73,10 +73,11 @@ type Bridge struct {
 
 	sites *siteHost
 
-	mu       sync.Mutex
-	nodeID   string
-	networks []string // network ids we're subscribed on (NetworkId + any fleet)
-	running  bool
+	mu        sync.Mutex
+	nodeID    string
+	networks  []string // network ids we're subscribed on (NetworkId + any fleet)
+	running   bool
+	greetedAt map[string]time.Time // peer id → last time we sent it our presence
 }
 
 // NewBridge builds a Bridge from the gin engine and config. It does not connect;
@@ -150,6 +151,7 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	b.events = events
 	b.ctl = ctl
 	b.running = true
+	b.greetedAt = nil // fresh session: re-greet every peer that announces
 	b.mu.Unlock()
 
 	defer func() {
@@ -408,8 +410,48 @@ func (b *Bridge) onChannelInbound(ci ChannelInbound) {
 			b.sites.handleFrame(ci.From, f)
 		}
 	case ChannelPresence:
-		// Other nodes' presence — not needed by a KVM appliance in v1.
+		// A peer announced itself. Greet a newly-seen peer by sending our profile
+		// straight to it, so the app learns about us immediately (event-driven
+		// gossip) instead of waiting for the slow heartbeat — without this we
+		// only appear on a 30s beat and flap in and out of the graph.
+		b.greetPeer(ci.Network, ci.From)
 	}
+}
+
+// greetCooldown bounds how often we re-greet the same peer, so a peer's own
+// presence (or a quick reconnect) can't trigger a tight greet loop.
+const greetCooldown = 10 * time.Second
+
+// greetPeer sends our current NodeProfile directly to a peer that just announced
+// itself, debounced per peer, so a freshly-connected app sees us right away.
+func (b *Bridge) greetPeer(network, peer string) {
+	if peer == "" || network == "" {
+		return
+	}
+	b.mu.Lock()
+	if b.greetedAt == nil {
+		b.greetedAt = map[string]time.Time{}
+	}
+	if t, ok := b.greetedAt[peer]; ok && time.Since(t) < greetCooldown {
+		b.mu.Unlock()
+		return
+	}
+	b.greetedAt[peer] = time.Now()
+	ctl := b.ctl
+	running := b.running
+	b.mu.Unlock()
+	if !running || ctl == nil {
+		return
+	}
+	payload, err := json.Marshal(b.currentProfile())
+	if err != nil {
+		return
+	}
+	if err := ctl.ChannelSendTo(network, ChannelPresence, peer, json.RawMessage(payload)); err != nil {
+		log.Debugf("mesh: greet %s on %s: %s", peer, network, err)
+		return
+	}
+	log.Infof("mesh: greeted peer %s on %s", peer, network)
 }
 
 // sendControlTo sends a ControlMessage point-to-point on CHANNEL_CONTROL.

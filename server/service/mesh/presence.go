@@ -117,7 +117,12 @@ func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State,
 	id := siteID(port)
 	snap := st.snapshot()
 
-	label := dev.hostname
+	// Display name on the graph: the configured brand name ("CEC-KVM" by
+	// default), falling back to hostname then node id if explicitly cleared.
+	label := conf.Mesh.Name
+	if label == "" {
+		label = dev.hostname
+	}
 	if label == "" {
 		label = nodeID
 	}
