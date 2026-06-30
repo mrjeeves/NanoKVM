@@ -48,6 +48,11 @@ type ChannelHandler func(ChannelInbound)
 type Socket struct {
 	path string
 
+	// reqMu serializes single-shot request/response round-trips so concurrent
+	// callers (e.g. the presence loop and a greetPeer from the readLoop) can't
+	// interleave writes or steal each other's reply line.
+	reqMu sync.Mutex
+
 	mu      sync.Mutex
 	conn    net.Conn
 	reader  *bufio.Reader
@@ -108,11 +113,21 @@ func (s *Socket) writeLine(v interface{}) error {
 // request sends a single-shot request and blocks for its Response. It must NOT
 // be called on an event-stream socket (that connection only emits push frames
 // after the ack).
+// daemonReadTimeout bounds how long a single-shot request/ack read waits for the
+// daemon. Without it, a daemon that's busy (e.g. mid peer-connection at boot) and
+// slow to answer would hang the bridge's handshake forever — no node id, no
+// error, no retry. On timeout connectAndRun returns and Start reconnects.
+const daemonReadTimeout = 10 * time.Second
+
 func (s *Socket) request(req request) (Response, error) {
+	s.reqMu.Lock()
+	defer s.reqMu.Unlock()
 	if err := s.writeLine(req); err != nil {
 		return Response{}, err
 	}
+	_ = s.conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
 	line, err := s.reader.ReadBytes('\n')
+	_ = s.conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return Response{}, fmt.Errorf("read response: %w", err)
 	}
@@ -143,8 +158,11 @@ func (s *Socket) Subscribe(handler ChannelHandler, onClose func()) error {
 	if err := s.writeLine(request{"op": "events_subscribe"}); err != nil {
 		return err
 	}
-	// First line is the ack carrying client_id.
+	// First line is the ack carrying client_id. Bound the wait (the long-lived
+	// readLoop started below intentionally runs with no deadline).
+	_ = s.conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
 	line, err := s.reader.ReadBytes('\n')
+	_ = s.conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return fmt.Errorf("read events_subscribe ack: %w", err)
 	}
