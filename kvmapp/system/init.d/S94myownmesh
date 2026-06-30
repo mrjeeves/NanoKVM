@@ -34,6 +34,30 @@ case "$1" in
         exit 0
     fi
 
+    # The NanoKVM has no battery-backed RTC, so it boots with the clock at 1970.
+    # The mesh needs a real clock BEFORE the daemon joins: relays use TLS (a 1970
+    # clock rejects their certs as "not valid yet"), and presence/roster/network
+    # state is timestamped/signed — joining at 1970 makes peers treat the node as
+    # invalid (it shows up but never goes "online"/claimable), and the later NTP
+    # jump tears the live connection down. Nudge the clock first, bounded so a
+    # missing NTP path never hangs boot.
+    if [ "$(date -u +%Y 2>/dev/null)" -lt 2020 ] 2>/dev/null; then
+        echo "myownmesh: clock unset ($(date -u)); waiting for NTP…"
+        # Kick a one-shot sync if ntpd is available (fast); otherwise just wait
+        # for whatever time sync the firmware runs. Wait is bounded so an offline
+        # device never hangs boot — it'll come up degraded and recover later.
+        if command -v ntpd >/dev/null 2>&1; then
+            ntpd -nq -p pool.ntp.org -p time.cloudflare.com -p time.google.com >/dev/null 2>&1 &
+            _ntp=$!
+        fi
+        _i=0
+        while [ "$(date -u +%Y 2>/dev/null)" -lt 2020 ] && [ "$_i" -lt 25 ]; do
+            sleep 1; _i=$((_i + 1))
+        done
+        [ -n "${_ntp:-}" ] && kill "$_ntp" 2>/dev/null
+        echo "myownmesh: clock now $(date -u)"
+    fi
+
     mkdir -p "$MYOWNMESH_HOME"
     mkdir -p "$RUNTIME_DIR"
 
