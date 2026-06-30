@@ -45,6 +45,16 @@ func initialize() {
 
 	checkDefaultValue()
 
+	// The mesh bridge defaults ON for appliances. A server.yaml written before
+	// the mesh feature has no `mesh:` block, so Unmarshal leaves Enabled at the
+	// zero value (false). We can't tell that apart from a real `enabled: false`
+	// by looking at the struct — but viper can: an absent key means the operator
+	// never opted out, so turn it on. An explicit `mesh: { enabled: false }` in
+	// the file is honored (IsSet is true, so we don't override).
+	if !viper.IsSet("mesh.enabled") {
+		instance.Mesh.Enabled = true
+	}
+
 	if instance.Authentication == "disable" {
 		log.Println("NOTICE: Authentication is disabled! Please ensure your service is secure!")
 	}
