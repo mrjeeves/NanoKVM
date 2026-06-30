@@ -12,10 +12,18 @@
 MYOWNMESH_HOME=/data/myownmesh
 export MYOWNMESH_HOME
 
+# The control socket MUST live on tmpfs. /data is the device's writable data
+# partition (typically exFAT/FAT), which can't hold a Unix socket file — bind()
+# returns EPERM. Identity/rosters/state are regular files and stay on /data; only
+# the socket moves to tmpfs. The Go bridge's mesh.socket default points here too.
+RUNTIME_DIR=/tmp/myownmesh
+CONTROL_SOCKET=$RUNTIME_DIR/daemon.sock
+CONFIG=$MYOWNMESH_HOME/config.json
+
 # Where the daemon binary ships in the app image. Adjust here if the packaging
 # location changes; the Go config's mesh.daemonBin should match.
 DAEMON_SRC=/kvmapp/system/bin/myownmesh
-DAEMON_DST=/tmp/myownmesh/myownmesh
+DAEMON_DST=$RUNTIME_DIR/myownmesh
 
 case "$1" in
   start)
@@ -27,14 +35,24 @@ case "$1" in
     fi
 
     mkdir -p "$MYOWNMESH_HOME"
-    mkdir -p /tmp/myownmesh
+    mkdir -p "$RUNTIME_DIR"
+
+    # Pin the daemon's control socket onto tmpfs (see above). MeshConfig is
+    # #[serde(default)], so this minimal config.json loads fine and the daemon
+    # preserves control_socket across its own config saves. Only (re)write it if
+    # it's missing or doesn't already pin the socket, so we don't clobber a
+    # daemon- or operator-managed config.
+    if [ ! -f "$CONFIG" ] || ! grep -q control_socket "$CONFIG" 2>/dev/null; then
+        printf '%s\n' "{\"daemon\":{\"control_socket\":\"$CONTROL_SOCKET\"}}" > "$CONFIG"
+    fi
+
     cp "$DAEMON_SRC" "$DAEMON_DST"
     chmod +x "$DAEMON_DST"
 
     # Launch the daemon detached. `serve` is the MyOwnMesh daemon subcommand
     # (crates/myownmesh Command::Serve); it serves $MYOWNMESH_HOME/daemon.sock.
     "$DAEMON_DST" serve >/var/log/myownmesh.log 2>&1 &
-    echo "myownmesh started (home=$MYOWNMESH_HOME)"
+    echo "myownmesh started (home=$MYOWNMESH_HOME, socket=$CONTROL_SOCKET)"
     ;;
 
   stop)

@@ -222,9 +222,13 @@ deploy ip:
     echo "==> deploying to {{ip}}…"
     ssh root@{{ip}} 'mkdir -p /kvmapp/system/bin'
     scp "{{daemon_dst}}"                   root@{{ip}}:/kvmapp/system/bin/myownmesh
-    scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/kvmapp/system/init.d/S94myownmesh
     scp server/NanoKVM-Server              root@{{ip}}:/kvmapp/server/NanoKVM-Server
-    ssh root@{{ip}} 'chmod +x /kvmapp/system/bin/myownmesh /kvmapp/system/init.d/S94myownmesh /kvmapp/server/NanoKVM-Server'
+    # The init script must land in /etc/init.d — that's the dir Buildroot's rcS
+    # runs at boot (run-parts … start). /kvmapp/system/init.d is only the in-image
+    # source that the firmware build installs into /etc/init.d; on a running device
+    # we have to place it there ourselves or it never autostarts.
+    scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/etc/init.d/S94myownmesh
+    ssh root@{{ip}} 'chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /kvmapp/server/NanoKVM-Server'
     echo "OK — just reboot {{ip}} && just verify {{ip}}"
 
 reboot ip:
@@ -234,9 +238,9 @@ reboot ip:
 verify ip:
     @ssh root@{{ip}} 'echo "--- daemon ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- log ---"; tail -n 40 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"'
 
-# Reversible undo on a device: remove the daemon init script + reboot.
+# Reversible undo on a device: stop the daemon, remove the init script + reboot.
 undeploy ip:
-    @ssh root@{{ip}} 'rm -f /kvmapp/system/init.d/S94myownmesh && reboot' || true
+    @ssh root@{{ip}} '/etc/init.d/S94myownmesh stop 2>/dev/null; rm -f /etc/init.d/S94myownmesh && reboot' || true
 
 clean-risc:
     @rm -rf server/NanoKVM-Server {{daemon_dst}}

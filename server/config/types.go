@@ -24,9 +24,17 @@ type Mesh struct {
 	// retries on connect failure, so it's safe to leave on even before the
 	// myownmesh daemon is up.
 	Enabled bool `yaml:"enabled"`
-	// Home is $MYOWNMESH_HOME — where the daemon's control socket
-	// (daemon.sock) and our persisted KVM state (kvm-state.json) live.
+	// Home is $MYOWNMESH_HOME — where the daemon's identity, rosters, and our
+	// persisted KVM state (kvm-state.json) live. This is on the device's
+	// writable data partition (/data), which is often exFAT/FAT — fine for
+	// regular files, but it cannot hold a Unix socket (see Socket).
 	Home string `yaml:"home"`
+	// Socket is the daemon control socket path. It must live on a filesystem
+	// that supports Unix sockets — exFAT/FAT (the typical /data partition) does
+	// not (bind() returns EPERM), so the default is on tmpfs (/tmp). The daemon
+	// is pointed at this same path via $Home/config.json by the init script; the
+	// two must match. Empty falls back to $Home/daemon.sock.
+	Socket string `yaml:"socket"`
 	// NetworkId is the wire-level rendezvous handle of the network we join.
 	NetworkId string `yaml:"networkId"`
 	// Label is the cosmetic display name for that network.
