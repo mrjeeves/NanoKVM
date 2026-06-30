@@ -234,9 +234,9 @@ deploy ip:
 reboot ip:
     @ssh root@{{ip}} reboot || true
 
-# Daemon process + persisted state + log on a device.
+# Daemon + bridge: processes, persisted state, and both logs on a device.
 verify ip:
-    @ssh root@{{ip}} 'echo "--- daemon ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- log ---"; tail -n 40 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"'
+    @ssh root@{{ip}} 'echo "--- daemon proc ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- server proc ---"; ps | grep -i nanokvm-server | grep -v grep || echo "(no server)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- daemon log ---"; tail -n 30 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"; echo "--- bridge log ---"; tail -n 30 /var/log/nanokvm-mesh.log 2>/dev/null || echo "(none yet)"'
 
 # Reversible undo on a device: stop the daemon, remove the init script + reboot.
 undeploy ip:

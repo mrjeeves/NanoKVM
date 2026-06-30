@@ -2,7 +2,9 @@ package mesh
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +13,32 @@ import (
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 )
+
+// meshLogFile mirrors the bridge's log lines to a persistent file. The KVM
+// server logs to stdout and S95nanokvm launches it backgrounded with no
+// redirect, so without this the bridge is invisible on the device.
+const meshLogFile = "/var/log/nanokvm-mesh.log"
+
+// meshLogHook writes mesh-tagged logrus entries to meshLogFile, in addition to
+// the server's normal (discarded) stdout.
+type meshLogHook struct {
+	w  *os.File
+	tf log.Formatter
+}
+
+func (h *meshLogHook) Levels() []log.Level { return log.AllLevels }
+
+func (h *meshLogHook) Fire(e *log.Entry) error {
+	if !strings.Contains(strings.ToLower(e.Message), "mesh") {
+		return nil
+	}
+	b, err := h.tf.Format(e)
+	if err != nil {
+		return err
+	}
+	_, err = h.w.Write(b)
+	return err
+}
 
 // appVersion is the NanoKVM application version advertised in presence. The KVM
 // build doesn't expose a single canonical version constant to this package, so
@@ -71,6 +99,11 @@ func NewBridge(engine *gin.Engine, conf *config.Config) *Bridge {
 	b.sites = newSiteHost(engine, port, b.sendSiteFrame)
 	// Re-advertise whenever persisted state changes (claim/attach/detach/fleet).
 	st.OnChange(func() { b.reAdvertise() })
+	// Mirror mesh logs to a file (the server's stdout is discarded at boot).
+	if f, err := os.OpenFile(meshLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		log.AddHook(&meshLogHook{w: f, tf: &log.TextFormatter{FullTimestamp: true}})
+		log.Infof("mesh: logging to %s", meshLogFile)
+	}
 	return b
 }
 
@@ -205,7 +238,9 @@ func (b *Bridge) ensureNetwork() error {
 			return nil // already joined
 		}
 	}
-	cfg := b.networkConfig(b.mesh.NetworkId, b.mesh.NetworkId, b.mesh.Label, b.mesh.Relays, nil)
+	// The public venue is an OPEN network that auto-approves members, so the KVM
+	// and any AllMyStuff app on the same network actually roster each other.
+	cfg := b.networkConfig(b.mesh.NetworkId, b.mesh.NetworkId, b.mesh.Label, b.mesh.Relays, nil, "open", true)
 	if err := b.ctl.NetworkAdd(cfg); err != nil {
 		return err
 	}
@@ -217,10 +252,18 @@ func (b *Bridge) ensureNetwork() error {
 // fields (stun_servers/turn_servers) pick up the daemon's public-venue defaults.
 // relays empty leaves signaling at its built-in defaults too. venue, when given,
 // is a NetworkConfig-shaped JSON object string that overrides the transport.
-func (b *Bridge) networkConfig(id, networkID, label string, relays []string, venue *string) map[string]interface{} {
+// networkConfig builds a NetworkConfig JSON object (config.rs schema).
+//
+//   - kind: "open" (the public venue) auto-accepts members; "closed" (fleets)
+//     gates membership behind the signed authority chain. This mirrors how
+//     AllMyStuff uses open networks for discovery and closed networks as fleets.
+//   - autoApprove: on an open network we add every authenticating peer to the
+//     roster automatically (that's what makes the KVM and the app actually see
+//     each other). On a closed fleet it's false — the owner controls membership.
+func (b *Bridge) networkConfig(id, networkID, label string, relays []string, venue *string, kind string, autoApprove bool) map[string]interface{} {
 	if venue != nil && *venue != "" {
 		// The owner handed down a full transport config; use it verbatim but
-		// pin our local id/network_id/label so it lands as the fleet network.
+		// pin our local id/network_id/label and governance so it lands correctly.
 		var v map[string]interface{}
 		if err := json.Unmarshal([]byte(*venue), &v); err == nil && v != nil {
 			v["id"] = id
@@ -228,8 +271,9 @@ func (b *Bridge) networkConfig(id, networkID, label string, relays []string, ven
 			if label != "" {
 				v["label"] = label
 			}
-			if _, ok := v["auto_approve"]; !ok {
-				v["auto_approve"] = false
+			v["auto_approve"] = autoApprove
+			if kind != "" {
+				v["kind"] = kind
 			}
 			return v
 		}
@@ -240,7 +284,10 @@ func (b *Bridge) networkConfig(id, networkID, label string, relays []string, ven
 		"id":           id,
 		"network_id":   networkID,
 		"label":        label,
-		"auto_approve": false,
+		"auto_approve": autoApprove,
+	}
+	if kind != "" {
+		cfg["kind"] = kind
 	}
 	if len(relays) > 0 {
 		cfg["signaling"] = map[string]interface{}{
@@ -266,7 +313,9 @@ func (b *Bridge) joinFleetNetwork(networkID, name string, venue *string) {
 		}
 	}
 	if !joined {
-		cfg := b.networkConfig(networkID, networkID, name, nil, venue)
+		// A fleet is a CLOSED network: membership is gated by the owner's signed
+		// authority chain, not auto-approved.
+		cfg := b.networkConfig(networkID, networkID, name, nil, venue, "closed", false)
 		if err := b.ctl.NetworkAdd(cfg); err != nil {
 			log.Warnf("mesh: join fleet network %s: %s", networkID, err)
 			return
