@@ -1,0 +1,56 @@
+#!/bin/sh
+# S94myownmesh — start the MyOwnMesh daemon for the native AllMyStuff bridge.
+#
+# Runs BEFORE the NanoKVM server (S95nanokvm) so the daemon's control socket
+# ($MYOWNMESH_HOME/daemon.sock) is up by the time the server's mesh bridge tries
+# to connect. The bridge is non-fatal and retries, so a slow/absent daemon never
+# blocks the KVM — this just gives it the best chance to be ready.
+#
+# Follows the S95nanokvm pattern: copy the payload out of the read-only /kvmapp
+# into /tmp, then launch from there.
+
+MYOWNMESH_HOME=/data/myownmesh
+export MYOWNMESH_HOME
+
+# Where the daemon binary ships in the app image. Adjust here if the packaging
+# location changes; the Go config's mesh.daemonBin should match.
+DAEMON_SRC=/kvmapp/system/bin/myownmesh
+DAEMON_DST=/tmp/myownmesh/myownmesh
+
+case "$1" in
+  start)
+    # Nothing to do if the daemon binary isn't shipped in this image — the KVM
+    # server's bridge will simply keep retrying and the device stays LAN-only.
+    if [ ! -x "$DAEMON_SRC" ]; then
+        echo "myownmesh: daemon binary not found at $DAEMON_SRC; skipping"
+        exit 0
+    fi
+
+    mkdir -p "$MYOWNMESH_HOME"
+    mkdir -p /tmp/myownmesh
+    cp "$DAEMON_SRC" "$DAEMON_DST"
+    chmod +x "$DAEMON_DST"
+
+    # Launch the daemon detached. `serve` is the MyOwnMesh daemon subcommand
+    # (crates/myownmesh Command::Serve); it serves $MYOWNMESH_HOME/daemon.sock.
+    "$DAEMON_DST" serve >/var/log/myownmesh.log 2>&1 &
+    echo "myownmesh started (home=$MYOWNMESH_HOME)"
+    ;;
+
+  stop)
+    killall myownmesh 2>/dev/null
+    rm -rf /tmp/myownmesh
+    echo "OK"
+    ;;
+
+  restart)
+    "$0" stop
+    sleep 1
+    "$0" start
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac

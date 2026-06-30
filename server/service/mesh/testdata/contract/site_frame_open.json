@@ -1,0 +1,8 @@
+{
+  "conn": 1,
+  "kind": "open",
+  "port": 80,
+  "route": "route:kvm-abcdef:site→den-tower:site-view:80-1",
+  "seq": 1,
+  "t": "site"
+}

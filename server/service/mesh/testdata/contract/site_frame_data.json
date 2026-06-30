@@ -1,0 +1,8 @@
+{
+  "conn": 1,
+  "data": "R0VUIC8gSFRUUC8xLjENCg0K",
+  "kind": "data",
+  "route": "route:kvm-abcdef:site→den-tower:site-view:80-1",
+  "seq": 2,
+  "t": "site"
+}

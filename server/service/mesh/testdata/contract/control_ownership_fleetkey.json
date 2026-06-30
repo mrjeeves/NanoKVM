@@ -1,0 +1,7 @@
+{
+  "key": "fleet-secret-key",
+  "kind": "fleet_key",
+  "name": "Casey",
+  "t": "ownership",
+  "venue": "{\"signaling\":{}}"
+}

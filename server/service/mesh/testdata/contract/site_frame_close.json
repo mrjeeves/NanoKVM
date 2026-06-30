@@ -1,0 +1,7 @@
+{
+  "conn": 1,
+  "kind": "close",
+  "route": "route:kvm-abcdef:site→den-tower:site-view:80-1",
+  "seq": 3,
+  "t": "site"
+}

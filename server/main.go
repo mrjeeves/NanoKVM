@@ -13,6 +13,7 @@ import (
 	"NanoKVM-Server/logger"
 	"NanoKVM-Server/middleware"
 	"NanoKVM-Server/router"
+	"NanoKVM-Server/service/mesh"
 	"NanoKVM-Server/service/vm/jiggler"
 	"NanoKVM-Server/utils"
 
@@ -70,6 +71,14 @@ func run() {
 	}
 
 	router.Init(r)
+
+	// Start the AllMyStuff mesh bridge (native integration). Non-fatal: it
+	// retries on connect failure, since the myownmesh daemon may not be up yet.
+	if conf.Mesh.Enabled {
+		bridge := mesh.NewBridge(r, conf)
+		go bridge.Start(make(chan struct{}))
+		log.Println("AllMyStuff mesh bridge started")
+	}
 
 	httpAddr := utils.ListenAddr(conf.Host, strconv.Itoa(conf.Port.Http))
 	loopbackHTTPAddr := utils.ListenAddr("127.0.0.1", strconv.Itoa(conf.Port.Http))

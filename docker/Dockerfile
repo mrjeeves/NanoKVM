@@ -1,4 +1,8 @@
-FROM ubuntu:24.04 AS base_apt
+# Pin the whole build to linux/amd64. The Sophgo host-tools cross-gcc is an
+# x86_64-only binary, so every stage (and the final image) must be amd64 — then
+# it runs under Rosetta/QEMU on Apple Silicon. All other stages derive from
+# base_apt and inherit this platform. On a native amd64 host it is a no-op.
+FROM --platform=linux/amd64 ubuntu:24.04 AS base_apt
 
 # RUN echo 'Acquire::http::Proxy "http://cache.lan:3142";' > /etc/apt/apt.conf.d/00cacher
 RUN userdel -r ubuntu
@@ -53,7 +57,14 @@ RUN cd ~/MaixCDK \
     && cd ~/NanoKVM/support/sg2002 \
     && ./build kvm_system
 
-FROM base_apt
+# ── Lean server builder: Go + host-tools only (NO MaixCDK). ───────────────────
+# Building NanoKVM-Server needs only Go, the riscv64 cross toolchain, and the
+# checked-in shared libs + headers (server/dl_lib, server/include). The MaixCDK
+# SDK is only needed to *regenerate* libkvm (`make support`), which is rare —
+# libkvm is committed. Building `--target server` lets BuildKit prune the heavy
+# `sdk` (MaixCDK) stage entirely, so the common path stays fast and reliable
+# even under amd64 emulation on Apple Silicon. `make app`/`build-risc` use this.
+FROM base_apt AS server
 
 # Install golang
 COPY --from=golang /usr/local/go /usr/local/go
@@ -64,8 +75,6 @@ ENV PATH="$PATH:/usr/local/go/bin"
 COPY --from=host_tools /usr/local/host-tools /usr/local/host-tools
 ENV PATH="$PATH:/usr/local/host-tools/gcc/riscv64-linux-musl-x86_64/bin"
 
-# Install SDK
-COPY --from=sdk /home/$DOCKER_USER/MaixCDK /home/$DOCKER_USER/MaixCDK
 COPY --chmod=+x docker/entrypoint /entrypoint
 
 RUN echo "Verify build tools" \
@@ -77,3 +86,10 @@ RUN chmod 0755 /entrypoint \
  && sed "s/\$DOCKER_USER/$DOCKER_USER/g" -i /entrypoint
 
 ENTRYPOINT ["/entrypoint"]
+
+# ── Full builder: server + MaixCDK SDK, for `make support` (regenerating libkvm).
+# Only built on demand (`make full-image`); the everyday server build never
+# pulls this in.
+FROM server AS full
+USER root
+COPY --from=sdk /home/$DOCKER_USER/MaixCDK /home/$DOCKER_USER/MaixCDK

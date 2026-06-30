@@ -1,0 +1,11 @@
+{
+  "channel": "allmystuff/control/v1",
+  "from": "den-tower",
+  "kind": "channel_inbound",
+  "network": "cec-backend-client-mesh",
+  "payload": {
+    "kind": "attach",
+    "node": "den-tower",
+    "t": "kvm"
+  }
+}

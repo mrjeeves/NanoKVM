@@ -1,0 +1,60 @@
+{
+  "channel": "allmystuff/presence/v1",
+  "network": "cec-backend-client-mesh",
+  "op": "channel_send_all",
+  "payload": {
+    "boot": 42,
+    "capabilities": [
+      {
+        "default": false,
+        "flow": "source",
+        "id": "kvm-abcdef:screen",
+        "label": "Captured screen",
+        "media": "display",
+        "node": "kvm-abcdef",
+        "origin": "screen"
+      },
+      {
+        "default": false,
+        "flow": "sink",
+        "id": "kvm-abcdef:control",
+        "label": "Keyboard & mouse",
+        "media": "input",
+        "node": "kvm-abcdef",
+        "origin": "control"
+      }
+    ],
+    "claimable": false,
+    "features": [
+      "kvm",
+      "sites"
+    ],
+    "fleet_name": "Casey",
+    "fleet_owner": "Casey",
+    "hostname": "nanokvm",
+    "kvm": {
+      "attached_to": "den-tower",
+      "web": "tcp:80"
+    },
+    "label": "NanoKVM (den-tower)",
+    "node": "kvm-abcdef",
+    "owner": "den-tower",
+    "protocol": 1,
+    "sites": [
+      {
+        "id": "tcp:80",
+        "label": "KVM Web UI",
+        "loopback": false,
+        "port": 80,
+        "scheme": "http"
+      }
+    ],
+    "summary": {
+      "cpu": "SG2002 (T-Head C906)",
+      "device_count": 2,
+      "os": "linux",
+      "ram_bytes": 268435456
+    },
+    "version": "0.2.6"
+  }
+}

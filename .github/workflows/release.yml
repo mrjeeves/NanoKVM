@@ -1,0 +1,114 @@
+name: Release
+
+# Build the RISC-V device payload in CI and publish it as ONE release asset —
+# the NanoKVM server AND the pinned MyOwnMesh daemon bundled together
+# (nanokvm-mesh-riscv64.tar.gz), like AllMyStuff bundles the daemon into its app.
+# So devs (and `just fetch`/`just install`) download a complete, ready-to-deploy
+# build instead of running the Docker builder locally. Triggered by pushing a
+# `v*` tag (see `just release`); workflow_dispatch re-builds an existing tag.
+#
+# The server is the established `make app` build, just without Docker: it needs
+# only Go + the Sophgo host-tools cross toolchain + the checked-in C906 shared
+# libraries (server/dl_lib) and headers (server/include). The MaixCDK SDK is
+# NOT needed here — it only regenerates libkvm, which is already committed. The
+# daemon is not built here at all: it's downloaded from the MyOwnMesh release
+# pinned in .myownmesh-rev and bundled in.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build the release for'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  server-riscv64:
+    name: Build NanoKVM-Server (linux-riscv64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Install patchelf
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+
+      # The device's Sophgo host-tools — the same musl C906 cross toolchain the
+      # NanoKVM firmware (and the Docker builder) is built with. Correct here:
+      # the Go server *dynamically* links the checked-in C906 libkvm.so, so there
+      # is no static-archive ISA-attribute merge (unlike the Rust daemon, which
+      # is why MyOwnMesh's riscv build uses Zig instead — see that repo).
+      - name: Install RISC-V musl toolchain (Sophgo host-tools)
+        run: |
+          set -e
+          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/host-tools.tar.gz \
+            https://sophon-file.sophon.cn/sophon-prod-s3/drive/23/03/07/16/host-tools.tar.gz
+          sudo tar -C /usr/local -xzf /tmp/host-tools.tar.gz
+          echo "/usr/local/host-tools/gcc/riscv64-linux-musl-x86_64/bin" >> "$GITHUB_PATH"
+
+      # Mirrors the Makefile's GO_BUILD_CMD (the proven `make app` path) plus the
+      # `-o NanoKVM-Server` name and build.sh's RPATH patch so the deployed binary
+      # finds its libs in ./dl_lib on the device.
+      - name: Build NanoKVM-Server (riscv64, CGO/libkvm)
+        working-directory: server
+        run: |
+          set -e
+          riscv64-unknown-linux-musl-gcc --version | head -1
+          CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 \
+            CC=riscv64-unknown-linux-musl-gcc \
+            CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" \
+            go build -o NanoKVM-Server -v
+          patchelf --add-rpath '$ORIGIN/dl_lib' NanoKVM-Server
+          file NanoKVM-Server
+
+      # Bundle the pinned MyOwnMesh daemon INTO the release — like AllMyStuff
+      # bundles the daemon into its app. The daemon is the prebuilt
+      # myownmesh-linux-riscv64.tar.gz from the MyOwnMesh release named in
+      # .myownmesh-rev (MyOwnMesh cross-compiles it with cargo-zigbuild). One
+      # NanoKVM release asset then carries the whole device payload.
+      - name: Bundle the pinned MyOwnMesh daemon
+        run: |
+          set -e
+          rev="$(cat .myownmesh-rev)"
+          dasset="myownmesh-linux-riscv64.tar.gz"
+          durl="https://github.com/mrjeeves/MyOwnMesh/releases/download/${rev}/${dasset}"
+          echo "==> bundling daemon ${rev}: ${durl}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "/tmp/${dasset}"        "$durl"
+          curl -fsSL --retry 3 --retry-delay 5 -o "/tmp/${dasset}.sha256" "$durl.sha256"
+          ( cd /tmp && sha256sum -c "${dasset}.sha256" )
+          mkdir -p bundle
+          tar -xzf "/tmp/${dasset}" -C bundle            # -> bundle/myownmesh
+          cp server/NanoKVM-Server bundle/NanoKVM-Server
+          chmod +x bundle/NanoKVM-Server bundle/myownmesh
+          file bundle/myownmesh bundle/NanoKVM-Server
+
+      # The device payload: the server + the pinned daemon in one tarball
+      # (+ .sha256). `just fetch`/`install` download this single asset.
+      - name: Package device bundle (server + daemon)
+        run: |
+          set -e
+          NAME="nanokvm-mesh-riscv64"
+          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh
+          sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+          ls -la "${NAME}.tar.gz"*
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            nanokvm-mesh-riscv64.tar.gz
+            nanokvm-mesh-riscv64.tar.gz.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

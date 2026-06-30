@@ -1,0 +1,10 @@
+{
+  "kind": "offer",
+  "route": {
+    "from": "kvm-abcdef:site",
+    "id": "route:kvm-abcdef:site→den-tower:site-view:80-1",
+    "media": "generic",
+    "to": "den-tower:site-view:80-1"
+  },
+  "t": "route"
+}
