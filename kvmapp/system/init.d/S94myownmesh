@@ -12,6 +12,21 @@
 MYOWNMESH_HOME=/data/myownmesh
 export MYOWNMESH_HOME
 
+# The NanoKVM never streams media over mesh tracks — its video rides its own
+# tunnelled web UI (the "sites" plane over the data channel), not a WebRTC media
+# lane. Left at the daemon's default (8), every peer connection would negotiate
+# 16 sendrecv media m-lines, and on this lone in-order 1 GHz C906 (no crypto
+# acceleration) that offer/answer + per-lane SRTP setup is slow enough to push a
+# connect past the 30 s data-channel-open timeout — so the attempt is torn down
+# and rebuilt before it ever opens, a permanent churn that pegs the core and
+# starves the daemon control socket (the mesh bridge then can't complete its
+# handshake and the KVM never comes online). One lane keeps a video/audio path
+# available for the future while letting the data channel open promptly.
+# (Ignored by daemons that predate MYOWNMESH_MEDIA_LANES, so it's safe to set
+# regardless of the bundled daemon version.)
+MYOWNMESH_MEDIA_LANES=1
+export MYOWNMESH_MEDIA_LANES
+
 # The control socket MUST live on tmpfs. /data is the device's writable data
 # partition (typically exFAT/FAT), which can't hold a Unix socket file — bind()
 # returns EPERM. Identity/rosters/state are regular files and stay on /data; only
