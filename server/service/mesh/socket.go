@@ -53,11 +53,10 @@ type Socket struct {
 	// interleave writes or steal each other's reply line.
 	reqMu sync.Mutex
 
-	mu      sync.Mutex
-	conn    net.Conn
-	reader  *bufio.Reader
-	writer  *bufio.Writer
-	pending []chan Response // single-shot replies, FIFO
+	mu     sync.Mutex
+	conn   net.Conn
+	reader *bufio.Reader
+	writer *bufio.Writer
 
 	// event-stream state
 	clientID string
@@ -120,23 +119,32 @@ func (s *Socket) writeLine(v interface{}) error {
 const daemonReadTimeout = 10 * time.Second
 
 func (s *Socket) request(req request) (Response, error) {
+	// The op name in every error is what separates "daemon down" from "one
+	// specific handler stalled" when reading /var/log/nanokvm-mesh.log — the
+	// dispatch-path ops (identity_show, networks_list, channel_subscribe) are
+	// answered by the connection task, while capabilities_set / channel_send_*
+	// round-trip through the engine driver and stall when it is busy.
+	op, _ := req["op"].(string)
+	if op == "" {
+		op = "unknown-op"
+	}
 	s.reqMu.Lock()
 	defer s.reqMu.Unlock()
 	if err := s.writeLine(req); err != nil {
-		return Response{}, err
+		return Response{}, fmt.Errorf("%s: write request: %w", op, err)
 	}
 	_ = s.conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
 	line, err := s.reader.ReadBytes('\n')
 	_ = s.conn.SetReadDeadline(time.Time{})
 	if err != nil {
-		return Response{}, fmt.Errorf("read response: %w", err)
+		return Response{}, fmt.Errorf("%s: read response: %w", op, err)
 	}
 	var resp Response
 	if err := json.Unmarshal(line, &resp); err != nil {
-		return Response{}, fmt.Errorf("decode response: %w", err)
+		return Response{}, fmt.Errorf("%s: decode response: %w", op, err)
 	}
 	if !resp.OK {
-		return resp, fmt.Errorf("daemon error: %s", resp.Error)
+		return resp, fmt.Errorf("%s: daemon error: %s", op, resp.Error)
 	}
 	return resp, nil
 }
@@ -255,9 +263,16 @@ func (s *Socket) NetworkAdd(config map[string]interface{}) error {
 	return err
 }
 
-// ChannelSubscribe subscribes the event-stream client to a typed channel.
-func (s *Socket) ChannelSubscribe(network, channel string) error {
-	clientID := s.ClientID()
+// ChannelSubscribe subscribes an event-stream client — named by the client_id
+// from ITS events_subscribe ack — to a typed channel. Call this on the ctl
+// socket, never on the events socket: after events_subscribe the daemon treats
+// that connection as a one-way push stream and never reads from it again
+// (myownmesh control.rs run_events_stream), so a request written there is never
+// answered and dies as "read response: i/o timeout". That is the whole reason
+// the op carries client_id — it names the event stream the frames should route
+// to, while the request itself rides a command connection. Mirrors AllMyStuff's
+// control client (node/src/control_client.rs + mesh.rs subscribe_channels).
+func (s *Socket) ChannelSubscribe(clientID, network, channel string) error {
 	if clientID == "" {
 		return fmt.Errorf("channel_subscribe needs an events_subscribe client_id")
 	}
