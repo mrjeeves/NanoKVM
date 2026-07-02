@@ -99,6 +99,13 @@ type NodeProfile struct {
 	FleetName  string       `json:"fleet_name,omitempty"`
 	FleetOwner string       `json:"fleet_owner,omitempty"`
 	Kvm        *KvmAdvert   `json:"kvm,omitempty"`
+	// SentAt is the sender's wall clock (Unix ms) stamped at each send — the
+	// sample behind AllMyStuff's passive clock-skew estimate (app.rs sent_at,
+	// skip_serializing_if u64_is_zero ↔ omitempty here). Stamped per send, not
+	// at profile build, and only when this device's clock is sane: the KVM has
+	// no RTC, and a 1970 sample would read as ~56 years of skew on every peer.
+	// Absent (0) simply means "no sample" — old receivers ignore it.
+	SentAt uint64 `json:"sent_at,omitempty"`
 }
 
 // ---- graph model (mirror allmystuff-graph/src/model.rs) ---------------------
@@ -163,8 +170,9 @@ type ControlMessage struct {
 	Route     *RouteControl
 	Ownership *OwnershipControl
 	Kvm       *KvmControl
+	App       *AppControl
 	// Raw is the original JSON, retained for variants this bridge doesn't act
-	// on (share/site/app) so nothing is silently lost.
+	// on (share/site) so nothing is silently lost.
 	Raw json.RawMessage
 }
 
@@ -198,12 +206,17 @@ func DecodeControlMessage(raw json.RawMessage) (ControlMessage, error) {
 			return ControlMessage{}, err
 		}
 		msg.Kvm = &kc
+	case ControlKindApp:
+		var ac AppControl
+		if err := json.Unmarshal(raw, &ac); err != nil {
+			return ControlMessage{}, err
+		}
+		msg.App = &ac
 	default:
-		// share / site / app / anything newer: keep Raw, mark Unknown so
+		// share / site / anything newer: keep Raw, mark Unknown so
 		// callers don't misroute it. We deliberately don't fail.
 		if probe.T != string(ControlKindShare) &&
-			probe.T != string(ControlKindSite) &&
-			probe.T != string(ControlKindApp) {
+			probe.T != string(ControlKindSite) {
 			msg.Kind = ControlKindUnknown
 		}
 	}
@@ -297,6 +310,49 @@ func (k *KvmControl) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// ---- AppControl (tagged "kind") ----------------------------------------------
+
+// AppControlKind discriminates an AppControl message (app.rs AppControl).
+type AppControlKind string
+
+const (
+	// AppControlKindUpgrade is "update yourself and restart" — meaningless on
+	// the KVM (its firmware isn't AllMyStuff's self-updater), so it decodes
+	// and is ignored.
+	AppControlKindUpgrade AppControlKind = "upgrade"
+	// AppControlKindRestart is "relaunch your app onto the same build" — for
+	// the KVM that's restarting NanoKVM-Server via its init script.
+	AppControlKindRestart AppControlKind = "restart"
+	// AppControlKindRestartDevice is "reboot the machine you run on" — the
+	// recovery step heavier than an app restart. The receiver hands it to the
+	// OS; its presence dropping and returning is the confirmation (no reply).
+	AppControlKindRestartDevice AppControlKind = "restart_device"
+	AppControlKindUnknown       AppControlKind = "unknown"
+)
+
+// AppControl is an app-level command (upgrade / restart / restart_device),
+// gated owner/fleet by the receiver exactly like KVM curation.
+type AppControl struct {
+	Kind AppControlKind `json:"kind"`
+}
+
+// UnmarshalJSON decodes AppControl, mapping an unrecognised "kind" to
+// AppControlKindUnknown rather than failing (mirrors Rust's #[serde(other)]).
+func (a *AppControl) UnmarshalJSON(b []byte) error {
+	type raw AppControl
+	var r raw
+	if err := json.Unmarshal(b, &r); err != nil {
+		return err
+	}
+	*a = AppControl(r)
+	switch a.Kind {
+	case AppControlKindUpgrade, AppControlKindRestart, AppControlKindRestartDevice:
+	default:
+		a.Kind = AppControlKindUnknown
+	}
+	return nil
+}
+
 // ---- RouteControl (tagged "kind") -------------------------------------------
 
 // RouteControlKind discriminates a RouteControl message. The bridge acts on
@@ -346,6 +402,18 @@ func NewRouteAccept(routeID string) ControlMessage {
 		Kind    string `json:"kind"`
 		RouteID string `json:"route_id"`
 	}{Kind: string(RouteControlKindAccept), RouteID: routeID})
+}
+
+// NewRouteReject builds the RouteControl Reject reply for a route id. The
+// reason travels to the offerer's UI — a refusal must be visible, not a silent
+// nothing-happened (the offerer would otherwise wait out its 15 s offer expiry
+// and blame the network).
+func NewRouteReject(routeID, reason string) ControlMessage {
+	return wrapControl(ControlKindRoute, struct {
+		Kind    string `json:"kind"`
+		RouteID string `json:"route_id"`
+		Reason  string `json:"reason,omitempty"`
+	}{Kind: string(RouteControlKindReject), RouteID: routeID, Reason: reason})
 }
 
 // ---- control message encoding -----------------------------------------------

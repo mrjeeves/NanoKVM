@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"NanoKVM-Server/middleware"
 
@@ -23,6 +24,13 @@ type siteHost struct {
 	// send emits one outbound SiteFrame on CHANNEL_MEDIA to a specific peer.
 	send func(peer string, frame SiteFrame) error
 
+	// nack reports a frame that arrived on a dead/foreign route back to its
+	// sender as a RouteControl Reject. AllMyStuff deliberately never NACKs the
+	// site plane itself, so after a bridge restart (which empties activeRoutes)
+	// only we can tell a viewer its tunnel is gone — without this it keeps
+	// sending frames into the void until the user gives up. Nil-able (tests).
+	nack func(peer, route, reason string)
+
 	// serveConn drives one tunneled connection. Defaults to serveHTTP (the gin
 	// engine over the meshConn); overridable in tests that exercise only the
 	// demux without driving HTTP.
@@ -32,8 +40,15 @@ type siteHost struct {
 	// conns is keyed by route then conn id.
 	conns map[string]map[uint64]*meshConn
 	// activeRoutes is the set of route ids we accepted an Offer for; only frames
-	// on an active route are served.
+	// on an active route are served. Note: an AllMyStuff viewer expires an
+	// unanswered Offer after 15 s WITHOUT sending Teardown (Session::
+	// expire_offer is deliberately message-less) and re-offers under a fresh
+	// route id, so entries here can go stale; they're small, and a reject on
+	// the next stray frame (see nack) settles the peer's side.
 	activeRoutes map[string]string // route id -> peer (the offerer)
+	// lastNack rate-limits per-route Reject replies: a viewer draining a full
+	// pipe onto a dead route must produce one reject, not one per frame.
+	lastNack map[string]time.Time
 }
 
 func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(peer string, frame SiteFrame) error) *siteHost {
@@ -43,6 +58,7 @@ func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(peer string, 
 		send:         send,
 		conns:        make(map[string]map[uint64]*meshConn),
 		activeRoutes: make(map[string]string),
+		lastNack:     make(map[string]time.Time),
 	}
 	h.serveConn = h.serveHTTP
 	return h
@@ -77,6 +93,36 @@ func (h *siteHost) routePeer(route string) (string, bool) {
 	return peer, ok
 }
 
+// nackCooldown bounds how often one dead route is NACKed; a viewer draining a
+// full pipe onto it must produce one reject, not one per frame.
+const nackCooldown = 30 * time.Second
+
+// nackDeadRoute replies to a frame on a dead/foreign route with a rate-limited
+// RouteControl Reject so the sender tears its side down instead of tunneling
+// into the void.
+func (h *siteHost) nackDeadRoute(peer, route string) {
+	if h.nack == nil {
+		return
+	}
+	h.mu.Lock()
+	if t, ok := h.lastNack[route]; ok && time.Since(t) < nackCooldown {
+		h.mu.Unlock()
+		return
+	}
+	// Keep the rate-limit map from growing without bound across many
+	// short-lived route ids: long-expired entries have done their job.
+	if len(h.lastNack) > 64 {
+		for r, t := range h.lastNack {
+			if time.Since(t) > 10*nackCooldown {
+				delete(h.lastNack, r)
+			}
+		}
+	}
+	h.lastNack[route] = time.Now()
+	h.mu.Unlock()
+	h.nack(peer, route, "route not live on this KVM — re-offer to reconnect")
+}
+
 // handleFrame processes one inbound SiteFrame for a route. peer is the sender.
 func (h *siteHost) handleFrame(peer string, f SiteFrame) {
 	// Only serve frames on a route whose Offer we accepted, and only from the
@@ -84,6 +130,7 @@ func (h *siteHost) handleFrame(peer string, f SiteFrame) {
 	offerer, active := h.routePeer(f.Route)
 	if !active || offerer != peer {
 		log.Debugf("mesh: dropping site frame on inactive/foreign route %s", f.Route)
+		h.nackDeadRoute(peer, f.Route)
 		return
 	}
 

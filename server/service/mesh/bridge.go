@@ -99,6 +99,10 @@ func NewBridge(engine *gin.Engine, conf *config.Config) *Bridge {
 	}
 	// The site host serves only our advertised web port.
 	b.sites = newSiteHost(engine, port, b.sendSiteFrame)
+	// A frame on a dead route gets a Reject back: after a bridge restart only
+	// we can tell a viewer its accepted tunnel no longer exists (AllMyStuff
+	// deliberately never NACKs the site plane itself).
+	b.sites.nack = b.rejectRouteTo
 	// Re-advertise whenever persisted state changes (claim/attach/detach/fleet).
 	st.OnChange(func() { b.reAdvertise() })
 	// Mirror mesh logs to a file (the server's stdout is discarded at boot).
@@ -332,9 +336,20 @@ func (b *Bridge) joinFleetNetwork(networkID, name string, venue *string) {
 		}
 		log.Infof("mesh: joined fleet network %s", networkID)
 	}
-	if err := b.joinPlanes(networkID); err != nil {
-		log.Warnf("mesh: subscribe planes on fleet network %s: %s", networkID, err)
+	// Retry the plane subscribes a few times before giving up: unlike the main
+	// network (where a joinPlanes failure aborts connectAndRun and the whole
+	// handshake retries), a fleet failure here would leave the fleet planes
+	// dark for the rest of the session with one warn line. The daemon's engine
+	// can stall ~10 s mid peer-connect on this device, so a beat between tries
+	// is usually all it takes. Mirrors AllMyStuff's bring-up retry cadence.
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err = b.joinPlanes(networkID); err == nil {
+			return
+		}
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 	}
+	log.Errorf("mesh: fleet planes DARK on %s until reconnect — owner's fleet won't see this KVM: %s",
+		networkID, err)
 }
 
 // fleetVenue returns the persisted fleet venue (transport config string) if any.
@@ -462,7 +477,7 @@ func (b *Bridge) greetPeer(network, peer string) {
 	if !running || ctl == nil {
 		return
 	}
-	payload, err := json.Marshal(b.currentProfile())
+	payload, err := b.presencePayload()
 	if err != nil {
 		return
 	}
@@ -473,12 +488,49 @@ func (b *Bridge) greetPeer(network, peer string) {
 	log.Infof("mesh: greeted peer %s on %s", peer, network)
 }
 
+// presencePayload marshals the current NodeProfile, stamped with this send's
+// wall clock (the sample behind AllMyStuff's passive clock-skew estimate) —
+// but only when the clock is sane. The KVM has no RTC and boots at 1970 until
+// NTP lands; an insane clock stays unstamped (sent_at omitted = "no sample")
+// rather than reading as decades of skew on every peer. Stamped here, per
+// send, never in buildProfile — a profile built once and sent twice must not
+// carry the first send's clock.
+func (b *Bridge) presencePayload() ([]byte, error) {
+	profile := b.currentProfile()
+	if now := time.Now(); now.Year() >= 2020 {
+		profile.SentAt = uint64(now.UnixMilli())
+	}
+	return json.Marshal(profile)
+}
+
 // sendControlTo sends a ControlMessage point-to-point on CHANNEL_CONTROL.
 func (b *Bridge) sendControlTo(network, peer string, msg ControlMessage) error {
 	b.mu.Lock()
 	ctl := b.ctl
 	b.mu.Unlock()
 	return ctl.ChannelSendTo(network, ChannelControl, peer, msg.Payload())
+}
+
+// rejectRouteTo sends a RouteControl Reject to a peer across our networks —
+// peer-addressed like sendSiteFrame, so the network the peer is actually on
+// delivers it and the rest are harmless no-ops. Used for frames on dead
+// routes, where we don't know which network the stale route rode.
+func (b *Bridge) rejectRouteTo(peer, route, reason string) {
+	b.mu.Lock()
+	ctl := b.ctl
+	nets := append([]string(nil), b.networks...)
+	running := b.running
+	b.mu.Unlock()
+	if !running || ctl == nil {
+		return
+	}
+	msg := NewRouteReject(route, reason)
+	for _, n := range nets {
+		if err := ctl.ChannelSendTo(n, ChannelControl, peer, msg.Payload()); err == nil {
+			log.Infof("mesh: rejected dead route %s to %s (%s)", route, peer, reason)
+			return
+		}
+	}
 }
 
 // sendSiteFrame sends one outbound SiteFrame on CHANNEL_MEDIA to a peer. It
@@ -508,8 +560,7 @@ func (b *Bridge) sendSiteFrame(peer string, frame SiteFrame) error {
 // broadcastPresence pushes the current NodeProfile on CHANNEL_PRESENCE to every
 // network we're on.
 func (b *Bridge) broadcastPresence() {
-	profile := b.currentProfile()
-	payload, err := json.Marshal(profile)
+	payload, err := b.presencePayload()
 	if err != nil {
 		log.Warnf("mesh: marshal presence: %s", err)
 		return
@@ -524,7 +575,12 @@ func (b *Bridge) broadcastPresence() {
 	}
 	for _, n := range nets {
 		if err := ctl.ChannelSendAll(n, ChannelPresence, json.RawMessage(payload)); err != nil {
-			log.Debugf("mesh: broadcast presence on %s: %s", n, err)
+			// Warn, not debug: a swallowed presence failure is the difference
+			// between "the KVM is invisible and nothing says why" and a log
+			// line naming it. channel_send_all rides the daemon's engine
+			// driver, which on this single-core device can stall ~10 s while
+			// a peer connect is in flight — the next 30 s tick retries.
+			log.Warnf("mesh: broadcast presence on %s: %s", n, err)
 		}
 	}
 }
