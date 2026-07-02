@@ -193,6 +193,7 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	if err := b.joinPlanes(b.mesh.NetworkId); err != nil {
 		return err
 	}
+	log.Infof("mesh: joined planes on %s (presence/control/media)", b.mesh.NetworkId)
 
 	// Also (re)join + plane-subscribe the fleet network if we already hold a key.
 	if key := b.state.FleetKey(); key != "" {
@@ -202,6 +203,12 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	}
 
 	b.reAdvertise()
+	// The handshake is done — everything below is steady-state. Without this
+	// line a healthy bridge is silent at INFO until the first peer greeting,
+	// which makes `just verify` right after boot unreadable: no news must be
+	// distinguishable from a hang.
+	log.Infof("mesh: up — advertising %q on %s (claimable=%v, owner=%q), presence every %s",
+		b.mesh.Name, b.mesh.NetworkId, b.state.Claimable(), b.state.Owner(), presenceInterval)
 
 	// 5. Presence loop until the connection drops or we're told to stop.
 	ticker := time.NewTicker(presenceInterval)
