@@ -14,17 +14,21 @@ export MYOWNMESH_HOME
 
 # The NanoKVM never streams media over mesh tracks — its video rides its own
 # tunnelled web UI (the "sites" plane over the data channel), not a WebRTC media
-# lane. Left at the daemon's default (8), every peer connection would negotiate
-# 16 sendrecv media m-lines, and on this lone in-order 1 GHz C906 (no crypto
-# acceleration) that offer/answer + per-lane SRTP setup is slow enough to push a
-# connect past the 30 s data-channel-open timeout — so the attempt is torn down
-# and rebuilt before it ever opens, a permanent churn that pegs the core and
-# starves the daemon control socket (the mesh bridge then can't complete its
-# handshake and the KVM never comes online). One lane keeps a video/audio path
-# available for the future while letting the data channel open promptly.
+# lane. 0 = data-channel only: no tracks provisioned, no media m-lines in the
+# offer, no per-lane SRTP contexts — the entire media-section machinery is
+# bypassed. That's everything this appliance needs.
+#
+# Why 0 and not 1: with one lane the daemon's engine wedges on this device the
+# moment it builds the first offer — a synchronous spin somewhere in the
+# media-bearing offer path that only manifests on the C906 (the same build at
+# the same lane count completes in milliseconds on x86). The engine's offer
+# timeout can't rescue it (a poll that never returns can't be timed out), so
+# the whole engine freezes and the KVM never becomes claimable. Zero lanes
+# skips that path entirely; if video-over-mesh ever matters, the spin has to
+# be root-caused in the media path first.
 # (Ignored by daemons that predate MYOWNMESH_MEDIA_LANES, so it's safe to set
 # regardless of the bundled daemon version.)
-MYOWNMESH_MEDIA_LANES=1
+MYOWNMESH_MEDIA_LANES=0
 export MYOWNMESH_MEDIA_LANES
 
 # The appliance's daemon version is owned by the NanoKVM release pipeline
