@@ -27,6 +27,18 @@ export MYOWNMESH_HOME
 MYOWNMESH_MEDIA_LANES=1
 export MYOWNMESH_MEDIA_LANES
 
+# The appliance's daemon version is owned by the NanoKVM release pipeline
+# (.myownmesh-rev → bundled binary → this script re-stages it every boot), so
+# the daemon's own self-updater must stay out of the loop: left enabled (its
+# default), it re-downloads and re-stages every new MyOwnMesh release into
+# /data/myownmesh/updates on a 6 h cycle, and the staged binary can never
+# stick because boot re-clobbers the tmpfs copy from /kvmapp — wasted flash,
+# wasted bandwidth, and a version that would drift from the pin if it ever DID
+# stick. The updater documents this exact escape hatch "for fleets where a
+# supervisor owns versioning".
+MYOWNMESH_AUTOUPDATE=0
+export MYOWNMESH_AUTOUPDATE
+
 # The control socket MUST live on tmpfs. /data is the device's writable data
 # partition (typically exFAT/FAT), which can't hold a Unix socket file — bind()
 # returns EPERM. Identity/rosters/state are regular files and stay on /data; only
@@ -79,9 +91,21 @@ case "$1" in
     # Pin the daemon's control socket onto tmpfs (see above). MeshConfig is
     # #[serde(default)], so this minimal config.json loads fine and the daemon
     # preserves control_socket across its own config saves. Only (re)write it if
-    # it's missing or doesn't already pin the socket, so we don't clobber a
-    # daemon- or operator-managed config.
-    if [ ! -f "$CONFIG" ] || ! grep -q control_socket "$CONFIG" 2>/dev/null; then
+    # it doesn't already pin the socket to OUR path — the guard must match the
+    # value, not the key: the daemon's own config save serializes
+    # "control_socket": null when unset, and an operator-edited file can carry a
+    # wrong path; either would satisfy a key-only grep and leave the daemon
+    # binding on /data (exFAT → EPERM) forever, unrepaired by reboots.
+    if [ ! -f "$CONFIG" ]; then
+        printf '%s\n' "{\"daemon\":{\"control_socket\":\"$CONTROL_SOCKET\"}}" > "$CONFIG"
+    elif ! grep -q "$CONTROL_SOCKET" "$CONFIG" 2>/dev/null; then
+        # Repairing a config that lost the pin resets it to the minimal shape.
+        # That drops any other saved settings, but everything load-bearing
+        # recovers on its own: identity/rosters live outside config.json and
+        # the bridge re-adds the mesh network on its next handshake. Say so
+        # loudly rather than repairing in silence.
+        echo "myownmesh: config.json lost its control_socket pin — resetting to minimal config (old saved as config.json.bad)"
+        cp "$CONFIG" "$CONFIG.bad" 2>/dev/null
         printf '%s\n' "{\"daemon\":{\"control_socket\":\"$CONTROL_SOCKET\"}}" > "$CONFIG"
     fi
 
@@ -120,7 +144,19 @@ case "$1" in
     if [ -f /tmp/myownmesh/supervisor.pid ]; then
         kill "$(cat /tmp/myownmesh/supervisor.pid)" 2>/dev/null
     fi
+    # TERM first, then escalate: a daemon whose engine is wedged never finishes
+    # its graceful shutdown and survives SIGTERM outright — observed on-device
+    # as a zombie daemon grinding the core next to its freshly-started
+    # replacement. Give graceful two seconds, then make it final.
     killall myownmesh 2>/dev/null
+    _i=0
+    while pidof myownmesh >/dev/null 2>&1 && [ "$_i" -lt 2 ]; do
+        sleep 1; _i=$((_i + 1))
+    done
+    if pidof myownmesh >/dev/null 2>&1; then
+        echo "myownmesh: did not exit on TERM; sending KILL"
+        killall -9 myownmesh 2>/dev/null
+    fi
     rm -rf /tmp/myownmesh
     echo "OK"
     ;;

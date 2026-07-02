@@ -144,6 +144,111 @@ func TestContractControlMessages(t *testing.T) {
 	}
 }
 
+// The daemon-socket fixtures pin what the bridge actually WRITES to the
+// control socket, exercised through the real Socket methods against a fake
+// daemon — previously these six fixtures sat in testdata unloaded by any test,
+// so the file paths existed but pinned nothing. (The mirror↔daemon link is
+// still only pinned on the AllMyStuff side; these at least pin Go↔mirror.)
+func TestContractDaemonSocketRequests(t *testing.T) {
+	f := startFakeDaemon(t)
+	ctl, err := Dial(f.sock)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ctl.Close()
+
+	// channel_subscribe — the exact line, including the client_id field.
+	subFix := readFixture(t, "req_channel_subscribe")
+	var sub struct {
+		ClientID string `json:"client_id"`
+		Network  string `json:"network"`
+		Channel  string `json:"channel"`
+	}
+	if err := json.Unmarshal(subFix, &sub); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl.ChannelSubscribe(sub.ClientID, sub.Network, sub.Channel); err != nil {
+		t.Fatalf("channel_subscribe: %v", err)
+	}
+
+	// channel_send_all — with the fixture's own NodeProfile payload verbatim.
+	sendFix := readFixture(t, "req_channel_send_all")
+	var send struct {
+		Network string          `json:"network"`
+		Channel string          `json:"channel"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(sendFix, &send); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl.ChannelSendAll(send.Network, send.Channel, send.Payload); err != nil {
+		t.Fatalf("channel_send_all: %v", err)
+	}
+
+	// capabilities_set — the fixture's capability matrix verbatim.
+	capFix := readFixture(t, "req_capabilities_set")
+	var caps struct {
+		Network      string          `json:"network"`
+		Capabilities json.RawMessage `json:"capabilities"`
+	}
+	if err := json.Unmarshal(capFix, &caps); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctl.CapabilitiesSet(caps.Network, caps.Capabilities); err != nil {
+		t.Fatalf("capabilities_set: %v", err)
+	}
+
+	for fixName, op := range map[string]string{
+		"req_channel_subscribe": "channel_subscribe",
+		"req_channel_send_all":  "channel_send_all",
+		"req_capabilities_set":  "capabilities_set",
+	} {
+		reqs := f.requests(op)
+		if len(reqs) != 1 {
+			t.Fatalf("%s: %d requests recorded", op, len(reqs))
+		}
+		got, _ := json.Marshal(reqs[0])
+		if !jsonEqual(readFixture(t, fixName), got) {
+			t.Errorf("%s drifted from fixture\n  fixture: %s\n  wire:    %s", op, readFixture(t, fixName), got)
+		}
+	}
+}
+
+// The daemon-socket response fixtures decode through the bridge's real types.
+func TestContractDaemonSocketResponses(t *testing.T) {
+	// response_ok — the generic ack shape, carrying a client_id here.
+	var resp Response
+	if err := json.Unmarshal(readFixture(t, "response_ok"), &resp); err != nil || !resp.OK {
+		t.Fatalf("response_ok decoded wrong: %+v (err %v)", resp, err)
+	}
+	var data struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil || data.ClientID == "" {
+		t.Fatalf("response_ok data decoded wrong: %+v (err %v)", data, err)
+	}
+
+	// client_id — the bare "c<n>" string form the ack carries.
+	var id string
+	if err := json.Unmarshal(readFixture(t, "client_id"), &id); err != nil || id != data.ClientID {
+		t.Fatalf("client_id fixture = %q (err %v), want %q", id, err, data.ClientID)
+	}
+
+	// server_out_channel_inbound — a push frame whose payload must decode as a
+	// control message through the real dispatcher.
+	var ci ChannelInbound
+	if err := json.Unmarshal(readFixture(t, "server_out_channel_inbound"), &ci); err != nil {
+		t.Fatal(err)
+	}
+	if ci.Channel != ChannelControl || ci.From == "" {
+		t.Fatalf("server_out_channel_inbound fields wrong: %+v", ci)
+	}
+	msg, err := DecodeControlMessage(ci.Payload)
+	if err != nil || msg.Kind != ControlKindKvm || msg.Kvm == nil || msg.Kvm.Kind != KvmControlKindAttach {
+		t.Fatalf("server_out payload decoded wrong: %+v (err %v)", msg, err)
+	}
+}
+
 func containsStr(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {

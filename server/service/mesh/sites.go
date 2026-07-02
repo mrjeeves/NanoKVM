@@ -85,6 +85,22 @@ func (h *siteHost) tearDownRoute(route string) {
 	}
 }
 
+// tearDownAll closes every tunneled connection and forgets every route — the
+// daemon-connection-dropped path, where no Teardown/Close frame can ever
+// arrive to do it per-route.
+func (h *siteHost) tearDownAll() {
+	h.mu.Lock()
+	conns := h.conns
+	h.conns = make(map[string]map[uint64]*meshConn)
+	h.activeRoutes = make(map[string]string)
+	h.mu.Unlock()
+	for _, byConn := range conns {
+		for _, c := range byConn {
+			_ = c.Close()
+		}
+	}
+}
+
 // routePeer returns the peer a route was offered by, if active.
 func (h *siteHost) routePeer(route string) (string, bool) {
 	h.mu.Lock()

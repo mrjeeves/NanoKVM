@@ -59,8 +59,17 @@ func newMeshConn(route string, conn uint64, send func(SiteFrame) error) *meshCon
 	}
 }
 
+// feedStallTimeout bounds how long feed waits for the HTTP consumer to drain a
+// full inbound buffer. feed runs on the event-stream readLoop — the single
+// goroutine that also carries claims, attach/detach, presence greets, and
+// every OTHER tunnel's frames — so a consumer that stops reading must cost the
+// stream one bounded stall, not freeze the bridge until the consumer recovers.
+const feedStallTimeout = 5 * time.Second
+
 // feed delivers one inbound Data payload. It never blocks the demux on a closed
-// conn (drops to the closed signal instead).
+// conn, and a conn whose consumer has stalled past feedStallTimeout with a full
+// buffer (64 chunks ≈ 2.5 MB backlog) is closed as dead rather than allowed to
+// head-of-line-block the whole event stream.
 func (m *meshConn) feed(data []byte) {
 	if len(data) == 0 {
 		return
@@ -71,6 +80,16 @@ func (m *meshConn) feed(data []byte) {
 	select {
 	case m.inbound <- cp:
 	case <-m.closed:
+	default:
+		// Buffer full — give the consumer a bounded grace, then declare it dead.
+		t := time.NewTimer(feedStallTimeout)
+		defer t.Stop()
+		select {
+		case m.inbound <- cp:
+		case <-m.closed:
+		case <-t.C:
+			_ = m.Close()
+		}
 	}
 }
 
