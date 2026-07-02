@@ -16,10 +16,55 @@ func (b *Bridge) handleControl(network, from string, msg ControlMessage) {
 		b.handleKvm(network, from, msg.Kvm)
 	case ControlKindRoute:
 		b.handleRoute(network, from, msg.Route)
+	case ControlKindApp:
+		b.handleApp(network, from, msg.App)
 	default:
-		// share / site / app / unknown — not acted on in v1.
+		// share / site / unknown — not acted on in v1.
 	}
 }
+
+// handleApp processes app-level commands (app.rs AppControl), gated on the
+// sender being the owner exactly like KVM curation. restart_device reboots the
+// appliance and "restart" relaunches NanoKVM-Server; neither sends a reply —
+// presence dropping and returning (or the fresh process re-advertising) is the
+// confirmation, mirroring AllMyStuff's node. "upgrade" is meaningless here
+// (the KVM's firmware is not AllMyStuff's self-updater) and is ignored.
+func (b *Bridge) handleApp(network, from string, ac *AppControl) {
+	if ac == nil {
+		return
+	}
+	if !b.senderMayControl(from) {
+		log.Infof("mesh: app control %q from non-owner %s ignored", ac.Kind, from)
+		return
+	}
+	switch ac.Kind {
+	case AppControlKindRestartDevice:
+		log.Infof("mesh: device reboot requested by %s — handing to the OS", from)
+		// Off the event-stream goroutine: restartDevice blocks on each OS
+		// attempt, and a stalled reboot must not stall inbound frames.
+		go func() {
+			if err := restartDeviceFn(); err != nil {
+				log.Warnf("mesh: device reboot refused: %s", err)
+			}
+		}()
+	case AppControlKindRestart:
+		log.Infof("mesh: app restart requested by %s — relaunching NanoKVM-Server", from)
+		go func() {
+			if err := restartServerFn(); err != nil {
+				log.Warnf("mesh: app restart failed: %s", err)
+			}
+		}()
+	default:
+		// upgrade / unknown — nothing to act on.
+	}
+}
+
+// The reboot/relaunch actions behind handleApp, swappable so tests can observe
+// the dispatch without actually asking the OS for a reboot.
+var (
+	restartDeviceFn = restartDevice
+	restartServerFn = restartServer
+)
 
 // handleOwnership processes Claim and FleetKey.
 func (b *Bridge) handleOwnership(network, from string, oc *OwnershipControl) {
@@ -101,11 +146,17 @@ func (b *Bridge) handleRoute(network, from string, rc *RouteControl) {
 		if rc.Route == nil || !rc.Route.IsSiteRoute() {
 			return // v1 only tunnels site routes (the web UI)
 		}
+		routeID := rc.Route.ID
 		if !b.senderMayControl(from) {
-			log.Infof("mesh: site route offer from non-owner %s ignored", from)
+			// Reject with a reason instead of silence: without it the offerer
+			// waits out its 15 s offer expiry and blames the network.
+			log.Infof("mesh: site route offer from non-owner %s rejected", from)
+			if err := b.sendControlTo(network, from,
+				NewRouteReject(routeID, "not this KVM's owner — claim it first")); err != nil {
+				log.Warnf("mesh: send route Reject to %s: %s", from, err)
+			}
 			return
 		}
-		routeID := rc.Route.ID
 		b.sites.markRouteActive(routeID, from)
 		if err := b.sendControlTo(network, from, NewRouteAccept(routeID)); err != nil {
 			log.Warnf("mesh: send route Accept to %s: %s", from, err)
@@ -116,8 +167,17 @@ func (b *Bridge) handleRoute(network, from string, rc *RouteControl) {
 		b.sites.tearDownRoute(rc.RouteID)
 		log.Debugf("mesh: tore down route %s", rc.RouteID)
 
+	case RouteControlKindReject:
+		// The offerer refused/abandoned a route we track (e.g. it expired the
+		// offer and re-offered under a fresh id) — treat like a teardown, but
+		// only from the peer the route actually belongs to.
+		if peer, ok := b.sites.routePeer(rc.RouteID); ok && peer == from {
+			b.sites.tearDownRoute(rc.RouteID)
+			log.Debugf("mesh: peer rejected route %s — torn down", rc.RouteID)
+		}
+
 	default:
-		// accept / reject / unknown — nothing to do host-side.
+		// accept / unknown — nothing to do host-side.
 	}
 }
 

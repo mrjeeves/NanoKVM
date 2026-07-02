@@ -23,8 +23,8 @@ type fakeDaemon struct {
 	sock string
 	done chan struct{}
 
-	mu         sync.Mutex
-	subscribes []map[string]interface{} // channel_subscribe requests, as received
+	mu   sync.Mutex
+	reqs []map[string]interface{} // every request received, in order
 }
 
 func startFakeDaemon(t *testing.T) *fakeDaemon {
@@ -66,6 +66,9 @@ func (f *fakeDaemon) serve(conn net.Conn) {
 			continue
 		}
 		op, _ := req["op"].(string)
+		f.mu.Lock()
+		f.reqs = append(f.reqs, req)
+		f.mu.Unlock()
 		switch op {
 		case "events_subscribe":
 			_, _ = conn.Write([]byte(`{"ok":true,"data":{"subscribed":true,"client_id":"c7"}}` + "\n"))
@@ -75,9 +78,6 @@ func (f *fakeDaemon) serve(conn net.Conn) {
 			<-f.done
 			return
 		case "channel_subscribe":
-			f.mu.Lock()
-			f.subscribes = append(f.subscribes, req)
-			f.mu.Unlock()
 			_, _ = conn.Write([]byte(`{"ok":true,"data":{"subscribed":true}}` + "\n"))
 		default:
 			_, _ = conn.Write([]byte(`{"ok":true,"data":{}}` + "\n"))
@@ -85,11 +85,16 @@ func (f *fakeDaemon) serve(conn net.Conn) {
 	}
 }
 
-func (f *fakeDaemon) channelSubscribes() []map[string]interface{} {
+// requests returns every recorded request with the given op, in arrival order.
+func (f *fakeDaemon) requests(op string) []map[string]interface{} {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]map[string]interface{}, len(f.subscribes))
-	copy(out, f.subscribes)
+	var out []map[string]interface{}
+	for _, r := range f.reqs {
+		if r["op"] == op {
+			out = append(out, r)
+		}
+	}
 	return out
 }
 
@@ -135,7 +140,7 @@ func TestJoinPlanesRoutesChannelSubscribeOverCtl(t *testing.T) {
 		t.Fatalf("joinPlanes: %v", err)
 	}
 
-	subs := f.channelSubscribes()
+	subs := f.requests("channel_subscribe")
 	want := map[string]bool{ChannelPresence: true, ChannelControl: true, ChannelMedia: true}
 	if len(subs) != len(want) {
 		t.Fatalf("channel_subscribe count = %d, want %d (%v)", len(subs), len(want), subs)

@@ -88,13 +88,38 @@ case "$1" in
     cp "$DAEMON_SRC" "$DAEMON_DST"
     chmod +x "$DAEMON_DST"
 
-    # Launch the daemon detached. `serve` is the MyOwnMesh daemon subcommand
-    # (crates/myownmesh Command::Serve); it serves $MYOWNMESH_HOME/daemon.sock.
-    "$DAEMON_DST" serve >/var/log/myownmesh.log 2>&1 &
-    echo "myownmesh started (home=$MYOWNMESH_HOME, socket=$CONTROL_SOCKET)"
+    # Launch the daemon under a respawn supervisor. The Go bridge only retries
+    # its *connection* — nothing else brings a crashed/OOM-killed daemon back,
+    # and a KVM is exactly the box nobody sshs into to restart things (this
+    # mirrors AllMyStuff's node, which now supervises its bundled daemon the
+    # same way). Backoff doubles 2 s → 60 s and resets after an hour of
+    # healthy run, so a crash-loop can't peg the single core while a one-off
+    # crash restarts almost immediately. `serve` is the MyOwnMesh daemon
+    # subcommand; it serves $CONTROL_SOCKET.
+    : > /var/log/myownmesh.log
+    (
+        _backoff=2
+        while :; do
+            _started=$(date +%s 2>/dev/null || echo 0)
+            "$DAEMON_DST" serve >>/var/log/myownmesh.log 2>&1
+            _ended=$(date +%s 2>/dev/null || echo 0)
+            [ $((_ended - _started)) -ge 3600 ] && _backoff=2
+            echo "myownmesh: daemon exited; respawn in ${_backoff}s" >>/var/log/myownmesh.log
+            sleep "$_backoff"
+            _backoff=$((_backoff * 2))
+            [ "$_backoff" -gt 60 ] && _backoff=60
+        done
+    ) &
+    echo $! > "$RUNTIME_DIR/supervisor.pid"
+    echo "myownmesh started (home=$MYOWNMESH_HOME, socket=$CONTROL_SOCKET, supervised)"
     ;;
 
   stop)
+    # Kill the supervisor loop BEFORE the daemon, or killall below would just
+    # trigger one more respawn.
+    if [ -f /tmp/myownmesh/supervisor.pid ]; then
+        kill "$(cat /tmp/myownmesh/supervisor.pid)" 2>/dev/null
+    fi
     killall myownmesh 2>/dev/null
     rm -rf /tmp/myownmesh
     echo "OK"
