@@ -107,6 +107,34 @@ func TestHandleAppGatesOnOwner(t *testing.T) {
 	}
 }
 
+// Co-fleet members hold the same authority as the owner — the protocol
+// documents it ("only the device's owner or a fleet co-member is obeyed") and
+// the GUI offers them the controls; before this the bridge silently ignored
+// them.
+func TestSenderMayControlCoFleet(t *testing.T) {
+	b := testBridge(t)
+	if !b.state.TryClaim("owner-node-ABCDE") {
+		t.Fatal("claim should succeed")
+	}
+
+	// Not rostered → refused.
+	if b.senderMayControl("fleet-mate-XYZAB") {
+		t.Fatal("unknown sender allowed before roster refresh")
+	}
+
+	// Rostered under the canonical pubkey (no display suffix, like the
+	// daemon's roster) → the suffixed wire identity is allowed.
+	b.mu.Lock()
+	b.fleetRoster = map[string]struct{}{"fleet-mate": {}}
+	b.mu.Unlock()
+	if !b.senderMayControl("fleet-mate-XYZAB") {
+		t.Fatal("co-fleet member refused")
+	}
+	if b.senderMayControl("stranger-QRSTU") {
+		t.Fatal("non-member allowed")
+	}
+}
+
 func TestPresencePayloadStampsSentAtPerSend(t *testing.T) {
 	b := testBridge(t)
 	before := uint64(time.Now().UnixMilli())

@@ -133,9 +133,20 @@ func (s *Socket) request(req request) (Response, error) {
 	if err := s.writeLine(req); err != nil {
 		return Response{}, fmt.Errorf("%s: write request: %w", op, err)
 	}
-	_ = s.conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
+	// Snapshot the conn under s.mu: Close (from connectAndRun's teardown, a
+	// different goroutine) nils s.conn, and an unguarded s.conn.SetReadDeadline
+	// here would be a nil-pointer crash on whichever goroutine was mid-request
+	// when the bridge tore down. Deadline calls on the snapshot are safe after
+	// Close — a closed net.Conn returns errors, it doesn't panic.
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil {
+		return Response{}, fmt.Errorf("%s: socket closed", op)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
 	line, err := s.reader.ReadBytes('\n')
-	_ = s.conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return Response{}, fmt.Errorf("%s: read response: %w", op, err)
 	}
@@ -167,10 +178,18 @@ func (s *Socket) Subscribe(handler ChannelHandler, onClose func()) error {
 		return err
 	}
 	// First line is the ack carrying client_id. Bound the wait (the long-lived
-	// readLoop started below intentionally runs with no deadline).
-	_ = s.conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
+	// readLoop started below intentionally runs with no deadline). Same conn
+	// snapshot as request(): a concurrent Close must produce an error, not a
+	// nil dereference.
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("events_subscribe: socket closed")
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
 	line, err := s.reader.ReadBytes('\n')
-	_ = s.conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return fmt.Errorf("read events_subscribe ack: %w", err)
 	}
@@ -318,6 +337,29 @@ func (s *Socket) CapabilitiesSet(network string, capabilities interface{}) error
 		"capabilities": capabilities,
 	})
 	return err
+}
+
+// RosterEntry is the subset of a roster_list entry we use. DeviceID is the
+// canonical pubkey portion (base32, no display suffix) — the daemon's roster
+// compares peers by exactly this value.
+type RosterEntry struct {
+	DeviceID string `json:"device_id"`
+	Label    string `json:"label"`
+}
+
+// RosterList returns the approved-peers roster of a network.
+func (s *Socket) RosterList(network string) ([]RosterEntry, error) {
+	resp, err := s.request(request{"op": "roster_list", "network": network})
+	if err != nil {
+		return nil, err
+	}
+	var data struct {
+		Roster []RosterEntry `json:"roster"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return nil, err
+	}
+	return data.Roster, nil
 }
 
 // Identity is the subset of identity_show we use.

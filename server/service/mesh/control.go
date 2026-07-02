@@ -98,6 +98,9 @@ func (b *Bridge) handleOwnership(network, from string, oc *OwnershipControl) {
 		if oc.Key != "" {
 			fleetNet := DeriveFleetNetworkID(oc.Key)
 			b.joinFleetNetwork(fleetNet, oc.Name, oc.Venue)
+			// Warm the co-fleet authorization cache off this goroutine (we're
+			// on the event stream; refreshFleetRoster does a ctl round-trip).
+			go b.refreshFleetRoster()
 		}
 		if changed {
 			b.reAdvertise()
@@ -181,16 +184,26 @@ func (b *Bridge) handleRoute(network, from string, rc *RouteControl) {
 	}
 }
 
-// senderMayControl reports whether `from` is allowed to curate this device — its
-// owner (or a member of the same fleet). The mesh authenticates the sender, so
-// this is a real check. With no recorded owner the device is unclaimed and
-// curation is refused (claim first).
+// senderMayControl reports whether `from` is allowed to curate this device —
+// its owner or a member of the same fleet, exactly the authority the protocol
+// documents (app.rs KvmControl: "only the device's owner or a fleet co-member
+// is obeyed") and the GUI offers controls for. The mesh authenticates the
+// sender, so this is a real check; the fleet half reads the cached roster of
+// the fleet's closed network (signed membership, refreshed off this
+// goroutine). With no recorded owner the device is unclaimed and curation is
+// refused (claim first).
 func (b *Bridge) senderMayControl(from string) bool {
 	owner := b.state.Owner()
 	if owner == "" {
 		return false
 	}
-	return canonicalEqual(owner, from)
+	if canonicalEqual(owner, from) {
+		return true
+	}
+	b.mu.Lock()
+	_, coFleet := b.fleetRoster[pubkeyPart(from)]
+	b.mu.Unlock()
+	return coFleet
 }
 
 // canonicalEqual compares two mesh device ids, tolerating MyOwnMesh's optional

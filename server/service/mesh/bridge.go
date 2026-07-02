@@ -79,6 +79,11 @@ type Bridge struct {
 	networks  []string // network ids we're subscribed on (NetworkId + any fleet)
 	running   bool
 	greetedAt map[string]time.Time // peer id → last time we sent it our presence
+	// fleetRoster caches the fleet network's approved-peer roster as canonical
+	// pubkey parts — the co-fleet half of senderMayControl. Refreshed on fleet
+	// join and each presence tick; a cache (never an inline roster_list) so
+	// authorization checks on the event-stream goroutine stay non-blocking.
+	fleetRoster map[string]struct{}
 }
 
 // NewBridge builds a Bridge from the gin engine and config. It does not connect;
@@ -165,6 +170,13 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 		b.mu.Unlock()
 		_ = events.Close()
 		_ = ctl.Close()
+		// The daemon connection carried every tunnel's frames; without it each
+		// tunneled browser connection's serveHTTP goroutine would block in
+		// meshConn.Read forever (no deadline, no Close frame ever arriving),
+		// leaking a goroutine + conn per reconnect. Routes die with the peer
+		// links anyway — the viewer re-offers on the fresh session, and a
+		// stray frame on the old route id gets a Reject.
+		b.sites.tearDownAll()
 	}()
 
 	// Connection-dropped signal: the event reader fires onClose when the stream
@@ -204,6 +216,7 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 		fleetNet := DeriveFleetNetworkID(key)
 		venue := b.fleetVenue()
 		b.joinFleetNetwork(fleetNet, b.state.FleetName(), venue)
+		b.refreshFleetRoster()
 	}
 
 	b.reAdvertise()
@@ -225,8 +238,42 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 			return nil
 		case <-ticker.C:
 			b.broadcastPresence()
+			// Keep the co-fleet authorization roster warm. Here (this
+			// goroutine, off the event stream) so senderMayControl never
+			// blocks on a daemon round-trip; a co-member added mid-session
+			// gains control within one presence interval.
+			b.refreshFleetRoster()
 		}
 	}
+}
+
+// refreshFleetRoster snapshots the fleet network's approved-peer roster into
+// the senderMayControl cache. No fleet key → empty cache (owner-only).
+func (b *Bridge) refreshFleetRoster() {
+	key := b.state.FleetKey()
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if key == "" || ctl == nil {
+		b.mu.Lock()
+		b.fleetRoster = nil
+		b.mu.Unlock()
+		return
+	}
+	entries, err := ctl.RosterList(DeriveFleetNetworkID(key))
+	if err != nil {
+		// Keep the previous snapshot: a transient daemon stall must not
+		// revoke a co-member's working controls.
+		log.Debugf("mesh: fleet roster refresh: %s", err)
+		return
+	}
+	roster := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		roster[pubkeyPart(e.DeviceID)] = struct{}{}
+	}
+	b.mu.Lock()
+	b.fleetRoster = roster
+	b.mu.Unlock()
 }
 
 // socketPath resolves the daemon control socket path. We use mesh.Socket (on
@@ -252,8 +299,12 @@ func (b *Bridge) ensureNetwork() error {
 			return nil // already joined
 		}
 	}
-	// The public venue is an OPEN network that auto-approves members, so the KVM
-	// and any AllMyStuff app on the same network actually roster each other.
+	// The public venue: kind "open" plus auto_approve true. Note the mechanism —
+	// it is the auto_approve FLAG that admits authenticating peers (the daemon's
+	// handshake consults only cfg.auto_approve || rostered, and the flag
+	// defaults to FALSE); the "open" kind gates roster-gossip trust and
+	// governance, never admission. Drop the flag and every peer wedges at
+	// PendingApproval with no one on this headless box to approve them.
 	cfg := b.networkConfig(b.mesh.NetworkId, b.mesh.NetworkId, b.mesh.Label, b.mesh.Relays, nil, "open", true)
 	if err := b.ctl.NetworkAdd(cfg); err != nil {
 		return err
@@ -266,14 +317,16 @@ func (b *Bridge) ensureNetwork() error {
 // fields (stun_servers/turn_servers) pick up the daemon's public-venue defaults.
 // relays empty leaves signaling at its built-in defaults too. venue, when given,
 // is a NetworkConfig-shaped JSON object string that overrides the transport.
-// networkConfig builds a NetworkConfig JSON object (config.rs schema).
 //
-//   - kind: "open" (the public venue) auto-accepts members; "closed" (fleets)
-//     gates membership behind the signed authority chain. This mirrors how
-//     AllMyStuff uses open networks for discovery and closed networks as fleets.
-//   - autoApprove: on an open network we add every authenticating peer to the
-//     roster automatically (that's what makes the KVM and the app actually see
-//     each other). On a closed fleet it's false — the owner controls membership.
+//   - autoApprove is what ADMITS peers: the daemon's handshake approves an
+//     authenticating peer iff cfg.auto_approve || already-rostered — kind is
+//     never consulted for admission, and the flag defaults to false. True on
+//     the public venue (that's what makes the KVM and the app see each other),
+//     false on fleets (the owner's signed roster controls membership).
+//   - kind: "open" vs "closed" gates roster-GOSSIP trust and governance
+//     transitions (unsigned roster entries merge only on open networks) —
+//     it mirrors AllMyStuff's open-venue vs closed-fleet split, but it is
+//     not the admission mechanism.
 func (b *Bridge) networkConfig(id, networkID, label string, relays []string, venue *string, kind string, autoApprove bool) map[string]interface{} {
 	if venue != nil && *venue != "" {
 		// The owner handed down a full transport config; use it verbatim but
@@ -367,6 +420,9 @@ func (b *Bridge) ctlNetworksList() ([]NetworkSummary, error) {
 	b.mu.Lock()
 	ctl := b.ctl
 	b.mu.Unlock()
+	if ctl == nil {
+		return nil, fmt.Errorf("networks_list: bridge not connected")
+	}
 	return ctl.NetworksList()
 }
 
