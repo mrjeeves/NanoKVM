@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -351,8 +352,19 @@ func (b *Bridge) ctlNetworksList() ([]NetworkSummary, error) {
 // network, advertises capabilities, and records the network for presence
 // broadcasts. Idempotent: re-subscribing is cheap.
 func (b *Bridge) joinPlanes(networkID string) error {
+	b.mu.Lock()
+	ctl, events := b.ctl, b.events
+	b.mu.Unlock()
+	if ctl == nil || events == nil {
+		return fmt.Errorf("mesh: joinPlanes before connect")
+	}
+	// channel_subscribe names the EVENTS client (by its client_id) but must
+	// ride the ctl connection — the daemon never reads from a subscribed event
+	// stream, so a request written there sits unanswered until the read
+	// deadline. That was the "read response: i/o timeout" bring-up loop: the
+	// daemon was healthy, the request was just on the wrong socket.
 	for _, ch := range []string{ChannelPresence, ChannelControl, ChannelMedia} {
-		if err := b.events.ChannelSubscribe(networkID, ch); err != nil {
+		if err := ctl.ChannelSubscribe(events.ClientID(), networkID, ch); err != nil {
 			return err
 		}
 	}
