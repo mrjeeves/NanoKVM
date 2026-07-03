@@ -210,13 +210,29 @@ just setup-risc            # one-time: build the Docker builder image
 just build-risc            # server (Docker) + pinned daemon (download), one step
 just deploy <device-ip>    # scp the server + daemon + init script to a device
 just reboot <device-ip>
-just verify <device-ip>    # confirm the daemon is serving + its log
+just verify <device-ip>    # confirm the daemon is serving + its log (+ mesh_name)
 just undeploy <device-ip>  # reversible: remove the init script + reboot
 ```
 
 (`just build-server` builds only the server; `just daemon` only downloads the
 daemon. If the pinned MyOwnMesh release has no riscv asset yet, `daemon`/`fetch`
 fail with a clear pointer rather than building the wrong thing.)
+
+**The OLED app ships separately.** The on-screen UI (`kvm_system`) is a C++
+MaixCDK binary, not the Go server — so the joining-mesh line on the screen is
+NOT built by the release and NOT deployed by `just deploy`. An on-screen change
+reaches a device only through its own build + deploy:
+
+```sh
+make support               # build kvm_system (full MaixCDK image); stages it under kvmapp/kvm_system/
+just deploy-oled <ip>      # scp kvm_system to the device
+just reboot <ip>           # it runs from /tmp, copied at boot — a reboot loads the new one
+```
+
+The Go server publishes the joining mesh id to `/kvmapp/kvm/mesh_name` on every
+connect; `just verify` prints that file. So if the screen is blank but `verify`
+shows the id, the `kvm_system` binary on the device is stale — rebuild + deploy
+it as above.
 
 ### Testing against an existing daemon
 

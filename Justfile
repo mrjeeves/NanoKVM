@@ -230,13 +230,33 @@ deploy ip:
     scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/etc/init.d/S94myownmesh
     ssh root@{{ip}} 'chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /kvmapp/server/NanoKVM-Server'
     echo "OK — just reboot {{ip}} && just verify {{ip}}"
+    echo "note: this does NOT update the OLED app — for an on-screen change run 'make support' then 'just deploy-oled {{ip}}'"
 
 reboot ip:
     @ssh root@{{ip}} reboot || true
 
-# Daemon + bridge: processes, persisted state, and both logs on a device.
+# Deploy the OLED app (kvm_system) to a device. This is SEPARATE from `deploy`:
+# the on-screen UI is a C++ MaixCDK binary, not the Go server, and neither
+# `deploy` nor the release build it — so an OLED change (e.g. the claim-mesh
+# line) only reaches a device through here. Build it first with `make support`
+# (the full MaixCDK image; `add_to_kvmapp` stages it under kvmapp/kvm_system/),
+# then run this and reboot. The binary runs from /tmp on the device, copied
+# there at boot by S95nanokvm, so a reboot is required to pick up the new one.
+deploy-oled ip:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -s kvmapp/kvm_system/kvm_system || { echo "❌ build the OLED app first: make support   (kvmapp/kvm_system/kvm_system is missing/empty)"; exit 1; }
+    echo "==> deploying kvm_system (OLED app) to {{ip}}…"
+    ssh root@{{ip}} 'mkdir -p /kvmapp/kvm_system'
+    scp -r kvmapp/kvm_system/* root@{{ip}}:/kvmapp/kvm_system/
+    ssh root@{{ip}} 'chmod +x /kvmapp/kvm_system/kvm_system'
+    echo "OK — reboot to load it: just reboot {{ip}}"
+
+# Daemon + bridge: processes, persisted state, both logs, AND the joining-mesh
+# file the OLED reads (so you can tell a stale-screen problem — Go writing the
+# id but an old kvm_system binary not showing it — from a Go-side problem).
 verify ip:
-    @ssh root@{{ip}} 'echo "--- daemon proc ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- server proc ---"; ps | grep -i nanokvm-server | grep -v grep || echo "(no server)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- daemon log ---"; tail -n 30 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"; echo "--- bridge log ---"; tail -n 30 /var/log/nanokvm-mesh.log 2>/dev/null || echo "(none yet)"'
+    @ssh root@{{ip}} 'echo "--- daemon proc ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- server proc ---"; ps | grep -i nanokvm-server | grep -v grep || echo "(no server)"; echo "--- joining mesh (what the OLED should show) ---"; cat /kvmapp/kvm/mesh_name 2>/dev/null || echo "(no /kvmapp/kvm/mesh_name — bridge not writing it yet)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- daemon log ---"; tail -n 30 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"; echo "--- bridge log ---"; tail -n 30 /var/log/nanokvm-mesh.log 2>/dev/null || echo "(none yet)"'
 
 # Reversible undo on a device: stop the daemon, remove the init script + reboot.
 undeploy ip:
