@@ -282,6 +282,29 @@ func (s *Socket) NetworkAdd(config map[string]interface{}) error {
 	return err
 }
 
+// NetworkRemove leaves a network. purge additionally deletes the network's
+// persisted governance state + roster — a genuine forget (leaving a fleet or
+// walking off a mesh for good), not just unloading it for this run. Idempotent
+// on the daemon side (removing an unknown id is success-with-warning).
+func (s *Socket) NetworkRemove(network string, purge bool) error {
+	_, err := s.request(request{
+		"op":      "network_remove",
+		"network": network,
+		"purge":   purge,
+	})
+	return err
+}
+
+// IdentitySetLabel updates the daemon's device label — persisted to the
+// identity anchor and advertised on the next handshake, no restart needed.
+// Empty clears it (peers then fall back to the truncated device id). This is
+// how an attached KVM names itself "KVM-<target>" at the myownmesh layer, not
+// just on the AllMyStuff graph.
+func (s *Socket) IdentitySetLabel(label string) error {
+	_, err := s.request(request{"op": "identity_set_label", "label": label})
+	return err
+}
+
 // ChannelSubscribe subscribes an event-stream client — named by the client_id
 // from ITS events_subscribe ack — to a typed channel. Call this on the ctl
 // socket, never on the events socket: after events_subscribe the daemon treats

@@ -4,7 +4,7 @@
 
 enum ip_addr_t
 {
-    ETH_IP=1, WiFi_IP, Tailscale_IP, RNDIS_IP, ETH_ROUTE, WiFi_ROUTE, NULL_IP
+    ETH_IP=1, WiFi_IP, Tailscale_IP, RNDIS_IP, ETH_ROUTE, WiFi_ROUTE, MESH_NAME, NULL_IP
 };
 
 #define NIC_STATE_UP 				1
@@ -29,6 +29,7 @@ void kvm_update_stream_fps(void);
 void kvm_update_stream_type(void);
 void kvm_update_stream_qlty(void);
 void kvm_update_hdmi_res(void);
+void kvm_update_mesh_name(void);
 void kvm_update_eth_state(void);
 void kvm_update_wifi_state(void);
 void kvm_update_rndis_state(void);

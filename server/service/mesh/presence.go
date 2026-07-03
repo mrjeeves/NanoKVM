@@ -109,17 +109,41 @@ func siteID(port uint16) string {
 	return "tcp:" + strconv.Itoa(int(port))
 }
 
+// attachmentLabel is the display label an attached KVM takes: KVM-<target's
+// label>, falling back to a short canonical id when the label never arrived.
+// One function so the presence advert and the daemon identity label can never
+// disagree. Empty when unattached (callers then use their own default).
+func attachmentLabel(snap persistedState) string {
+	if snap.AttachedTo == "" {
+		return ""
+	}
+	target := snap.AttachedLabel
+	if target == "" {
+		target = pubkeyPart(snap.AttachedTo)
+		if len(target) > 10 {
+			target = target[:10]
+		}
+	}
+	return "KVM-" + target
+}
+
 // buildProfile assembles the presence NodeProfile from device info, config, and
 // the current persisted state. nodeID is our daemon device id; version is the
-// NanoKVM application version; boot is the random per-run boot id.
-func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State, version string, boot uint64) NodeProfile {
+// NanoKVM application version; boot is the random per-run boot id; joiningMesh
+// is this device's derived joining mesh; meshes is every network id currently
+// joined (fleet included).
+func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State, version string, boot uint64, joiningMesh string, meshes []string) NodeProfile {
 	port := webPort(conf)
 	id := siteID(port)
 	snap := st.snapshot()
 
-	// Display name on the graph: the configured brand name ("CEC-KVM" by
-	// default), falling back to hostname then node id if explicitly cleared.
-	label := conf.Mesh.Name
+	// Display name on the graph: KVM-<attached machine> once attached, else
+	// the configured brand name ("CEC-KVM" by default), falling back to
+	// hostname then node id if explicitly cleared.
+	label := attachmentLabel(snap)
+	if label == "" {
+		label = conf.Mesh.Name
+	}
 	if label == "" {
 		label = dev.hostname
 	}
@@ -161,8 +185,10 @@ func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State,
 		FleetName:  snap.FleetName,
 		FleetOwner: snap.FleetName, // a fleet is named for its owner; track it
 		Kvm: &KvmAdvert{
-			AttachedTo: attached,
-			Web:        id,
+			AttachedTo:  attached,
+			Web:         id,
+			JoiningMesh: joiningMesh,
+			Meshes:      meshes,
 		},
 	}
 }

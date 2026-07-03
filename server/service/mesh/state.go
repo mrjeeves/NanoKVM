@@ -18,8 +18,12 @@ type persistedState struct {
 	Owner      string `json:"owner"`
 	Claimable  bool   `json:"claimable"`
 	AttachedTo string `json:"attached_to"`
-	FleetKey   string `json:"fleet_key"`
-	FleetName  string `json:"fleet_name"`
+	// AttachedLabel is the attach target's display label at attach time —
+	// what names this device "KVM-<label>" on the graph and on the daemon
+	// identity. Cosmetic, best-effort (may be empty), refreshed per attach.
+	AttachedLabel string `json:"attached_label,omitempty"`
+	FleetKey      string `json:"fleet_key"`
+	FleetName     string `json:"fleet_name"`
 	// FleetVenue is the owner's fleet-network transport config (a JSON object
 	// string), handed down with the fleet key. Persisted so a restart can
 	// rejoin the fleet network at the same venue.
@@ -127,6 +131,13 @@ func (s *State) AttachedTo() string {
 	return s.data.AttachedTo
 }
 
+// AttachedLabel returns the attach target's display label, or "" if unknown.
+func (s *State) AttachedLabel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.AttachedLabel
+}
+
 // FleetName returns the device's fleet display name (cosmetic), or "".
 func (s *State) FleetName() string {
 	s.mu.Lock()
@@ -145,8 +156,10 @@ func (s *State) FleetKey() string {
 
 // TryClaim records owner and ends claim mode, but only if the device is still
 // claimable. AUTO-ATTACH: the KVM is wired to the machine that claims it, so the
-// claim also binds attached_to to the owner. Returns whether the claim took.
-func (s *State) TryClaim(owner string) bool {
+// claim also binds attached_to to the owner. ownerLabel is the claimer's display
+// label when known (from its presence advert) — it names this device
+// "KVM-<label>". Returns whether the claim took.
+func (s *State) TryClaim(owner, ownerLabel string) bool {
 	s.mu.Lock()
 	if !s.data.Claimable || s.data.Owner != "" {
 		s.mu.Unlock()
@@ -156,21 +169,45 @@ func (s *State) TryClaim(owner string) bool {
 	s.data.Claimable = false
 	// Auto-attach: the KVM is physically wired to the claimer's machine.
 	s.data.AttachedTo = owner
+	s.data.AttachedLabel = ownerLabel
 	s.persistLocked()
 	s.mu.Unlock()
 	s.notify()
 	return true
 }
 
-// SetAttachedTo binds the KVM to node (or clears it when node == ""). Returns
-// whether anything changed.
-func (s *State) SetAttachedTo(node string) bool {
+// SetAttachedTo binds the KVM to node (or clears it when node == ""; the label
+// clears with it). Returns whether anything changed.
+func (s *State) SetAttachedTo(node, label string) bool {
 	s.mu.Lock()
-	if s.data.AttachedTo == node {
+	if node == "" {
+		label = ""
+	}
+	if s.data.AttachedTo == node && s.data.AttachedLabel == label {
 		s.mu.Unlock()
 		return false
 	}
 	s.data.AttachedTo = node
+	s.data.AttachedLabel = label
+	s.persistLocked()
+	s.mu.Unlock()
+	s.notify()
+	return true
+}
+
+// Unclaim is the owner-ordered factory reset of the mesh identity: the device
+// forgets its owner, its attachment, and its fleet credential, and offers
+// itself for adoption again. The caller (the bridge) is responsible for the
+// matching network moves — leaving the fleet mesh and returning to the joining
+// mesh. Returns whether anything changed (a second Release is a no-op).
+func (s *State) Unclaim() bool {
+	s.mu.Lock()
+	fresh := persistedState{Claimable: true}
+	if s.data == fresh {
+		s.mu.Unlock()
+		return false
+	}
+	s.data = fresh
 	s.persistLocked()
 	s.mu.Unlock()
 	s.notify()

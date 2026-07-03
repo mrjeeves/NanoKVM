@@ -91,8 +91,15 @@ func TestContractKvmProfileSemantics(t *testing.T) {
 	if !hasSiteAdvert(p.Sites, "tcp:80") {
 		t.Errorf("kvm profile missing the web-UI site advert: %+v", p.Sites)
 	}
+	if p.Kvm.JoiningMesh != "cec-kvm-ab3de-fg7hj" {
+		t.Errorf("kvm profile joining_mesh = %q, want cec-kvm-ab3de-fg7hj", p.Kvm.JoiningMesh)
+	}
+	if len(p.Kvm.Meshes) != 2 {
+		t.Errorf("kvm profile meshes = %v, want the fleet + owner-added pair", p.Kvm.Meshes)
+	}
 
-	// A freshly-claimed-but-unattached KVM omits attached_to.
+	// A freshly-claimed-but-unattached KVM omits attached_to and sits alone
+	// on its joining mesh.
 	var c NodeProfile
 	if err := json.Unmarshal(readFixture(t, "node_profile_kvm_claimable"), &c); err != nil {
 		t.Fatal(err)
@@ -103,6 +110,9 @@ func TestContractKvmProfileSemantics(t *testing.T) {
 	if c.Kvm == nil || c.Kvm.AttachedTo != nil {
 		t.Errorf("claimable kvm should have no attachment, got %+v", c.Kvm)
 	}
+	if c.Kvm == nil || len(c.Kvm.Meshes) != 1 || c.Kvm.Meshes[0] != c.Kvm.JoiningMesh {
+		t.Errorf("claimable kvm should be alone on its joining mesh, got %+v", c.Kvm)
+	}
 }
 
 // The control-plane fixtures must decode to the right variant + fields via the
@@ -110,13 +120,26 @@ func TestContractKvmProfileSemantics(t *testing.T) {
 func TestContractControlMessages(t *testing.T) {
 	attach, err := DecodeControlMessage(readFixture(t, "control_kvm_attach"))
 	if err != nil || attach.Kind != ControlKindKvm || attach.Kvm == nil ||
-		attach.Kvm.Kind != KvmControlKindAttach || attach.Kvm.Node != "den-tower" {
+		attach.Kvm.Kind != KvmControlKindAttach || attach.Kvm.Node != "den-tower" ||
+		attach.Kvm.Label != "Den Tower" {
 		t.Fatalf("control_kvm_attach decoded wrong: %+v (err %v)", attach, err)
 	}
 
 	detach, err := DecodeControlMessage(readFixture(t, "control_kvm_detach"))
 	if err != nil || detach.Kvm == nil || detach.Kvm.Kind != KvmControlKindDetach {
 		t.Fatalf("control_kvm_detach decoded wrong: %+v (err %v)", detach, err)
+	}
+
+	meshAdd, err := DecodeControlMessage(readFixture(t, "control_kvm_mesh_add"))
+	if err != nil || meshAdd.Kvm == nil || meshAdd.Kvm.Kind != KvmControlKindMeshAdd ||
+		meshAdd.Kvm.NetworkID != "den-site-mesh" {
+		t.Fatalf("control_kvm_mesh_add decoded wrong: %+v (err %v)", meshAdd, err)
+	}
+
+	meshRemove, err := DecodeControlMessage(readFixture(t, "control_kvm_mesh_remove"))
+	if err != nil || meshRemove.Kvm == nil || meshRemove.Kvm.Kind != KvmControlKindMeshRemove ||
+		meshRemove.Kvm.NetworkID != "den-site-mesh" {
+		t.Fatalf("control_kvm_mesh_remove decoded wrong: %+v (err %v)", meshRemove, err)
 	}
 
 	claim, err := DecodeControlMessage(readFixture(t, "control_ownership_claim"))

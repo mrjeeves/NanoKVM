@@ -23,8 +23,21 @@ type fakeDaemon struct {
 	sock string
 	done chan struct{}
 
-	mu   sync.Mutex
-	reqs []map[string]interface{} // every request received, in order
+	mu      sync.Mutex
+	reqs    []map[string]interface{} // every request received, in order
+	respond map[string]string        // op → canned reply line (default: ok-empty)
+}
+
+// respondWith scripts the reply line for an op — e.g. a populated
+// networks_list for the membership tests. events_subscribe keeps its special
+// one-way handling regardless.
+func (f *fakeDaemon) respondWith(op, line string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.respond == nil {
+		f.respond = map[string]string{}
+	}
+	f.respond[op] = line
 }
 
 func startFakeDaemon(t *testing.T) *fakeDaemon {
@@ -68,7 +81,12 @@ func (f *fakeDaemon) serve(conn net.Conn) {
 		op, _ := req["op"].(string)
 		f.mu.Lock()
 		f.reqs = append(f.reqs, req)
+		canned := f.respond[op]
 		f.mu.Unlock()
+		if canned != "" && op != "events_subscribe" {
+			_, _ = conn.Write([]byte(canned + "\n"))
+			continue
+		}
 		switch op {
 		case "events_subscribe":
 			_, _ = conn.Write([]byte(`{"ok":true,"data":{"subscribed":true,"client_id":"c7"}}` + "\n"))

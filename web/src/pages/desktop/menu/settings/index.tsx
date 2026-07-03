@@ -9,7 +9,8 @@ import {
   PaletteIcon,
   SettingsIcon,
   SmartphoneIcon,
-  UserRoundIcon
+  UserRoundIcon,
+  WaypointsIcon
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import semver from 'semver';
@@ -25,6 +26,7 @@ import { About } from './about';
 import { Account } from './account';
 import { Appearance } from './appearance';
 import { Device } from './device';
+import { Mesh } from './mesh';
 import { Network } from './network';
 import { Tailscale } from './tailscale';
 import { Update } from './update';
@@ -46,6 +48,7 @@ export const Settings = () => {
     { id: 'appearance', icon: <PaletteIcon size={16} />, component: <Appearance /> },
     { id: 'device', icon: <SmartphoneIcon size={16} />, component: <Device /> },
     { id: 'network', icon: <NetworkIcon size={16} />, component: <Network /> },
+    { id: 'mesh', icon: <WaypointsIcon size={16} />, component: <Mesh /> },
     {
       id: 'tailscale',
       icon: <TailscaleIcon />,

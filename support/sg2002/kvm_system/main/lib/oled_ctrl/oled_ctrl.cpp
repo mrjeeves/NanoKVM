@@ -531,6 +531,41 @@ void OLED_ShowKVMStreamState(uint8_t kvm_state_s, void* pdata)
 				}
 			}
         break;
+        case KVM_MESH_NAME:
+			if(kvm_hw_ver != 2)
+            	OLED_ShowString(10, 3, "                   ", 8);
+			else
+				OLED_ShowString_AlignRight(AlignRightEND_P, 2, "               ", 4);
+			if(*(char*)pdata != 0){
+				if(kvm_hw_ver != 2){
+					// cube: 19 chars * 6px = 114px, right-aligned like the IP
+					char mesh_disp[20];
+					strncpy(mesh_disp, (char*)pdata, sizeof(mesh_disp) - 1);
+					mesh_disp[sizeof(mesh_disp) - 1] = 0;
+					OLED_ShowString_AlignRight(AlignRightEND, 3, mesh_disp, 8);
+				} else {
+					// pcie: drop the constant "cec-kvm-" prefix to fit 63px (15 chars * 4px)
+					char mesh_disp[16];
+					char *mesh_str = (char*)pdata;
+					if(strncmp(mesh_str, "cec-kvm-", 8) == 0) mesh_str += 8;
+					strncpy(mesh_disp, mesh_str, sizeof(mesh_disp) - 1);
+					mesh_disp[sizeof(mesh_disp) - 1] = 0;
+					// the 8x4 font has no lowercase glyphs
+					for(int i = 0; mesh_disp[i] != 0; i++){
+						if(mesh_disp[i] >= 'a' && mesh_disp[i] <= 'z') mesh_disp[i] -= 'a' - 'A';
+					}
+					OLED_ShowString(0, 2, "M", 4);
+					OLED_ShowString_AlignRight(AlignRightEND_P, 2, mesh_disp, 4);
+				}
+			} else {
+				if(kvm_hw_ver != 2)
+					OLED_ShowString_AlignRight(AlignRightEND, 3, "--", 8);
+				else {
+					OLED_ShowString(0, 2, "M", 4);
+					OLED_ShowString_AlignRight(AlignRightEND_P, 2, "--", 4);
+				}
+			}
+        break;
         case KVM_HDMI_RES:
         break;
 			// if(kvm_hw_ver != 2){

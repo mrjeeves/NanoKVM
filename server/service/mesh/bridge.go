@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -74,11 +75,25 @@ type Bridge struct {
 
 	sites *siteHost
 
-	mu        sync.Mutex
-	nodeID    string
-	networks  []string // network ids we're subscribed on (NetworkId + any fleet)
-	running   bool
-	greetedAt map[string]time.Time // peer id → last time we sent it our presence
+	// membershipMu serializes every multi-step network-membership move (the
+	// connect-time ensure, mesh add/remove commands, unclaim) so two of them
+	// can't interleave their list/add/remove sequences.
+	membershipMu sync.Mutex
+
+	mu          sync.Mutex
+	nodeID      string
+	joiningMesh string   // this device's joining mesh (derived, or config-pinned)
+	networks    []string // network ids we're subscribed on (joining/fleet/owner-added)
+	running     bool
+	greetedAt   map[string]time.Time // peer id → last time we sent it our presence
+	// peerLabels caches peer display labels gleaned from presence adverts,
+	// keyed by canonical pubkey part — the fallback that names this device
+	// "KVM-<target>" when an attach (or the claim auto-attach) arrives without
+	// a label.
+	peerLabels map[string]string
+	// identityLabel is the last label pushed to the daemon identity, so the
+	// sync is change-driven rather than rewriting the anchor every presence.
+	identityLabel string
 	// fleetRoster caches the fleet network's approved-peer roster as canonical
 	// pubkey parts — the co-fleet half of senderMayControl. Refreshed on fleet
 	// join and each presence tick; a cache (never an inline roster_list) so
@@ -190,42 +205,45 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 		return err
 	}
 
-	// 2. identity_show → our node id.
+	// 2. identity_show → our node id + this device's joining mesh (derived
+	// from the identity, unless the config pins a custom one).
 	id, err := ctl.IdentityShow()
 	if err != nil {
 		return err
 	}
+	joining := b.mesh.NetworkId
+	if joining == "" {
+		joining = DeriveJoiningMeshID(id.DeviceID)
+	}
 	b.mu.Lock()
 	b.nodeID = id.DeviceID
+	b.joiningMesh = joining
+	b.networks = nil // rebuilt below from the daemon's actual list
+	b.identityLabel = id.Label
 	b.mu.Unlock()
-	log.Infof("mesh: node id %s", id.DeviceID)
+	log.Infof("mesh: node id %s, joining mesh %s", id.DeviceID, joining)
+	// Surface the joining mesh where a human standing at the hardware can
+	// read it: the OLED app polls this file into the screen's IP rotation.
+	writeJoiningMeshFile(joining)
 
-	// 3. networks_list → join our network if absent.
-	if err := b.ensureNetwork(); err != nil {
+	// 3. Reconcile network membership with the claim state (unclaimed → the
+	// joining mesh; claimed → the fleet mesh; owner-added meshes kept) and
+	// subscribe the planes + advertise capabilities on every one of them.
+	if err := b.ensureMemberships(); err != nil {
 		return err
 	}
 
-	// 4. Subscribe to the planes + advertise capabilities + first presence.
-	if err := b.joinPlanes(b.mesh.NetworkId); err != nil {
-		return err
-	}
-	log.Infof("mesh: joined planes on %s (presence/control/media)", b.mesh.NetworkId)
-
-	// Also (re)join + plane-subscribe the fleet network if we already hold a key.
-	if key := b.state.FleetKey(); key != "" {
-		fleetNet := DeriveFleetNetworkID(key)
-		venue := b.fleetVenue()
-		b.joinFleetNetwork(fleetNet, b.state.FleetName(), venue)
-		b.refreshFleetRoster()
-	}
+	// 4. Keep the daemon identity label in step with the display label
+	// (KVM-<target> when attached, the brand name otherwise).
+	b.syncIdentityLabel()
 
 	b.reAdvertise()
 	// The handshake is done — everything below is steady-state. Without this
 	// line a healthy bridge is silent at INFO until the first peer greeting,
 	// which makes `just verify` right after boot unreadable: no news must be
 	// distinguishable from a hang.
-	log.Infof("mesh: up — advertising %q on %s (claimable=%v, owner=%q), presence every %s",
-		b.mesh.Name, b.mesh.NetworkId, b.state.Claimable(), b.state.Owner(), presenceInterval)
+	log.Infof("mesh: up — advertising %q on %v (claimable=%v, owner=%q), presence every %s",
+		b.currentProfile().Label, b.networksSnapshot(), b.state.Claimable(), b.state.Owner(), presenceInterval)
 
 	// 5. Presence loop until the connection drops or we're told to stop.
 	ticker := time.NewTicker(presenceInterval)
@@ -288,29 +306,354 @@ func (b *Bridge) socketPath() string {
 	return filepath.Join(b.mesh.Home, "daemon.sock")
 }
 
-// ensureNetwork joins our configured network if the daemon hasn't already.
-func (b *Bridge) ensureNetwork() error {
-	nets, err := b.ctl.NetworksList()
+// legacySharedMesh is the retired pre-release default every KVM used to share.
+// A device that still holds it is migrated off on connect: each KVM now waits
+// for adoption alone on its own joining mesh.
+const legacySharedMesh = "cec-backend-client-mesh"
+
+// joiningMeshID returns this device's joining mesh (set during connect).
+func (b *Bridge) joiningMeshID() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.joiningMesh
+}
+
+// networksSnapshot returns a sorted copy of the network ids we're subscribed
+// on — the membership list the KVM advertises.
+func (b *Bridge) networksSnapshot() []string {
+	b.mu.Lock()
+	nets := append([]string(nil), b.networks...)
+	b.mu.Unlock()
+	sort.Strings(nets)
+	return nets
+}
+
+// dropNetwork prunes a network id from the subscribed list.
+func (b *Bridge) dropNetwork(networkID string) {
+	b.mu.Lock()
+	kept := b.networks[:0]
+	for _, n := range b.networks {
+		if n != networkID {
+			kept = append(kept, n)
+		}
+	}
+	b.networks = kept
+	b.mu.Unlock()
+}
+
+// isFleetMesh reports whether networkID is this device's fleet mesh — the one
+// membership no KvmControl may touch (it's governed by the fleet key).
+func (b *Bridge) isFleetMesh(networkID string) bool {
+	key := b.state.FleetKey()
+	return key != "" && DeriveFleetNetworkID(key) == networkID
+}
+
+// normalizeNetworkID mirrors myownmesh's normalize_network_id: trimmed,
+// lowercased, 3–64 chars of [a-z0-9-_]. The daemon would reject anything else
+// anyway; checking locally turns garbage into one log line instead of a
+// doomed round-trip.
+func normalizeNetworkID(input string) (string, error) {
+	id := strings.ToLower(strings.TrimSpace(input))
+	if len(id) < 3 || len(id) > 64 {
+		return "", fmt.Errorf("network id must be 3-64 chars, got %d", len(id))
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return "", fmt.Errorf("network id may only contain a-z, 0-9, '-' and '_'")
+		}
+	}
+	return id, nil
+}
+
+// ensureMemberships reconciles the daemon's network list with the claim
+// state: the legacy shared mesh is retired, an unclaimed device sits on its
+// joining mesh, a claimed one on its fleet mesh (never the joining mesh —
+// unclaim is what returns it there), and the planes are subscribed on every
+// remaining network, owner-added meshes included. A joining-mesh failure is
+// returned (aborting the handshake so Start retries — it's the claim path);
+// everything else is best-effort with a log line.
+func (b *Bridge) ensureMemberships() error {
+	b.membershipMu.Lock()
+	defer b.membershipMu.Unlock()
+
+	joining := b.joiningMeshID()
+	nets, err := b.ctlNetworksList()
 	if err != nil {
 		return err
 	}
+	present := map[string]bool{}
 	for _, n := range nets {
-		if n.NetworkID == b.mesh.NetworkId {
-			return nil // already joined
+		present[n.NetworkID] = true
+	}
+
+	if present[legacySharedMesh] && legacySharedMesh != joining {
+		if err := b.networkRemove(legacySharedMesh); err != nil {
+			log.Warnf("mesh: retire legacy shared mesh: %s", err)
+		} else {
+			log.Infof("mesh: retired legacy shared mesh %s", legacySharedMesh)
+			delete(present, legacySharedMesh)
 		}
 	}
-	// The public venue: kind "open" plus auto_approve true. Note the mechanism —
-	// it is the auto_approve FLAG that admits authenticating peers (the daemon's
-	// handshake consults only cfg.auto_approve || rostered, and the flag
-	// defaults to FALSE); the "open" kind gates roster-gossip trust and
-	// governance, never admission. Drop the flag and every peer wedges at
-	// PendingApproval with no one on this headless box to approve them.
-	cfg := b.networkConfig(b.mesh.NetworkId, b.mesh.NetworkId, b.mesh.Label, b.mesh.Relays, nil, "open", true)
-	if err := b.ctl.NetworkAdd(cfg); err != nil {
-		return err
+
+	claimed := b.state.Owner() != "" || b.state.FleetKey() != ""
+	if claimed {
+		// A claimed device doesn't linger on its auto-approve joining mesh.
+		// This also covers a crash between fleet adoption and the deferred
+		// joining-mesh leave.
+		if present[joining] {
+			if err := b.networkRemove(joining); err != nil {
+				log.Warnf("mesh: leave joining mesh %s: %s", joining, err)
+			} else {
+				log.Infof("mesh: left joining mesh %s (claimed)", joining)
+				delete(present, joining)
+			}
+		}
+	} else {
+		// Unclaimed: the joining mesh is the ONLY legitimate membership —
+		// owner-added meshes require an owner and a fleet mesh requires a
+		// key, so anything else here is leftovers from an unclaim that died
+		// mid-teardown (or an old fleet). Shedding them on connect makes the
+		// unclaim reset convergent no matter where it was interrupted.
+		for id := range present {
+			if id == joining {
+				continue
+			}
+			if err := b.networkRemove(id); err != nil {
+				log.Warnf("mesh: shed stale mesh %s: %s", id, err)
+				continue
+			}
+			log.Infof("mesh: shed stale mesh %s (unclaimed)", id)
+			delete(present, id)
+		}
+		if !present[joining] {
+			// The adoption venue: kind "open" plus auto_approve true. Note the
+			// mechanism — it is the auto_approve FLAG that admits
+			// authenticating peers (the daemon's handshake consults only
+			// cfg.auto_approve || rostered, and the flag defaults to FALSE);
+			// the "open" kind gates roster-gossip trust and governance, never
+			// admission. Drop the flag and every peer wedges at
+			// PendingApproval with no one on this headless box to approve
+			// them.
+			cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
+			if err := b.networkAdd(cfg); err != nil {
+				return err
+			}
+			present[joining] = true
+			log.Infof("mesh: joined joining mesh %s", joining)
+		}
 	}
-	log.Infof("mesh: joined network %s", b.mesh.NetworkId)
+
+	for id := range present {
+		if err := b.joinPlanes(id); err != nil {
+			if id == joining {
+				return err
+			}
+			log.Warnf("mesh: join planes on %s: %s", id, err)
+		}
+	}
+
+	// (Re)join + plane-subscribe the fleet network if we already hold a key.
+	if key := b.state.FleetKey(); key != "" {
+		fleetNet := DeriveFleetNetworkID(key)
+		venue := b.fleetVenue()
+		b.joinFleetNetwork(fleetNet, b.state.FleetName(), venue)
+		b.refreshFleetRoster()
+	}
 	return nil
+}
+
+// applyMeshAdd joins a fleet-owner-requested mesh and subscribes its planes.
+// Runs off the event goroutine (network_add attaches signaling — seconds, not
+// millis). The re-advertised membership list is the confirmation; a refusal
+// is a log line (the protocol has no KVM-control ack, exactly like attach).
+func (b *Bridge) applyMeshAdd(networkID string) {
+	id, err := normalizeNetworkID(networkID)
+	if err != nil {
+		log.Infof("mesh: mesh_add %q refused: %s", networkID, err)
+		return
+	}
+	if b.isFleetMesh(id) {
+		log.Infof("mesh: mesh_add %s refused: the fleet mesh is governed by the fleet key", id)
+		return
+	}
+	b.membershipMu.Lock()
+	defer b.membershipMu.Unlock()
+	nets, err := b.ctlNetworksList()
+	if err != nil {
+		log.Warnf("mesh: mesh_add %s: %s", id, err)
+		return
+	}
+	joined := false
+	for _, n := range nets {
+		if n.NetworkID == id {
+			joined = true
+			break
+		}
+	}
+	if !joined {
+		// Owner-added meshes are ordinary open venues (see ensureMemberships
+		// on why auto_approve is what admits peers). Control stays gated by
+		// senderMayControl regardless of who else is on the mesh.
+		cfg := b.networkConfig(id, id, "", b.mesh.Relays, nil, "open", true)
+		if err := b.networkAdd(cfg); err != nil {
+			log.Warnf("mesh: mesh_add %s: %s", id, err)
+			return
+		}
+		log.Infof("mesh: joined mesh %s (owner request)", id)
+	}
+	if err := b.joinPlanes(id); err != nil {
+		log.Warnf("mesh: join planes on %s: %s", id, err)
+		return
+	}
+	b.reAdvertise()
+}
+
+// applyMeshRemove leaves a fleet-owner-named mesh (never the fleet mesh) and
+// purges its local state. Runs off the event goroutine; the re-advertised
+// membership list is the confirmation.
+func (b *Bridge) applyMeshRemove(networkID string) {
+	id, err := normalizeNetworkID(networkID)
+	if err != nil {
+		log.Infof("mesh: mesh_remove %q refused: %s", networkID, err)
+		return
+	}
+	if b.isFleetMesh(id) {
+		log.Infof("mesh: mesh_remove %s refused: leaving the fleet is Release + governance, not a membership edit", id)
+		return
+	}
+	b.membershipMu.Lock()
+	defer b.membershipMu.Unlock()
+	nets, err := b.ctlNetworksList()
+	if err != nil {
+		log.Warnf("mesh: mesh_remove %s: %s", id, err)
+		return
+	}
+	joined := false
+	for _, n := range nets {
+		if n.NetworkID == id {
+			joined = true
+			break
+		}
+	}
+	if !joined {
+		log.Infof("mesh: mesh_remove %s: not joined (no-op)", id)
+		return
+	}
+	if err := b.networkRemove(id); err != nil {
+		log.Warnf("mesh: mesh_remove %s: %s", id, err)
+		return
+	}
+	b.dropNetwork(id)
+	log.Infof("mesh: left mesh %s (owner request)", id)
+	b.reAdvertise()
+}
+
+// unclaim executes an owner-ordered Release: forget owner, attachment, and
+// fleet credential; leave every mesh; return to the joining mesh in claim
+// mode. Runs off the event goroutine; serialized with every other membership
+// move. The device simply disappears from the old owner's graph (their
+// governance eviction already cleaned their side) and reappears claimable on
+// its joining mesh — exactly where its screen says it will be.
+func (b *Bridge) unclaim(from string) {
+	if !b.state.Unclaim() {
+		return
+	}
+	// The state notifier just re-advertised the claimable profile on the
+	// still-joined meshes (the old fleet included) — a cooperative goodbye —
+	// and now the memberships are rebuilt around the joining mesh.
+	log.Infof("mesh: released by %s — resetting to joining mesh + claim mode", from)
+
+	b.membershipMu.Lock()
+	defer b.membershipMu.Unlock()
+
+	joining := b.joiningMeshID()
+	nets, err := b.ctlNetworksList()
+	if err != nil {
+		log.Warnf("mesh: unclaim networks_list: %s", err)
+		return
+	}
+	// Return to the joining mesh before dropping anything, so the device is
+	// never on zero meshes if the teardown dies midway.
+	onJoining := false
+	for _, n := range nets {
+		if n.NetworkID == joining {
+			onJoining = true
+			break
+		}
+	}
+	if !onJoining {
+		cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
+		if err := b.networkAdd(cfg); err != nil {
+			log.Warnf("mesh: unclaim rejoin %s: %s", joining, err)
+		}
+	}
+	if err := b.joinPlanes(joining); err != nil {
+		log.Warnf("mesh: unclaim join planes on %s: %s", joining, err)
+	}
+	for _, n := range nets {
+		if n.NetworkID == joining {
+			continue
+		}
+		if err := b.networkRemove(n.NetworkID); err != nil {
+			log.Warnf("mesh: unclaim leave %s: %s", n.NetworkID, err)
+			continue
+		}
+		b.dropNetwork(n.NetworkID)
+	}
+	b.mu.Lock()
+	b.fleetRoster = nil
+	b.mu.Unlock()
+	b.syncIdentityLabel()
+	b.reAdvertise()
+	log.Infof("mesh: reset complete — claimable on %s", joining)
+}
+
+// leaveJoiningMeshAfterAdoption leaves the joining mesh once the fleet mesh
+// is really carrying us — the fleet roster has converged — so the tail of the
+// claim conversation (which rode the joining mesh) is never cut mid-sentence.
+// Bounded: after ~60 s we leave regardless (the claim exchange is long done
+// and presence re-adverts flow over the fleet mesh).
+func (b *Bridge) leaveJoiningMeshAfterAdoption() {
+	joining := b.joiningMeshID()
+	if joining == "" || b.isFleetMesh(joining) {
+		return
+	}
+	for i := 0; i < 12; i++ {
+		time.Sleep(5 * time.Second)
+		if b.state.FleetKey() == "" {
+			return // released mid-wait — the joining mesh is home again
+		}
+		b.refreshFleetRoster()
+		b.mu.Lock()
+		converged := len(b.fleetRoster) > 0
+		b.mu.Unlock()
+		if converged {
+			break
+		}
+	}
+	if b.state.FleetKey() == "" {
+		return
+	}
+	b.membershipMu.Lock()
+	defer b.membershipMu.Unlock()
+	nets, err := b.ctlNetworksList()
+	if err != nil {
+		return // the next connect's ensureMemberships finishes the job
+	}
+	for _, n := range nets {
+		if n.NetworkID != joining {
+			continue
+		}
+		if err := b.networkRemove(joining); err != nil {
+			log.Warnf("mesh: leave joining mesh %s: %s", joining, err)
+			return
+		}
+		b.dropNetwork(joining)
+		log.Infof("mesh: left joining mesh %s (adopted into a fleet)", joining)
+		b.reAdvertise()
+		return
+	}
 }
 
 // networkConfig builds a NetworkConfig JSON object (config.rs schema). Omitted
@@ -426,6 +769,106 @@ func (b *Bridge) ctlNetworksList() ([]NetworkSummary, error) {
 	return ctl.NetworksList()
 }
 
+// networkAdd is the same nil-ctl guard for network_add.
+func (b *Bridge) networkAdd(cfg map[string]interface{}) error {
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if ctl == nil {
+		return fmt.Errorf("network_add: bridge not connected")
+	}
+	return ctl.NetworkAdd(cfg)
+}
+
+// networkRemove leaves a network, purging its persisted state — every leave
+// the bridge performs is a deliberate forget (retiring the legacy mesh,
+// owner-ordered removes, unclaim), never a temporary unload.
+func (b *Bridge) networkRemove(networkID string) error {
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if ctl == nil {
+		return fmt.Errorf("network_remove: bridge not connected")
+	}
+	return ctl.NetworkRemove(networkID, true)
+}
+
+// syncIdentityLabel keeps the daemon's identity label in step with the
+// display label (KVM-<target> when attached, the brand name otherwise), so
+// the device is named the same at the myownmesh layer — rosters, approvals,
+// and the AllMyStuff graph all read one name. Change-driven: the identity
+// anchor is only rewritten when the label actually moved.
+func (b *Bridge) syncIdentityLabel() {
+	want := attachmentLabel(b.state.snapshot())
+	if want == "" {
+		want = b.mesh.Name
+	}
+	b.mu.Lock()
+	ctl := b.ctl
+	have := b.identityLabel
+	b.mu.Unlock()
+	if ctl == nil || want == have {
+		return
+	}
+	if err := ctl.IdentitySetLabel(want); err != nil {
+		log.Warnf("mesh: set identity label %q: %s", want, err)
+		return
+	}
+	b.mu.Lock()
+	b.identityLabel = want
+	b.mu.Unlock()
+	log.Infof("mesh: identity label → %q", want)
+}
+
+// notePeerLabel caches a peer's display label from its presence advert — the
+// fallback that names this device KVM-<target> when an attach arrives without
+// a label (an older sender) or at claim time (the auto-attach to the claimer).
+func (b *Bridge) notePeerLabel(raw json.RawMessage) {
+	var p struct {
+		Node  string `json:"node"`
+		Label string `json:"label"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil || p.Node == "" || p.Label == "" {
+		return
+	}
+	b.mu.Lock()
+	if b.peerLabels == nil {
+		b.peerLabels = map[string]string{}
+	}
+	// A hostile joining-mesh peer could churn identities to bloat the map;
+	// resetting a full cache is cheaper and safer than an eviction policy —
+	// the label of anyone who matters re-arrives with their next presence.
+	if len(b.peerLabels) > 512 {
+		b.peerLabels = map[string]string{}
+	}
+	b.peerLabels[pubkeyPart(p.Node)] = p.Label
+	b.mu.Unlock()
+}
+
+// peerLabel returns the cached display label for a peer, or "".
+func (b *Bridge) peerLabel(peer string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.peerLabels[pubkeyPart(peer)]
+}
+
+// joiningMeshFile is where the bridge publishes the joining mesh id for the
+// OLED app — kvm_system polls small files under /kvmapp/kvm, the established
+// Go→C IPC on this device — so the screen can show the name a claimer needs.
+const joiningMeshFile = "/kvmapp/kvm/mesh_name"
+
+// writeJoiningMeshFile publishes the joining mesh id for the OLED. Best-effort:
+// on a dev host the directory usually doesn't exist, and the screen is the
+// only consumer.
+func writeJoiningMeshFile(id string) {
+	if err := os.MkdirAll(filepath.Dir(joiningMeshFile), 0o755); err != nil {
+		return
+	}
+	if err := os.WriteFile(joiningMeshFile, []byte(id+"\n"), 0o644); err != nil {
+		log.Debugf("mesh: write %s: %s", joiningMeshFile, err)
+	}
+}
+
 // joinPlanes subscribes the event-stream client to presence/control/media on a
 // network, advertises capabilities, and records the network for presence
 // broadcasts. Idempotent: re-subscribing is cheap.
@@ -500,10 +943,12 @@ func (b *Bridge) onChannelInbound(ci ChannelInbound) {
 			b.sites.handleFrame(ci.From, f)
 		}
 	case ChannelPresence:
-		// A peer announced itself. Greet a newly-seen peer by sending our profile
+		// A peer announced itself. Remember its display label (the KVM-<label>
+		// fallback), then greet a newly-seen peer by sending our profile
 		// straight to it, so the app learns about us immediately (event-driven
 		// gossip) instead of waiting for the slow heartbeat — without this we
 		// only appear on a 30s beat and flap in and out of the graph.
+		b.notePeerLabel(ci.Payload)
 		b.greetPeer(ci.Network, ci.From)
 	}
 }
@@ -656,8 +1101,10 @@ func (b *Bridge) reAdvertise() {
 func (b *Bridge) currentProfile() NodeProfile {
 	b.mu.Lock()
 	nodeID := b.nodeID
+	joining := b.joiningMesh
 	b.mu.Unlock()
-	return buildProfile(nodeID, b.conf, b.dev, b.state, b.versionString(), b.boot)
+	return buildProfile(nodeID, b.conf, b.dev, b.state, b.versionString(), b.boot,
+		joining, b.networksSnapshot())
 }
 
 // versionString returns the NanoKVM app version (best-effort file read).

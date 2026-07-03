@@ -1,0 +1,5 @@
+{
+  "kind": "mesh_remove",
+  "network_id": "den-site-mesh",
+  "t": "kvm"
+}

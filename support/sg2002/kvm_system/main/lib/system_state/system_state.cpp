@@ -349,6 +349,38 @@ void kvm_update_hdmi_res(void)
 	kvm_sys_state.hdmi_height = atoi((char*)RW_Data);
 }
 
+void kvm_update_mesh_name(void)
+{
+	FILE *fp;
+	int file_size;
+	char RW_Data[32];
+	memset( RW_Data, 0, sizeof( RW_Data ) );
+
+	// mesh name
+	fp = fopen("/kvmapp/kvm/mesh_name", "r");
+	if(fp == NULL){
+		// missing file -> no mesh name
+		kvm_sys_state.mesh_name[0] = 0;
+		return;
+	}
+	fseek(fp, 0, SEEK_END);
+	file_size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	if(file_size < 0) file_size = 0;
+	if(file_size > (int)(sizeof(RW_Data) - 1)) file_size = sizeof(RW_Data) - 1;
+	fread(RW_Data, sizeof(char), file_size, fp);
+	fclose(fp);
+	RW_Data[file_size] = 0;
+	// strip trailing newline
+	for(int i = 0; i < file_size; i++){
+		if(RW_Data[i] == '\r' || RW_Data[i] == '\n'){
+			RW_Data[i] = 0;
+			break;
+		}
+	}
+	strcpy(kvm_sys_state.mesh_name, RW_Data);
+}
+
 void kvm_update_eth_state(void)
 {	
 	static uint8_t nic_state = 0;

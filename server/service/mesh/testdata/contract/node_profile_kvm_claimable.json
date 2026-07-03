@@ -27,6 +27,10 @@
   ],
   "hostname": "nanokvm",
   "kvm": {
+    "joining_mesh": "cec-kvm-ab3de-fg7hj",
+    "meshes": [
+      "cec-kvm-ab3de-fg7hj"
+    ],
     "web": "tcp:80"
   },
   "label": "NanoKVM (den-tower)",

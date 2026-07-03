@@ -195,6 +195,65 @@ func TestControlMessageKvmRoundTrip(t *testing.T) {
 	}
 }
 
+func TestControlMessageKvmLabelAndMeshOps(t *testing.T) {
+	// A labelled attach (a current sender) carries the target's display name.
+	labelled := json.RawMessage(`{"t":"kvm","kind":"attach","node":"den-tower","label":"Den Tower"}`)
+	msg, err := DecodeControlMessage(labelled)
+	if err != nil || msg.Kvm == nil || msg.Kvm.Label != "Den Tower" {
+		t.Fatalf("bad labelled attach: %+v %v", msg, err)
+	}
+	// A label-less attach (an older sender) still decodes — Label just empty.
+	if m, err := DecodeControlMessage(json.RawMessage(`{"t":"kvm","kind":"attach","node":"x"}`)); err != nil || m.Kvm.Label != "" {
+		t.Fatalf("label-less attach should decode with empty label: %+v %v", m, err)
+	}
+
+	add := json.RawMessage(`{"t":"kvm","kind":"mesh_add","network_id":"den-site-mesh"}`)
+	msg, err = DecodeControlMessage(add)
+	if err != nil || msg.Kvm == nil ||
+		msg.Kvm.Kind != KvmControlKindMeshAdd || msg.Kvm.NetworkID != "den-site-mesh" {
+		t.Fatalf("bad mesh_add: %+v %v", msg, err)
+	}
+
+	remove := json.RawMessage(`{"t":"kvm","kind":"mesh_remove","network_id":"den-site-mesh"}`)
+	msg, err = DecodeControlMessage(remove)
+	if err != nil || msg.Kvm == nil ||
+		msg.Kvm.Kind != KvmControlKindMeshRemove || msg.Kvm.NetworkID != "den-site-mesh" {
+		t.Fatalf("bad mesh_remove: %+v %v", msg, err)
+	}
+}
+
+func TestKvmAdvertMembershipFieldsAcceptSkew(t *testing.T) {
+	// Older firmware's advert has neither field; both default rather than fail.
+	var old KvmAdvert
+	if err := json.Unmarshal([]byte(`{"web":"tcp:80"}`), &old); err != nil {
+		t.Fatalf("decode old advert: %v", err)
+	}
+	if old.JoiningMesh != "" || len(old.Meshes) != 0 {
+		t.Fatalf("old advert grew fields: %+v", old)
+	}
+	// And empties serialise *without* the keys, so an older receiver sees the
+	// unchanged shape.
+	out, _ := json.Marshal(old)
+	if s := string(out); s != `{"web":"tcp:80"}` {
+		t.Fatalf("empty membership fields leaked onto the wire: %s", s)
+	}
+
+	// New firmware round-trips both.
+	full := KvmAdvert{
+		Web:         "tcp:80",
+		JoiningMesh: "cec-kvm-ab3de-fg7hj",
+		Meshes:      []string{"amber-turing-x3k9q", "cec-kvm-ab3de-fg7hj"},
+	}
+	out, _ = json.Marshal(full)
+	var back KvmAdvert
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if back.JoiningMesh != full.JoiningMesh || len(back.Meshes) != 2 {
+		t.Fatalf("membership fields dropped: %+v", back)
+	}
+}
+
 func TestControlMessageRouteOfferAndAccept(t *testing.T) {
 	raw := json.RawMessage(`{"t":"route","kind":"offer","route":{
 		"id":"r1","from":"peer:site","to":"kvm:site-view:0","media":"generic"
