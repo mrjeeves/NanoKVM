@@ -68,11 +68,15 @@ the KVM is never blocked from serving its LAN.
     signaling, so nothing about an unclaimed device touches public relays.
 - Every device has its own **joining mesh** — `cec-kvm-<5>-<5>`, derived
   deterministically (and frozen, `joining.go`) from the daemon identity. It's
-  the mesh an unclaimed/reset device waits on, and the name is surfaced on the
-  device's OLED (rotating with the IPs) and in the web UI's **Mesh** settings
-  tab — nothing is printed on a box. To adopt a device: read the name, join
-  that mesh from AllMyStuff, claim it (same LAN by default; over the internet
-  only with `publicClaims` enabled).
+  the mesh an unclaimed/reset device waits on, and the name is surfaced on its
+  own **screen** and in the web UI's **Mesh** settings tab — nothing is printed
+  on a box. On the OLED it takes the line directly under the IP (the resolution
+  line): the roomy alpha/beta panels show the full `cec-kvm-…` id; the narrow
+  pcie panel shows the identifying `xxxxx-yyyyy` part (the `cec-kvm-` prefix is
+  constant). The web UI always shows the full id with a copy button. To adopt a
+  device: read the name off the screen (or copy it from the web UI), join that
+  mesh from AllMyStuff, claim it (same LAN by default; over the internet only
+  with `publicClaims` enabled).
 - **`publicClaims: true`** (config file only — see Configuration) re-opens
   the WAN paths: the joining mesh keeps its relay venue (claim by on-screen
   id over the internet), and the device additionally mints a random **claim

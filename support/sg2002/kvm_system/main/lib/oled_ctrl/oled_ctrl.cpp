@@ -532,19 +532,28 @@ void OLED_ShowKVMStreamState(uint8_t kvm_state_s, void* pdata)
 			}
         break;
         case KVM_MESH_NAME:
+			// The claim mesh id lives on the line DIRECTLY UNDER THE IP — the
+			// resolution line (cube: page 4; pcie: the shared res+FPS row,
+			// page 3). It replaces that line rather than rotating through the
+			// IP, so it's always readable, never a window you miss.
 			if(kvm_hw_ver != 2)
-            	OLED_ShowString(10, 3, "                   ", 8);
+            	OLED_ShowString(10, 4, "                   ", 8);
 			else
-				OLED_ShowString_AlignRight(AlignRightEND_P, 2, "               ", 4);
+				OLED_ShowString_AlignRight(AlignRightEND_P, 3, "               ", 4);
 			if(*(char*)pdata != 0){
 				if(kvm_hw_ver != 2){
-					// cube: 19 chars * 6px = 114px, right-aligned like the IP
+					// cube: the full cec-kvm-xxxxx-yyyyy fits (19 chars * 6px =
+					// 114px), right-aligned so it lines up under the IP. Showing
+					// the whole id means it's the exact string to join.
 					char mesh_disp[20];
 					strncpy(mesh_disp, (char*)pdata, sizeof(mesh_disp) - 1);
 					mesh_disp[sizeof(mesh_disp) - 1] = 0;
-					OLED_ShowString_AlignRight(AlignRightEND, 3, mesh_disp, 8);
+					OLED_ShowString_AlignRight(AlignRightEND, 4, mesh_disp, 8);
 				} else {
-					// pcie: drop the constant "cec-kvm-" prefix to fit 63px (15 chars * 4px)
+					// pcie: the full name won't fit at 4px in ~63px, so drop the
+					// constant "cec-kvm-" prefix and show the identifying
+					// xxxxx-yyyyy part (11 chars * 4px = 44px). It takes the
+					// whole row (FPS is suppressed alongside it).
 					char mesh_disp[16];
 					char *mesh_str = (char*)pdata;
 					if(strncmp(mesh_str, "cec-kvm-", 8) == 0) mesh_str += 8;
@@ -560,16 +569,13 @@ void OLED_ShowKVMStreamState(uint8_t kvm_state_s, void* pdata)
 						if(mesh_disp[i] >= 'a' && mesh_disp[i] <= 'z') mesh_disp[i] -= 'a' - 'A';
 						if(mesh_disp[i] < ' ' || mesh_disp[i] > ']') mesh_disp[i] = '-';
 					}
-					OLED_ShowString(0, 2, "M", 4);
-					OLED_ShowString_AlignRight(AlignRightEND_P, 2, mesh_disp, 4);
+					OLED_ShowString_AlignRight(AlignRightEND_P, 3, mesh_disp, 4);
 				}
 			} else {
 				if(kvm_hw_ver != 2)
-					OLED_ShowString_AlignRight(AlignRightEND, 3, "--", 8);
-				else {
-					OLED_ShowString(0, 2, "M", 4);
-					OLED_ShowString_AlignRight(AlignRightEND_P, 2, "--", 4);
-				}
+					OLED_ShowString_AlignRight(AlignRightEND, 4, "--", 8);
+				else
+					OLED_ShowString_AlignRight(AlignRightEND_P, 3, "--", 4);
 			}
         break;
         case KVM_HDMI_RES:

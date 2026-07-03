@@ -139,12 +139,12 @@ int qrencode(char *string)
 
 ip_addr_t show_which_ip(void)
 {
-	uint8_t mesh_exist = (kvm_sys_state.mesh_name[0] != 0)? 1:0;
-	if(mesh_exist == 0){
-		if(kvm_sys_state.wifi_state == -2) return ETH_IP;
-		if(kvm_oled_state.eth_state == 3 && kvm_oled_state.wifi_state != 1) return ETH_IP;
-		if(kvm_oled_state.eth_state != 3 && kvm_oled_state.wifi_state == 1) return WiFi_IP;
-	}
+	// The IP line alternates eth / wifi only. The claim mesh no longer rides
+	// this rotation (you'd miss the 5-in-15s window it flashed up for) — it
+	// now has its own persistent line under the IP, see kvm_res_or_mesh_disp.
+	if(kvm_sys_state.wifi_state == -2) return ETH_IP;
+	if(kvm_oled_state.eth_state == 3 && kvm_oled_state.wifi_state != 1) return ETH_IP;
+	if(kvm_oled_state.eth_state != 3 && kvm_oled_state.wifi_state == 1) return WiFi_IP;
 	static uint8_t run_count = 0;
 	static ip_addr_t ip_type = ETH_IP;
 	run_count++;
@@ -152,34 +152,15 @@ ip_addr_t show_which_ip(void)
 		run_count = 0;
 		switch(ip_type){
 			case ETH_IP:
-				if(	(kvm_sys_state.wifi_state == -2) ||
-					(kvm_oled_state.eth_state == 3 && kvm_oled_state.wifi_state != 1)){
-					// skip WiFi (only reachable when mesh_exist)
-					ip_type = MESH_NAME;
-				} else {
-					ip_type = WiFi_IP;
-				}
+				ip_type = WiFi_IP;
 				break;
 			case WiFi_IP:
-				if(mesh_exist){
-					ip_type = MESH_NAME;
-				} else {
-					ip_type = ETH_IP;
-				}
-				break;
-			case MESH_NAME:
-				if(kvm_oled_state.eth_state != 3 && kvm_oled_state.wifi_state == 1){
-					// skip ETH
-					ip_type = WiFi_IP;
-				} else {
-					ip_type = ETH_IP;
-				}
+				ip_type = ETH_IP;
 				break;
 			default:
 				ip_type = ETH_IP;
 		}
 	}
-	// printf("show_which_ip? %d\n", ip_type);
 	return ip_type;
 }
 
@@ -306,15 +287,29 @@ void kvm_wifi_state_disp(ip_addr_t _ip_type, uint8_t first_disp)
 	}
 }
 
-void kvm_mesh_name_disp(ip_addr_t _ip_type, uint8_t first_disp)
+// Forward declaration: kvm_res_disp is defined further down, but
+// kvm_res_or_mesh_disp (below) falls back to it.
+void kvm_res_disp(uint8_t first_disp);
+
+// kvm_res_or_mesh_disp owns the line directly under the IP. Normally it shows
+// the HDMI resolution (cube) / res+FPS (pcie). But when the device is sitting
+// on a claim mesh — which it advertises via /kvmapp/kvm/mesh_name — that line
+// instead shows the mesh id, because reading that id off the screen is the
+// ONLY way to find and claim the device, and it is otherwise invisible. The
+// mesh id wins: a KVM waiting to be adopted needs its claim name far more than
+// its capture resolution. Redraws only on change (mode flip or a new name).
+void kvm_res_or_mesh_disp(uint8_t first_disp)
 {
-	static ip_addr_t _ip_type_old = NULL_IP;
-	if(	(_ip_type_old != _ip_type) ||
-		first_disp || mesh_changed())
-	{
-		_ip_type_old = _ip_type;
-		if(_ip_type == MESH_NAME)
+	static int8_t last_mode = -1; // -1 unset, 0 res, 1 mesh
+	int8_t mode = (kvm_sys_state.mesh_name[0] != 0) ? 1 : 0;
+	uint8_t force = first_disp || (mode != last_mode);
+	last_mode = mode;
+	if(mode == 1){
+		uint8_t changed = mesh_changed(); // also syncs the oled-side mirror
+		if(force || changed)
 			OLED_ShowKVMStreamState(KVM_MESH_NAME, kvm_sys_state.mesh_name);
+	} else {
+		kvm_res_disp(force);
 	}
 }
 
@@ -418,14 +413,20 @@ void kvm_main_ui_disp(uint8_t first_disp, uint8_t subpage_changed)
 		// main page
 		kvm_oled_state.oled_sleep_state = 0;
 		now_ip_type = show_which_ip();
+		uint8_t have_mesh = (kvm_sys_state.mesh_name[0] != 0);
 		kvm_main_disp(first_disp || subpage_changed);
 		kvm_eth_state_disp(now_ip_type, first_disp || subpage_changed);
 		kvm_wifi_state_disp(now_ip_type, first_disp || subpage_changed);
-		kvm_mesh_name_disp(now_ip_type, first_disp || subpage_changed);
+		// The line under the IP: resolution normally, the claim mesh id when
+		// the device advertises one (kvm_res_disp is called from within).
+		kvm_res_or_mesh_disp(first_disp || subpage_changed);
 		kvm_usb_state_disp(first_disp || subpage_changed);
 		kvm_hdmi_state_disp(first_disp || subpage_changed);
-		kvm_fps_disp(first_disp || subpage_changed);
-		kvm_res_disp(first_disp || subpage_changed);
+		// On the pcie layout the resolution and FPS share the one line under
+		// the IP, so when the mesh id takes that line the FPS is suppressed
+		// with it. The cube layout has FPS on its own row, so it stays.
+		if(!(have_mesh && kvm_hw_ver == 2))
+			kvm_fps_disp(first_disp || subpage_changed);
 		kvm_type_disp(first_disp || subpage_changed);
 		kvm_qlty_disp(first_disp || subpage_changed);
 	}
