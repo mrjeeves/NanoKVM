@@ -66,7 +66,7 @@ var (
 	restartServerFn = restartServer
 )
 
-// handleOwnership processes Claim and FleetKey.
+// handleOwnership processes Claim, FleetKey, and Release.
 func (b *Bridge) handleOwnership(network, from string, oc *OwnershipControl) {
 	if oc == nil {
 		return
@@ -78,11 +78,14 @@ func (b *Bridge) handleOwnership(network, from string, oc *OwnershipControl) {
 		if claimer == "" {
 			claimer = from
 		}
-		if !b.state.TryClaim(claimer) {
+		if !b.state.TryClaim(claimer, b.peerLabel(claimer)) {
 			log.Infof("mesh: claim from %s refused (not claimable)", from)
 			return
 		}
 		log.Infof("mesh: claimed by %s; auto-attached to it", claimer)
+		// The auto-attach renamed us KVM-<claimer>; mirror it on the daemon
+		// identity too.
+		b.syncIdentityLabel()
 		// Confirm the adoption point-to-point, then re-advertise (the presence
 		// advert is the authoritative confirmation).
 		if err := b.sendControlTo(network, from, NewClaimed(claimer)); err != nil {
@@ -91,28 +94,62 @@ func (b *Bridge) handleOwnership(network, from string, oc *OwnershipControl) {
 		b.reAdvertise()
 
 	case OwnershipKindFleetKey:
+		// The fleet key is a credential handed down by the device's OWNER
+		// right after it claims — never volunteered by a stranger. Gate it:
+		// the joining mesh is auto-approve open (any peer who reads the id
+		// off the screen can join), so an ungated FleetKey would let anyone
+		// there capture an unclaimed device onto their own fleet. An
+		// unclaimed device (no owner) fails this closed; the owner passes via
+		// the owner==from arm of senderMayControl. Mirrors AllMyStuff's node,
+		// which rejects a fleet key from anyone but the recorded owner.
+		if !b.senderMayControl(from) {
+			log.Infof("mesh: fleet key from non-owner %s ignored", from)
+			return
+		}
 		// Record the fleet credential and, since we can derive the closed-
 		// network id from the key (matching AllMyStuff's derivation), actually
 		// join the fleet's base network.
 		changed := b.state.AdoptFleetKey(oc.Key, oc.Name, oc.Venue)
 		if oc.Key != "" {
-			fleetNet := DeriveFleetNetworkID(oc.Key)
-			b.joinFleetNetwork(fleetNet, oc.Name, oc.Venue)
-			// Warm the co-fleet authorization cache off this goroutine (we're
-			// on the event stream; refreshFleetRoster does a ctl round-trip).
-			go b.refreshFleetRoster()
+			// Off the event-stream goroutine: joinFleetNetwork does a
+			// network_add (attaches signaling — seconds), and a stalled join
+			// must not block inbound frames. refreshFleetRoster + the
+			// deferred joining-mesh leave chain off the same goroutine.
+			go func() {
+				fleetNet := DeriveFleetNetworkID(oc.Key)
+				b.joinFleetNetwork(fleetNet, oc.Name, oc.Venue)
+				b.refreshFleetRoster()
+				// Adopted into a fleet: the auto-approve joining mesh has done
+				// its job. Leave it once the fleet mesh is really carrying us
+				// (roster converged) — an unclaim re-derives and rejoins it.
+				b.leaveJoiningMeshAfterAdoption()
+			}()
 		}
 		if changed {
 			b.reAdvertise()
 		}
 
+	case OwnershipKindRelease:
+		// "You're no longer mine" — the unclaim. Owner/fleet gated like every
+		// curation; a stranger can't factory-reset your KVM's mesh identity.
+		if !b.senderMayControl(from) {
+			log.Infof("mesh: release from non-owner %s ignored", from)
+			return
+		}
+		// Off the event-stream goroutine: the reset is a series of daemon
+		// round-trips (leave fleet, rejoin joining mesh) that must not stall
+		// inbound frames.
+		go b.unclaim(from)
+
 	default:
-		// claimed / declined / release / fleet_departed / unknown — no action
-		// for a KVM appliance in v1.
+		// claimed / declined / fleet_departed / unknown — no action for a KVM
+		// appliance in v1.
 	}
 }
 
-// handleKvm processes Attach/Detach, gated on the sender being the owner.
+// handleKvm processes Attach/Detach and the mesh-membership commands
+// MeshAdd/MeshRemove, gated on the sender being the owner or a fleet
+// co-member.
 func (b *Bridge) handleKvm(network, from string, kc *KvmControl) {
 	if kc == nil {
 		return
@@ -123,15 +160,31 @@ func (b *Bridge) handleKvm(network, from string, kc *KvmControl) {
 	}
 	switch kc.Kind {
 	case KvmControlKindAttach:
-		if b.state.SetAttachedTo(kc.Node) {
-			log.Infof("mesh: attached to %s", kc.Node)
+		// The target's label rides the command; an older sender omits it and
+		// we fall back to the label from the target's own presence advert.
+		label := kc.Label
+		if label == "" {
+			label = b.peerLabel(kc.Node)
+		}
+		if b.state.SetAttachedTo(kc.Node, label) {
+			log.Infof("mesh: attached to %s (%q)", kc.Node, label)
+			// The attachment renames us KVM-<target>; mirror it on the
+			// daemon identity.
+			b.syncIdentityLabel()
 			b.reAdvertise()
 		}
 	case KvmControlKindDetach:
-		if b.state.SetAttachedTo("") {
+		if b.state.SetAttachedTo("", "") {
 			log.Infof("mesh: detached")
+			b.syncIdentityLabel()
 			b.reAdvertise()
 		}
+	case KvmControlKindMeshAdd:
+		// Off the event-stream goroutine: joining a network attaches
+		// signaling — seconds, not millis.
+		go b.applyMeshAdd(kc.NetworkID)
+	case KvmControlKindMeshRemove:
+		go b.applyMeshRemove(kc.NetworkID)
 	default:
 		// unknown — ignore.
 	}

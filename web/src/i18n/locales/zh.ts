@@ -404,6 +404,32 @@ const zh = {
           none: '无'
         }
       },
+      mesh: {
+        title: 'Mesh',
+        loading: '加载中...',
+        queryFailed: '获取 Mesh 状态失败',
+        disabled: '设备配置中已禁用 Mesh 桥接。',
+        joiningMesh: '配对网络',
+        joiningMeshDesc:
+          '在 AllMyStuff 中加入该网络即可找到并认领此设备。设备重置后会重新回到该网络。',
+        waiting: '正在等待 Mesh 守护进程...',
+        status: '状态',
+        claimState: '认领状态',
+        claimable: '可认领 — 等待认领',
+        claimed: '已认领',
+        claimedFleet: '已认领 — 设备组 {{name}}',
+        label: '显示名称',
+        attachedTo: '连接的主机',
+        notAttached: '未连接主机',
+        nodeId: '节点 ID',
+        connection: '连接状态',
+        connected: '已连接',
+        disconnected: '未连接',
+        memberships: '已加入的网络',
+        noMemberships: '尚未加入任何网络',
+        fleet: '设备组',
+        joining: '配对'
+      },
       tailscale: {
         title: 'Tailscale',
         memory: {

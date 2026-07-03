@@ -67,13 +67,20 @@ type SiteAdvert struct {
 
 // KvmAdvert is a KVM appliance's binding, carried in NodeProfile.Kvm. AttachedTo
 // is the graph node this KVM physically controls; Web is the SiteAdvert.ID that
-// serves the KVM's own web UI.
+// serves the KVM's own web UI. JoiningMesh is the per-device cec-kvm-xxxxx-xxxxx
+// network the device returns to when unclaimed/reset (the same name it shows on
+// its screen); Meshes is every network id it's currently joined to, fleet
+// included — the membership list a fleet owner curates with KvmControl
+// MeshAdd/MeshRemove.
 //
 // Note the omitempty contract: AttachedTo serialises *without* the key when nil
-// (mirrors Rust's Option None / skip_serializing_if), and Web likewise when "".
+// (mirrors Rust's Option None / skip_serializing_if), Web/JoiningMesh likewise
+// when "", and Meshes when empty.
 type KvmAdvert struct {
-	AttachedTo *string `json:"attached_to,omitempty"`
-	Web        string  `json:"web,omitempty"`
+	AttachedTo  *string  `json:"attached_to,omitempty"`
+	Web         string   `json:"web,omitempty"`
+	JoiningMesh string   `json:"joining_mesh,omitempty"`
+	Meshes      []string `json:"meshes,omitempty"`
 }
 
 // ---- NodeProfile ------------------------------------------------------------
@@ -282,15 +289,26 @@ func NewClaimed(owner string) ControlMessage {
 type KvmControlKind string
 
 const (
-	KvmControlKindAttach  KvmControlKind = "attach"
-	KvmControlKindDetach  KvmControlKind = "detach"
-	KvmControlKindUnknown KvmControlKind = "unknown"
+	KvmControlKindAttach     KvmControlKind = "attach"
+	KvmControlKindDetach     KvmControlKind = "detach"
+	KvmControlKindMeshAdd    KvmControlKind = "mesh_add"
+	KvmControlKindMeshRemove KvmControlKind = "mesh_remove"
+	KvmControlKindUnknown    KvmControlKind = "unknown"
 )
 
-// KvmControl curates a KVM appliance's attachment.
+// KvmControl curates a KVM appliance: its attachment (Attach/Detach, with the
+// target's display label riding along so the KVM can rename itself
+// KVM-<label>) and its mesh membership (MeshAdd/MeshRemove, carrying the
+// network id). It carries every field of every variant; only those for Kind
+// are meaningful.
 type KvmControl struct {
 	Kind KvmControlKind `json:"kind"`
 	Node string         `json:"node,omitempty"`
+	// Label is the attach target's display label at attach time (attach only;
+	// cosmetic, best-effort — empty from older senders).
+	Label string `json:"label,omitempty"`
+	// NetworkID is the mesh to join/leave (mesh_add / mesh_remove only).
+	NetworkID string `json:"network_id,omitempty"`
 }
 
 // UnmarshalJSON decodes KvmControl, mapping an unrecognised "kind" to
@@ -303,7 +321,8 @@ func (k *KvmControl) UnmarshalJSON(b []byte) error {
 	}
 	*k = KvmControl(r)
 	switch k.Kind {
-	case KvmControlKindAttach, KvmControlKindDetach:
+	case KvmControlKindAttach, KvmControlKindDetach,
+		KvmControlKindMeshAdd, KvmControlKindMeshRemove:
 	default:
 		k.Kind = KvmControlKindUnknown
 	}

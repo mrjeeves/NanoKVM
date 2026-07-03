@@ -38,9 +38,14 @@ type Mesh struct {
 	// is pointed at this same path via $Home/config.json by the init script; the
 	// two must match. Empty falls back to $Home/daemon.sock.
 	Socket string `yaml:"socket"`
-	// NetworkId is the wire-level rendezvous handle of the network we join.
+	// NetworkId overrides the device's **joining mesh** — the network an
+	// unclaimed/reset KVM sits on waiting to be adopted. Empty (the default)
+	// means the per-device `cec-kvm-xxxxx-xxxxx` id derived from the daemon
+	// identity, which the device shows on its screen and web UI. Set it only
+	// to pin a custom joining mesh; the retired shared default
+	// ("cec-backend-client-mesh") is migrated to empty on load.
 	NetworkId string `yaml:"networkId"`
-	// Label is the cosmetic display name for that network.
+	// Label is the cosmetic display name for the joining mesh.
 	Label string `yaml:"label"`
 	// Relays is the explicit signaling relay list. Empty means use the public
 	// venue default (the daemon's built-in relays).

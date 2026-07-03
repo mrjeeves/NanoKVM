@@ -33,6 +33,7 @@
 #define KVM_STEAM_FPS   0x06
 #define KVM_JPG_QLTY    0x07
 #define KVM_CPU_IDLE    0x08
+#define KVM_MESH_NAME   0x09
 
 #define KVM_RES_none    0x00
 #define KVM_RES_480P    0x01

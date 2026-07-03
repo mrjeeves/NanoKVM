@@ -160,6 +160,7 @@ void* thread_sys_handle(void * arg)
 			kvm_update_hdmi_res();
 			kvm_update_stream_type();
 			kvm_update_stream_qlty();
+			kvm_update_mesh_name();
 			kvm_wifi_web_config_process();
 
 		} else if(kvm_sys_state.page == 1){

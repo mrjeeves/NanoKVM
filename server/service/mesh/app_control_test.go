@@ -64,7 +64,7 @@ func TestHandleAppGatesOnOwner(t *testing.T) {
 	}
 
 	// Claimed: only the owner may.
-	if !b.state.TryClaim("owner-node-ABCDE") {
+	if !b.state.TryClaim("owner-node-ABCDE", "") {
 		t.Fatal("claim should succeed on fresh state")
 	}
 	b.handleApp("n", "intruder", restart)
@@ -113,7 +113,7 @@ func TestHandleAppGatesOnOwner(t *testing.T) {
 // them.
 func TestSenderMayControlCoFleet(t *testing.T) {
 	b := testBridge(t)
-	if !b.state.TryClaim("owner-node-ABCDE") {
+	if !b.state.TryClaim("owner-node-ABCDE", "") {
 		t.Fatal("claim should succeed")
 	}
 

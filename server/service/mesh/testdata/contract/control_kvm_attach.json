@@ -1,5 +1,6 @@
 {
   "kind": "attach",
+  "label": "Den Tower",
   "node": "den-tower",
   "t": "kvm"
 }

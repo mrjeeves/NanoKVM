@@ -32,12 +32,14 @@ var defaultConfig = &Config{
 		LoginMaxFailures:     5,
 	},
 	Mesh: Mesh{
-		Enabled:   true,
-		Name:      "CEC-KVM",
-		Home:      "/data/myownmesh",
-		Socket:    "/tmp/myownmesh/daemon.sock",
-		NetworkId: "cec-backend-client-mesh",
-		Label:     "CEC Backend Client Mesh",
+		Enabled: true,
+		Name:    "CEC-KVM",
+		Home:    "/data/myownmesh",
+		Socket:  "/tmp/myownmesh/daemon.sock",
+		// Empty = the per-device joining mesh (cec-kvm-xxxxx-xxxxx, derived
+		// from the daemon identity). Set only to pin a custom joining mesh.
+		NetworkId: "",
+		Label:     "CEC KVM Joining Mesh",
 		Relays:    nil,
 		DaemonBin: "/kvmapp/system/bin/myownmesh",
 	},
@@ -76,11 +78,15 @@ func checkDefaultValue() {
 		// the daemon's control_socket (set via $Home/config.json by S94myownmesh).
 		instance.Mesh.Socket = "/tmp/myownmesh/daemon.sock"
 	}
-	if instance.Mesh.NetworkId == "" {
-		instance.Mesh.NetworkId = "cec-backend-client-mesh"
+	// NetworkId: empty is now MEANINGFUL — it selects the per-device joining
+	// mesh (cec-kvm-xxxxx-xxxxx). The retired shared default from earlier
+	// releases is migrated to empty so those devices pick up their own
+	// joining mesh too; only a genuinely custom value survives.
+	if instance.Mesh.NetworkId == "cec-backend-client-mesh" {
+		instance.Mesh.NetworkId = ""
 	}
-	if instance.Mesh.Label == "" {
-		instance.Mesh.Label = "CEC Backend Client Mesh"
+	if instance.Mesh.Label == "" || instance.Mesh.Label == "CEC Backend Client Mesh" {
+		instance.Mesh.Label = "CEC KVM Joining Mesh"
 	}
 	if instance.Mesh.DaemonBin == "" {
 		instance.Mesh.DaemonBin = "/kvmapp/system/bin/myownmesh"

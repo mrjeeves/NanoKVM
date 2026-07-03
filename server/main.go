@@ -74,11 +74,15 @@ func run() {
 
 	// Start the AllMyStuff mesh bridge (native integration). Non-fatal: it
 	// retries on connect failure, since the myownmesh daemon may not be up yet.
+	// The /api/mesh routes are mounted either way so the web UI's Mesh tab can
+	// report a disabled bridge instead of erroring.
+	var bridge *mesh.Bridge
 	if conf.Mesh.Enabled {
-		bridge := mesh.NewBridge(r, conf)
+		bridge = mesh.NewBridge(r, conf)
 		go bridge.Start(make(chan struct{}))
 		log.Println("AllMyStuff mesh bridge started")
 	}
+	mesh.RegisterRoutes(r, bridge)
 
 	httpAddr := utils.ListenAddr(conf.Host, strconv.Itoa(conf.Port.Http))
 	loopbackHTTPAddr := utils.ListenAddr("127.0.0.1", strconv.Itoa(conf.Port.Http))

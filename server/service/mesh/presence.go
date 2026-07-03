@@ -109,17 +109,52 @@ func siteID(port uint16) string {
 	return "tcp:" + strconv.Itoa(int(port))
 }
 
+// attachmentLabel is the display label an attached KVM takes: KVM-<target's
+// label>, or "" when unattached (callers then use their own default). The
+// target's label is resolved LIVE, preferring the attached node's current
+// presence label (from the peer-label cache, so the name tracks a rename and
+// self-heals a claim/attach that landed before the target's label was known),
+// then the label baked at attach time, then a short canonical id as a last
+// resort. A bridge method (not a free function) so it can read the cache; used
+// by both the presence advert and the daemon identity so the two never
+// disagree.
+func (b *Bridge) attachmentLabel() string {
+	snap := b.state.snapshot()
+	if snap.AttachedTo == "" {
+		return ""
+	}
+	target := b.peerLabel(snap.AttachedTo)
+	if target == "" {
+		target = snap.AttachedLabel
+	}
+	if target == "" {
+		target = pubkeyPart(snap.AttachedTo)
+		if len(target) > 10 {
+			target = target[:10]
+		}
+	}
+	return "KVM-" + target
+}
+
 // buildProfile assembles the presence NodeProfile from device info, config, and
 // the current persisted state. nodeID is our daemon device id; version is the
-// NanoKVM application version; boot is the random per-run boot id.
-func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State, version string, boot uint64) NodeProfile {
+// NanoKVM application version; boot is the random per-run boot id; joiningMesh
+// is this device's derived joining mesh; meshes is every network id currently
+// joined (fleet included); attachedLabel is the resolved KVM-<target> display
+// name ("" when unattached), computed by the bridge so it can consult the live
+// peer-label cache.
+func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State, version string, boot uint64, joiningMesh string, meshes []string, attachedLabel string) NodeProfile {
 	port := webPort(conf)
 	id := siteID(port)
 	snap := st.snapshot()
 
-	// Display name on the graph: the configured brand name ("CEC-KVM" by
-	// default), falling back to hostname then node id if explicitly cleared.
-	label := conf.Mesh.Name
+	// Display name on the graph: KVM-<attached machine> once attached, else
+	// the configured brand name ("CEC-KVM" by default), falling back to
+	// hostname then node id if explicitly cleared.
+	label := attachedLabel
+	if label == "" {
+		label = conf.Mesh.Name
+	}
 	if label == "" {
 		label = dev.hostname
 	}
@@ -161,8 +196,10 @@ func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State,
 		FleetName:  snap.FleetName,
 		FleetOwner: snap.FleetName, // a fleet is named for its owner; track it
 		Kvm: &KvmAdvert{
-			AttachedTo: attached,
-			Web:        id,
+			AttachedTo:  attached,
+			Web:         id,
+			JoiningMesh: joiningMesh,
+			Meshes:      meshes,
 		},
 	}
 }

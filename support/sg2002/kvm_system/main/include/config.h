@@ -62,6 +62,7 @@ typedef struct {
 	int8_t type = 0;				// cat /kvmapp/kvm/type
 	int8_t now_fps = 0;				// cat /kvmapp/kvm/now_fps
 	int16_t qlty = 0;				// cat /kvmapp/kvm/qlty
+	char mesh_name[32] = {0};		// cat /kvmapp/kvm/mesh_name
 	int8_t oled_thread_running = 0;
 	int8_t key_thread_running = 0;
 	int8_t sys_thread_running = 0;
@@ -95,6 +96,7 @@ typedef struct {
 	int8_t type = -1;				// cat /kvmapp/kvm/type
 	int8_t now_fps = -1;			// cat /kvmapp/kvm/now_fps
 	int16_t qlty = -1;				// cat /kvmapp/kvm/qlty
+	char mesh_name[32] = {0};		// cat /kvmapp/kvm/mesh_name
     uint16_t oled_sleep_param = 0;
     uint8_t oled_sleep_state = 0;	// 0:wakeup; 1:sleep;
 	uint64_t oled_sleep_start = 0;

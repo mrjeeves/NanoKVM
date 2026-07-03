@@ -412,6 +412,32 @@ const en = {
           none: 'None'
         }
       },
+      mesh: {
+        title: 'Mesh',
+        loading: 'Loading...',
+        queryFailed: 'Failed to get mesh status',
+        disabled: 'The mesh bridge is disabled in the device configuration.',
+        joiningMesh: 'Joining Mesh',
+        joiningMeshDesc:
+          "Join this mesh from AllMyStuff to find and claim this device. The device returns here whenever it's reset.",
+        waiting: 'Waiting for the mesh daemon...',
+        status: 'Status',
+        claimState: 'Claim State',
+        claimable: 'Claimable — waiting for adoption',
+        claimed: 'Claimed',
+        claimedFleet: 'Claimed — fleet {{name}}',
+        label: 'Label',
+        attachedTo: 'Attached Machine',
+        notAttached: 'Not attached',
+        nodeId: 'Node ID',
+        connection: 'Connection',
+        connected: 'Connected',
+        disconnected: 'Disconnected',
+        memberships: 'Mesh Memberships',
+        noMemberships: 'Not joined to any mesh yet',
+        fleet: 'fleet',
+        joining: 'joining'
+      },
       tailscale: {
         title: 'Tailscale',
         memory: {
