@@ -261,6 +261,11 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 			// blocks on a daemon round-trip; a co-member added mid-session
 			// gains control within one presence interval.
 			b.refreshFleetRoster()
+			// Keep the daemon identity label in step with the live advert
+			// label — the attached node's presence (which feeds KVM-<label>)
+			// may have landed after the attach, or the target may have
+			// renamed. Change-guarded, so it's a no-op once converged.
+			b.syncIdentityLabel()
 		}
 	}
 }
@@ -842,7 +847,7 @@ func (b *Bridge) networkRemove(networkID string) error {
 // and the AllMyStuff graph all read one name. Change-driven: the identity
 // anchor is only rewritten when the label actually moved.
 func (b *Bridge) syncIdentityLabel() {
-	want := attachmentLabel(b.state.snapshot())
+	want := b.attachmentLabel()
 	if want == "" {
 		want = b.mesh.Name
 	}
@@ -1167,7 +1172,7 @@ func (b *Bridge) currentProfile() NodeProfile {
 	joining := b.joiningMesh
 	b.mu.Unlock()
 	return buildProfile(nodeID, b.conf, b.dev, b.state, b.versionString(), b.boot,
-		joining, b.networksSnapshot())
+		joining, b.networksSnapshot(), b.attachmentLabel())
 }
 
 // versionString returns the NanoKVM app version (best-effort file read).

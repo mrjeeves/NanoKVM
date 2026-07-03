@@ -318,6 +318,37 @@ func TestClaimAutoAttachUsesClaimerLabel(t *testing.T) {
 	}
 }
 
+// TestAttachLabelSelfHealsFromLivePresence: when a claim/attach lands before
+// the target's label is known (its presence hadn't arrived yet), the KVM
+// first advertises KVM-<id> — but as soon as the target's presence is cached,
+// the advert RESOLVES LIVE to KVM-<label> without a re-attach. This is the
+// fix for a KVM stuck showing the attached node's id instead of its label.
+func TestAttachLabelSelfHealsFromLivePresence(t *testing.T) {
+	f := startFakeDaemon(t)
+	b := connectedBridge(t, f)
+
+	// Claim with NO cached label (the racy order): the auto-attach bakes an
+	// empty label, so the advert falls back to the id.
+	b.handleOwnership("n", "den-tower-AB3CD", &OwnershipControl{Kind: OwnershipKindClaim, Owner: "den-tower-AB3CD"})
+	if b.state.AttachedLabel() != "" {
+		t.Fatalf("expected an empty baked label, got %q", b.state.AttachedLabel())
+	}
+	got := b.currentProfile().Label
+	if got == "" || got[:4] != "KVM-" || got == "KVM-" {
+		t.Fatalf("pre-heal label = %q, want a KVM-<id> fallback", got)
+	}
+	if got == "KVM-Den Tower" {
+		t.Fatal("label resolved before the target's presence arrived")
+	}
+
+	// The target's presence now lands — the advert self-heals to the label,
+	// no re-attach needed.
+	b.notePeerLabel("den-tower-AB3CD", json.RawMessage(`{"protocol":1,"node":"den-tower-AB3CD","label":"Den Tower"}`))
+	if got := b.currentProfile().Label; got != "KVM-Den Tower" {
+		t.Fatalf("post-heal label = %q, want KVM-Den Tower", got)
+	}
+}
+
 // TestEnsureMembershipsMigratesLegacy: the retired shared mesh is left
 // (purged) and the unclaimed device lands on its own joining mesh instead.
 func TestEnsureMembershipsMigratesLegacy(t *testing.T) {
