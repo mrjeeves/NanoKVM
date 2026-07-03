@@ -75,6 +75,36 @@ func lastRequest(f *fakeDaemon, op string) map[string]interface{} {
 	return reqs[len(reqs)-1]
 }
 
+// TestFleetKeyIsOwnerGated: the joining mesh is auto-approve open, so a
+// stranger who reads the id off the screen can join and send control frames.
+// An ungated FleetKey would let them capture an unclaimed device onto their
+// own fleet — the handler must refuse a key from anyone but the owner.
+func TestFleetKeyIsOwnerGated(t *testing.T) {
+	f := startFakeDaemon(t)
+	b := connectedBridge(t, f)
+
+	// Unclaimed device (no owner): a stranger's fleet key is refused, so no
+	// fleet credential is adopted and no fleet network is joined.
+	b.handleOwnership("n", "stranger", &OwnershipControl{
+		Kind: OwnershipKindFleetKey, Key: "attacker-key", Name: "Mallory",
+	})
+	time.Sleep(100 * time.Millisecond)
+	if b.state.FleetKey() != "" {
+		t.Fatalf("stranger's fleet key adopted: %q", b.state.FleetKey())
+	}
+
+	// The owner's key, after a legitimate claim, is accepted.
+	if !b.state.TryClaim("owner-node", "") {
+		t.Fatal("claim should succeed")
+	}
+	b.handleOwnership("n", "owner-node", &OwnershipControl{
+		Kind: OwnershipKindFleetKey, Key: "real-key", Name: "Casey",
+	})
+	if b.state.FleetKey() != "real-key" {
+		t.Fatalf("owner's fleet key not adopted: %q", b.state.FleetKey())
+	}
+}
+
 // TestMeshAddIsOwnerGated: a stranger's mesh_add never reaches the daemon.
 func TestMeshAddIsOwnerGated(t *testing.T) {
 	f := startFakeDaemon(t)
@@ -260,7 +290,7 @@ func TestAttachRenamesIdentity(t *testing.T) {
 	}
 
 	// Label-less attach (an older sender): the presence-cache fallback names it.
-	b.notePeerLabel(json.RawMessage(`{"protocol":1,"node":"lab-rig-AB3CD","label":"Lab Rig"}`))
+	b.notePeerLabel("lab-rig-AB3CD", json.RawMessage(`{"protocol":1,"node":"lab-rig-AB3CD","label":"Lab Rig"}`))
 	b.handleKvm("n", "owner-node", &KvmControl{Kind: KvmControlKindAttach, Node: "lab-rig-AB3CD"})
 	if b.state.AttachedLabel() != "Lab Rig" {
 		t.Fatalf("presence-cache fallback label = %q, want Lab Rig", b.state.AttachedLabel())
@@ -273,7 +303,7 @@ func TestAttachRenamesIdentity(t *testing.T) {
 func TestClaimAutoAttachUsesClaimerLabel(t *testing.T) {
 	f := startFakeDaemon(t)
 	b := connectedBridge(t, f)
-	b.notePeerLabel(json.RawMessage(`{"protocol":1,"node":"owner-node-XY3ZW","label":"Casey's Mac"}`))
+	b.notePeerLabel("owner-node-XY3ZW", json.RawMessage(`{"protocol":1,"node":"owner-node-XY3ZW","label":"Casey's Mac"}`))
 
 	b.handleOwnership("n", "owner-node-XY3ZW", &OwnershipControl{Kind: OwnershipKindClaim, Owner: "owner-node-XY3ZW"})
 

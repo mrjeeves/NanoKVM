@@ -94,20 +94,36 @@ func (b *Bridge) handleOwnership(network, from string, oc *OwnershipControl) {
 		b.reAdvertise()
 
 	case OwnershipKindFleetKey:
+		// The fleet key is a credential handed down by the device's OWNER
+		// right after it claims — never volunteered by a stranger. Gate it:
+		// the joining mesh is auto-approve open (any peer who reads the id
+		// off the screen can join), so an ungated FleetKey would let anyone
+		// there capture an unclaimed device onto their own fleet. An
+		// unclaimed device (no owner) fails this closed; the owner passes via
+		// the owner==from arm of senderMayControl. Mirrors AllMyStuff's node,
+		// which rejects a fleet key from anyone but the recorded owner.
+		if !b.senderMayControl(from) {
+			log.Infof("mesh: fleet key from non-owner %s ignored", from)
+			return
+		}
 		// Record the fleet credential and, since we can derive the closed-
 		// network id from the key (matching AllMyStuff's derivation), actually
 		// join the fleet's base network.
 		changed := b.state.AdoptFleetKey(oc.Key, oc.Name, oc.Venue)
 		if oc.Key != "" {
-			fleetNet := DeriveFleetNetworkID(oc.Key)
-			b.joinFleetNetwork(fleetNet, oc.Name, oc.Venue)
-			// Warm the co-fleet authorization cache off this goroutine (we're
-			// on the event stream; refreshFleetRoster does a ctl round-trip).
-			go b.refreshFleetRoster()
-			// Adopted into a fleet: the auto-approve joining mesh has done its
-			// job. Leave it once the fleet mesh is really carrying us (or on
-			// the bounded timeout) — an unclaim re-derives and rejoins it.
-			go b.leaveJoiningMeshAfterAdoption()
+			// Off the event-stream goroutine: joinFleetNetwork does a
+			// network_add (attaches signaling — seconds), and a stalled join
+			// must not block inbound frames. refreshFleetRoster + the
+			// deferred joining-mesh leave chain off the same goroutine.
+			go func() {
+				fleetNet := DeriveFleetNetworkID(oc.Key)
+				b.joinFleetNetwork(fleetNet, oc.Name, oc.Venue)
+				b.refreshFleetRoster()
+				// Adopted into a fleet: the auto-approve joining mesh has done
+				// its job. Leave it once the fleet mesh is really carrying us
+				// (roster converged) — an unclaim re-derives and rejoins it.
+				b.leaveJoiningMeshAfterAdoption()
+			}()
 		}
 		if changed {
 			b.reAdvertise()

@@ -396,18 +396,37 @@ func (b *Bridge) ensureMemberships() error {
 		}
 	}
 
-	claimed := b.state.Owner() != "" || b.state.FleetKey() != ""
-	if claimed {
-		// A claimed device doesn't linger on its auto-approve joining mesh.
+	// Only a device that actually holds a fleet key has somewhere else to be:
+	// the fleet mesh covers it, so it may leave the auto-approve joining mesh.
+	// A CLAIMED-BUT-KEYLESS device (owner recorded, but the fleet-key handoff
+	// was lost or hasn't arrived) must NOT leave — it would strand itself on
+	// zero meshes, permanently unreachable, with no key to derive a fleet mesh
+	// from. It stays on the joining mesh (reachable) so the owner's presence
+	// can re-hand the key; the deferred leave then runs once the fleet mesh
+	// converges.
+	hasFleet := b.state.FleetKey() != ""
+	if hasFleet {
+		// A fleet member doesn't linger on its auto-approve joining mesh.
 		// This also covers a crash between fleet adoption and the deferred
 		// joining-mesh leave.
 		if present[joining] {
 			if err := b.networkRemove(joining); err != nil {
 				log.Warnf("mesh: leave joining mesh %s: %s", joining, err)
 			} else {
-				log.Infof("mesh: left joining mesh %s (claimed)", joining)
+				log.Infof("mesh: left joining mesh %s (fleet mesh carries us)", joining)
 				delete(present, joining)
 			}
+		}
+	} else if b.state.Owner() != "" {
+		// Claimed but keyless: keep the joining mesh (reachable) and don't
+		// shed — the claim is mid-flight, not finished.
+		if !present[joining] {
+			cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
+			if err := b.networkAdd(cfg); err != nil {
+				return err
+			}
+			present[joining] = true
+			log.Infof("mesh: on joining mesh %s (claimed, awaiting fleet key)", joining)
 		}
 	} else {
 		// Unclaimed: the joining mesh is the ONLY legitimate membership —
@@ -573,8 +592,11 @@ func (b *Bridge) unclaim(from string) {
 		log.Warnf("mesh: unclaim networks_list: %s", err)
 		return
 	}
-	// Return to the joining mesh before dropping anything, so the device is
-	// never on zero meshes if the teardown dies midway.
+	// Return to the joining mesh BEFORE dropping anything, so the device is
+	// never on zero meshes if the teardown dies midway. If the rejoin fails we
+	// keep the old meshes rather than shedding into nothing — a reachable
+	// (if stale) device beats a dark one; the next connect's ensureMemberships
+	// retries from the persisted claimable state.
 	onJoining := false
 	for _, n := range nets {
 		if n.NetworkID == joining {
@@ -585,11 +607,17 @@ func (b *Bridge) unclaim(from string) {
 	if !onJoining {
 		cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
 		if err := b.networkAdd(cfg); err != nil {
-			log.Warnf("mesh: unclaim rejoin %s: %s", joining, err)
+			log.Warnf("mesh: unclaim rejoin %s failed — keeping current meshes, will retry on reconnect: %s", joining, err)
+			b.syncIdentityLabel()
+			b.reAdvertise()
+			return
 		}
 	}
 	if err := b.joinPlanes(joining); err != nil {
-		log.Warnf("mesh: unclaim join planes on %s: %s", joining, err)
+		log.Warnf("mesh: unclaim join planes on %s failed — keeping current meshes: %s", joining, err)
+		b.syncIdentityLabel()
+		b.reAdvertise()
+		return
 	}
 	for _, n := range nets {
 		if n.NetworkID == joining {
@@ -609,16 +637,19 @@ func (b *Bridge) unclaim(from string) {
 	log.Infof("mesh: reset complete — claimable on %s", joining)
 }
 
-// leaveJoiningMeshAfterAdoption leaves the joining mesh once the fleet mesh
-// is really carrying us — the fleet roster has converged — so the tail of the
-// claim conversation (which rode the joining mesh) is never cut mid-sentence.
-// Bounded: after ~60 s we leave regardless (the claim exchange is long done
-// and presence re-adverts flow over the fleet mesh).
+// leaveJoiningMeshAfterAdoption leaves the joining mesh once the fleet mesh is
+// really carrying us — the fleet roster has CONVERGED — so the device is never
+// left dark. If the fleet mesh never converges within the bounded wait we
+// KEEP the joining mesh: reachable on two meshes beats stranded on a fleet
+// mesh that isn't working (the old behavior stayed on the shared mesh forever
+// too, so this is no regression). The tail of the claim conversation, which
+// rode the joining mesh, is thus never cut mid-sentence either.
 func (b *Bridge) leaveJoiningMeshAfterAdoption() {
 	joining := b.joiningMeshID()
 	if joining == "" || b.isFleetMesh(joining) {
 		return
 	}
+	converged := false
 	for i := 0; i < 12; i++ {
 		time.Sleep(5 * time.Second)
 		if b.state.FleetKey() == "" {
@@ -626,17 +657,27 @@ func (b *Bridge) leaveJoiningMeshAfterAdoption() {
 		}
 		b.refreshFleetRoster()
 		b.mu.Lock()
-		converged := len(b.fleetRoster) > 0
+		converged = len(b.fleetRoster) > 0
 		b.mu.Unlock()
 		if converged {
 			break
 		}
 	}
-	if b.state.FleetKey() == "" {
+	if !converged {
+		// Never proven reachable on the fleet mesh — stay put. The next
+		// adoption (or a manual reconnect) retries; a dark device is worse
+		// than one lingering on its own auto-approve venue.
+		log.Warnf("mesh: fleet roster never converged — keeping joining mesh %s for reachability", joining)
 		return
 	}
 	b.membershipMu.Lock()
 	defer b.membershipMu.Unlock()
+	// Re-check under the lock: an unclaim (which clears the key before taking
+	// this same lock, then re-adds the joining mesh) may have run while we
+	// waited. Leaving now would strand the just-reset device on zero meshes.
+	if b.state.FleetKey() == "" {
+		return
+	}
 	nets, err := b.ctlNetworksList()
 	if err != nil {
 		return // the next connect's ensureMemberships finishes the job
@@ -726,7 +767,9 @@ func (b *Bridge) joinFleetNetwork(networkID, name string, venue *string) {
 		// A fleet is a CLOSED network: membership is gated by the owner's signed
 		// authority chain, not auto-approved.
 		cfg := b.networkConfig(networkID, networkID, name, nil, venue, "closed", false)
-		if err := b.ctl.NetworkAdd(cfg); err != nil {
+		// Via the nil-ctl-guarded helper — a concurrent teardown may have
+		// nilled b.ctl, and a bare b.ctl read here would race it.
+		if err := b.networkAdd(cfg); err != nil {
 			log.Warnf("mesh: join fleet network %s: %s", networkID, err)
 			return
 		}
@@ -810,6 +853,13 @@ func (b *Bridge) syncIdentityLabel() {
 	if ctl == nil || want == have {
 		return
 	}
+	// Don't clobber a label the operator set out-of-band (via the daemon's own
+	// CLI): only overwrite when the current label is empty or one WE manage
+	// (the brand name or a KVM-<…> attachment name). A genuinely custom label
+	// is left alone — the bridge owns its naming, not the operator's.
+	if have != "" && have != b.mesh.Name && !strings.HasPrefix(have, "KVM-") {
+		return
+	}
 	if err := ctl.IdentitySetLabel(want); err != nil {
 		log.Warnf("mesh: set identity label %q: %s", want, err)
 		return
@@ -823,12 +873,25 @@ func (b *Bridge) syncIdentityLabel() {
 // notePeerLabel caches a peer's display label from its presence advert — the
 // fallback that names this device KVM-<target> when an attach arrives without
 // a label (an older sender) or at claim time (the auto-attach to the claimer).
-func (b *Bridge) notePeerLabel(raw json.RawMessage) {
+// from is the daemon-AUTHENTICATED sender; the payload's self-declared `node`
+// is not, so we cache only when they match. Without this a stranger on the
+// open joining mesh could advertise a presence claiming node=<the claimer>
+// with attacker text, poisoning the label the device renames itself to at
+// claim time.
+func (b *Bridge) notePeerLabel(from string, raw json.RawMessage) {
+	if from == "" {
+		return
+	}
 	var p struct {
 		Node  string `json:"node"`
 		Label string `json:"label"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil || p.Node == "" || p.Label == "" {
+		return
+	}
+	// The advert must be about its own sender — a peer may only set its own
+	// label, never someone else's cache slot.
+	if !canonicalEqual(p.Node, from) {
 		return
 	}
 	b.mu.Lock()
@@ -841,7 +904,7 @@ func (b *Bridge) notePeerLabel(raw json.RawMessage) {
 	if len(b.peerLabels) > 512 {
 		b.peerLabels = map[string]string{}
 	}
-	b.peerLabels[pubkeyPart(p.Node)] = p.Label
+	b.peerLabels[pubkeyPart(from)] = p.Label
 	b.mu.Unlock()
 }
 
@@ -948,7 +1011,7 @@ func (b *Bridge) onChannelInbound(ci ChannelInbound) {
 		// straight to it, so the app learns about us immediately (event-driven
 		// gossip) instead of waiting for the slow heartbeat — without this we
 		// only appear on a 30s beat and flap in and out of the graph.
-		b.notePeerLabel(ci.Payload)
+		b.notePeerLabel(ci.From, ci.Payload)
 		b.greetPeer(ci.Network, ci.From)
 	}
 }
