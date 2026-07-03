@@ -11,6 +11,7 @@ import (
 	"NanoKVM-Server/proto"
 
 	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
 )
 
 // MeshMembership is one mesh the device is currently joined to.
@@ -37,6 +38,16 @@ type MeshStatus struct {
 	AttachedTo    string           `json:"attachedTo"`
 	AttachedLabel string           `json:"attachedLabel"`
 	Meshes        []MeshMembership `json:"meshes"`
+	// PublicClaims mirrors config.Mesh.PublicClaims — READ-ONLY here by
+	// design: the policy is settable only in the device's config file, so
+	// no remote system (including a mesh-tunneled browser session) can
+	// open the device to public claiming.
+	PublicClaims bool `json:"publicClaims"`
+	// ClaimCode is the device's current claim code in display form
+	// (xxxx-xxxx-…) — the WAN rendezvous secret for AllMyStuff's "Claim a
+	// remote device" flow. Populated only while the device is claimable
+	// with public claims enabled; empty otherwise.
+	ClaimCode string `json:"claimCode,omitempty"`
 }
 
 // RegisterRoutes mounts the mesh API. bridge may be nil (mesh disabled in
@@ -52,6 +63,49 @@ func RegisterRoutes(r *gin.Engine, bridge *Bridge) {
 		}
 		rsp.OkRspWithData(c, bridge.StatusSnapshot())
 	})
+	// Rotate the claim code. Deliberately the ONLY claim mutation exposed
+	// over HTTP: rotation can only invalidate an in-flight code (minting a
+	// fresh one), never enable claiming — enabling lives in server.yaml
+	// alone.
+	api.POST("/claim/code/rotate", func(c *gin.Context) {
+		var rsp proto.Response
+		if bridge == nil {
+			rsp.ErrRsp(c, -1, "mesh disabled")
+			return
+		}
+		bridge.RotateClaimCode()
+		rsp.OkRspWithData(c, bridge.StatusSnapshot())
+	})
+}
+
+// RotateClaimCode discards the current claim code and, when the device is
+// claimable with public claims on, re-establishes the rendezvous under a
+// fresh one.
+func (b *Bridge) RotateClaimCode() {
+	old := b.state.ClaimCode()
+	b.state.RotateClaimCode()
+	if old == "" {
+		return
+	}
+	b.membershipMu.Lock()
+	defer b.membershipMu.Unlock()
+	oldNet := claimCodeNetworkID(old)
+	if err := b.networkRemove(oldNet); err != nil {
+		log.Warnf("mesh: leave rotated claim rendezvous %s: %s", oldNet, err)
+	}
+	if b.state.Claimable() && b.publicClaimsAllowed() {
+		code := b.state.EnsureClaimCode()
+		codeNet := claimCodeNetworkID(code)
+		cfg := b.networkConfig(codeNet, codeNet, "Remote claiming", b.mesh.Relays, nil, "open", true)
+		if err := b.networkAdd(cfg); err != nil {
+			log.Warnf("mesh: rejoin claim rendezvous: %s", err)
+			return
+		}
+		if err := b.joinPlanes(codeNet); err != nil {
+			log.Warnf("mesh: join planes on %s: %s", codeNet, err)
+		}
+		log.Infof("mesh: claim code rotated — now %s", formatClaimCode(code))
+	}
 }
 
 // StatusSnapshot assembles the current MeshStatus.
@@ -77,6 +131,11 @@ func (b *Bridge) StatusSnapshot() MeshStatus {
 		})
 	}
 
+	claimCode := ""
+	if snap.Claimable && b.publicClaimsAllowed() && snap.ClaimCode != "" {
+		claimCode = formatClaimCode(snap.ClaimCode)
+	}
+
 	return MeshStatus{
 		Enabled:       true,
 		Connected:     running,
@@ -89,5 +148,7 @@ func (b *Bridge) StatusSnapshot() MeshStatus {
 		AttachedTo:    snap.AttachedTo,
 		AttachedLabel: snap.AttachedLabel,
 		Meshes:        meshes,
+		PublicClaims:  b.publicClaimsAllowed(),
+		ClaimCode:     claimCode,
 	}
 }

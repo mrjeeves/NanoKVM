@@ -283,6 +283,15 @@ func NewClaimed(owner string) ControlMessage {
 	})
 }
 
+// NewDeclined builds the point-to-point refusal of a claim, carrying an
+// actionable reason for the claimer's toast.
+func NewDeclined(reason string) ControlMessage {
+	return wrapControl(ControlKindOwnership, OwnershipControl{
+		Kind:   OwnershipKindDeclined,
+		Reason: reason,
+	})
+}
+
 // ---- KvmControl (tagged "kind") ---------------------------------------------
 
 // KvmControlKind discriminates a KvmControl message.

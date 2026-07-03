@@ -55,12 +55,34 @@ the KVM is never blocked from serving its LAN.
 
 ## Ownership, claim, fleets, and the joining mesh
 
+- **Claiming is LAN-first, and public-mesh claiming is off by default.**
+  While claimable, the device sits on two claim rendezvous meshes:
+  - the **LAN claim mesh** (`allmystuff-local-claim-v1`, frozen — mirrored
+    from `allmystuff-protocol`): mDNS-only signaling (`strategy: "none",
+    mdns: true`, no relays/STUN/TURN), which every AllMyStuff node always
+    joins too. A claimable KVM therefore simply **appears in the claim sheet
+    of any AllMyStuff machine on the same LAN** — no id transcription, no
+    mesh joining, and it works during the pre-NTP boot window (mDNS needs no
+    wall clock, unlike relay TLS).
+  - its own **joining mesh** (below) — by default also pinned to LAN-only
+    signaling, so nothing about an unclaimed device touches public relays.
 - Every device has its own **joining mesh** — `cec-kvm-<5>-<5>`, derived
   deterministically (and frozen, `joining.go`) from the daemon identity. It's
   the mesh an unclaimed/reset device waits on, and the name is surfaced on the
   device's OLED (rotating with the IPs) and in the web UI's **Mesh** settings
   tab — nothing is printed on a box. To adopt a device: read the name, join
-  that mesh from AllMyStuff, claim it.
+  that mesh from AllMyStuff, claim it (same LAN by default; over the internet
+  only with `publicClaims` enabled).
+- **`publicClaims: true`** (config file only — see Configuration) re-opens
+  the WAN paths: the joining mesh keeps its relay venue (claim by on-screen
+  id over the internet), and the device additionally mints a random **claim
+  code** — a rotating rendezvous secret (`amsclaim-<code>`, frozen mirror of
+  AllMyStuff's derivation, `claimcode.go`) shown in the web UI's Mesh tab —
+  for AllMyStuff's **Fleet → "Claim a remote device"** one-field flow. The
+  code rotates after every successful claim; the only HTTP mutation exposed
+  is *rotate* (which can only invalidate a code, never enable claiming).
+  Claims arriving over any non-rendezvous mesh are declined
+  (`claimNetworkAllowed`, defense in depth on top of the membership policy).
 - A fresh device is **claimable**. An `Ownership Claim{owner}` (only honored
   while claimable) records the owner, ends claim mode, and — because a KVM is
   physically wired to the machine that claims it — **auto-attaches** to the
@@ -113,6 +135,7 @@ mesh:
   networkId: ""                  # empty = this device's own joining mesh (cec-kvm-…)
   label: CEC KVM Joining Mesh
   relays: []                     # empty = public venue default
+  publicClaims: false            # claims over the public mesh (see below)
   daemonBin: /kvmapp/system/bin/myownmesh
 ```
 
@@ -120,6 +143,18 @@ mesh:
 per-device `cec-kvm-…` id. A config still carrying the retired shared default
 (`cec-backend-client-mesh`) is migrated to empty on load, and a device that
 still holds that network leaves it on the next connect.
+
+`publicClaims` is the device's **claims-over-the-public-mesh policy**, and it
+is **strictly device-local**: this config file is the only place it can be
+set. There is deliberately no HTTP endpoint and no mesh control message that
+mutates it — a remote system (including a mesh-tunneled browser session
+riding the auth bypass) must never be able to open a device to public
+claiming. Off (the default), an unclaimed KVM's rendezvous meshes are all
+LAN-only and the device can only be claimed from the same local network; on,
+the joining mesh keeps its relay venue and a claim code is minted (shown in
+the web UI's Mesh tab). Flipping it takes effect on the next bridge connect —
+the bridge re-joins the joining mesh under the new signaling policy (tracked
+in `kvm-state.json` as `joining_public`).
 
 **Why `socket` is separate from `home`.** The data partition (`/data`) is
 typically **exFAT/FAT**, which can hold regular files (identity, rosters, state)

@@ -412,6 +412,12 @@ const zh = {
         joiningMesh: '配对网络',
         joiningMeshDesc:
           '在 AllMyStuff 中加入该网络即可找到并认领此设备。设备重置后会重新回到该网络。',
+        remoteClaiming: '远程认领',
+        claimCodeDesc:
+          '在 AllMyStuff → 设备组 → “认领远程设备” 中输入此代码，即可通过互联网认领此设备。请只将代码告知设备的所有者 — 它是私密的会合凭证，认领完成后会自动更换。',
+        rotateCode: '更换代码',
+        remoteClaimingOff:
+          '远程认领已关闭：只有与设备处于同一局域网的机器才能认领它。如需通过互联网认领，请在设备的 server.yaml 中设置 mesh.publicClaims: true（仅限配置文件 — 无法在此页面开启）。',
         waiting: '正在等待 Mesh 守护进程...',
         status: '状态',
         claimState: '认领状态',

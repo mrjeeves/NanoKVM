@@ -28,6 +28,17 @@ type persistedState struct {
 	// string), handed down with the fleet key. Persisted so a restart can
 	// rejoin the fleet network at the same venue.
 	FleetVenue string `json:"fleet_venue,omitempty"`
+	// ClaimCode is the device's current claim-code rendezvous secret (see
+	// claimcode.go) — minted while the device sits claimable with public
+	// claims enabled, shown on the web page, rotated after every successful
+	// claim. Persisted so the code an operator wrote down survives a restart.
+	ClaimCode string `json:"claim_code,omitempty"`
+	// JoiningPublic remembers which signaling policy the joining mesh was
+	// LAST JOINED with (nil = never recorded): the daemon persists a
+	// network's config across restarts, so when the operator flips
+	// config.Mesh.PublicClaims the bridge must re-join the mesh to apply the
+	// new signaling — this is how it notices.
+	JoiningPublic *bool `json:"joining_public,omitempty"`
 }
 
 // State is the live, lock-guarded KVM ownership/attachment state. It persists to
@@ -150,6 +161,56 @@ func (s *State) FleetKey() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.data.FleetKey
+}
+
+// ClaimCode returns the persisted claim code, or "" if none is minted.
+func (s *State) ClaimCode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.ClaimCode
+}
+
+// EnsureClaimCode returns the claim code, minting (and persisting) a fresh
+// one if absent.
+func (s *State) EnsureClaimCode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.ClaimCode == "" {
+		s.data.ClaimCode = newClaimCode()
+		s.persistLocked()
+	}
+	return s.data.ClaimCode
+}
+
+// RotateClaimCode discards the claim code so the next EnsureClaimCode mints a
+// fresh one — a code that admitted an owner is spent.
+func (s *State) RotateClaimCode() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.ClaimCode != "" {
+		s.data.ClaimCode = ""
+		s.persistLocked()
+	}
+}
+
+// JoiningPublic returns the signaling policy the joining mesh was last
+// joined with (nil = never recorded).
+func (s *State) JoiningPublic() *bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.JoiningPublic
+}
+
+// SetJoiningPublic records the signaling policy the joining mesh was just
+// joined with.
+func (s *State) SetJoiningPublic(public bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.JoiningPublic != nil && *s.data.JoiningPublic == public {
+		return
+	}
+	s.data.JoiningPublic = &public
+	s.persistLocked()
 }
 
 // ---- mutations --------------------------------------------------------------

@@ -420,6 +420,12 @@ const en = {
         joiningMesh: 'Joining Mesh',
         joiningMeshDesc:
           "Join this mesh from AllMyStuff to find and claim this device. The device returns here whenever it's reset.",
+        remoteClaiming: 'Remote Claiming',
+        claimCodeDesc:
+          'Enter this code in AllMyStuff → Fleet → "Claim a remote device" to claim this device over the internet. Share it only with the intended owner — it is the private meeting point, and it rotates after a claim.',
+        rotateCode: 'New code',
+        remoteClaimingOff:
+          'Remote claiming is off: this device can only be claimed from a machine on the same local network. To allow claiming over the internet, set mesh.publicClaims: true in its server.yaml (config file only — it cannot be enabled from here).',
         waiting: 'Waiting for the mesh daemon...',
         status: 'Status',
         claimState: 'Claim State',

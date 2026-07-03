@@ -73,6 +73,20 @@ func (b *Bridge) handleOwnership(network, from string, oc *OwnershipControl) {
 	}
 	switch oc.Kind {
 	case OwnershipKindClaim:
+		// Claims are honored only via the claim rendezvous meshes (the LAN
+		// claim mesh, the joining mesh, the device's own claim code) unless
+		// public claims are deliberately enabled in this device's config —
+		// a defense-in-depth gate on top of the membership policy (an
+		// unclaimed KVM shouldn't even BE anywhere else).
+		if !b.claimNetworkAllowed(network) {
+			log.Infof("mesh: claim from %s over %s refused (public claims disabled)", from, network)
+			if err := b.sendControlTo(network, from, NewDeclined(
+				"claims over the public mesh are disabled on this KVM — claim it from the "+
+					"same local network, or set mesh.publicClaims in its server.yaml")); err != nil {
+				log.Warnf("mesh: send Declined to %s: %s", from, err)
+			}
+			return
+		}
 		// The claimer is the message's `owner` field (the claimer's node id).
 		claimer := oc.Owner
 		if claimer == "" {
