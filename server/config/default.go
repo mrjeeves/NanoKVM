@@ -41,7 +41,11 @@ var defaultConfig = &Config{
 		NetworkId: "",
 		Label:     "CEC KVM Joining Mesh",
 		Relays:    nil,
-		DaemonBin: "/kvmapp/system/bin/myownmesh",
+		// Claims over the public mesh are OFF unless the operator flips this
+		// in /etc/kvm/server.yaml — claiming is local-network only by default
+		// (the Go zero value; spelled out here for self-documentation).
+		PublicClaims: false,
+		DaemonBin:    "/kvmapp/system/bin/myownmesh",
 	},
 }
 

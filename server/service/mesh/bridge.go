@@ -311,6 +311,15 @@ func (b *Bridge) socketPath() string {
 	return filepath.Join(b.mesh.Home, "daemon.sock")
 }
 
+// localClaimMesh is the well-known LAN claim rendezvous every AllMyStuff node
+// always sits on: signaling is mDNS-only (strategy "none"), so it never
+// touches relays, STUN, or TURN — and it needs no wall clock, which covers
+// the KVM's pre-NTP boot window. A claimable KVM joins it so it simply
+// APPEARS in the claim sheet of any AllMyStuff machine on the same LAN — no
+// reading the id off the OLED, no adding a mesh. FROZEN: mirrors
+// allmystuff-protocol's LOCAL_CLAIM_NETWORK_ID.
+const localClaimMesh = "allmystuff-local-claim-v1"
+
 // legacySharedMesh is the retired pre-release default every KVM used to share.
 // A device that still holds it is migrated off on connect: each KVM now waits
 // for adoption alone on its own joining mesh.
@@ -401,6 +410,22 @@ func (b *Bridge) ensureMemberships() error {
 		}
 	}
 
+	// The joining mesh's signaling follows the public-claims policy, and the
+	// daemon persists a network's config across restarts — so when the
+	// recorded policy differs from the configured one (or was never
+	// recorded, i.e. the mesh predates the policy), re-join to apply it.
+	public := b.publicClaimsAllowed()
+	if present[joining] {
+		if last := b.state.JoiningPublic(); last == nil || *last != public {
+			if err := b.networkRemove(joining); err != nil {
+				log.Warnf("mesh: re-join joining mesh for signaling policy: %s", err)
+			} else {
+				log.Infof("mesh: re-joining %s (public claims now %v)", joining, public)
+				delete(present, joining)
+			}
+		}
+	}
+
 	// Only a device that actually holds a fleet key has somewhere else to be:
 	// the fleet mesh covers it, so it may leave the auto-approve joining mesh.
 	// A CLAIMED-BUT-KEYLESS device (owner recorded, but the fleet-key handoff
@@ -411,36 +436,52 @@ func (b *Bridge) ensureMemberships() error {
 	// converges.
 	hasFleet := b.state.FleetKey() != ""
 	if hasFleet {
-		// A fleet member doesn't linger on its auto-approve joining mesh.
+		// A fleet member doesn't linger on its claim rendezvous meshes.
 		// This also covers a crash between fleet adoption and the deferred
 		// joining-mesh leave.
-		if present[joining] {
-			if err := b.networkRemove(joining); err != nil {
-				log.Warnf("mesh: leave joining mesh %s: %s", joining, err)
+		for _, id := range []string{joining, localClaimMesh} {
+			if !present[id] {
+				continue
+			}
+			if err := b.networkRemove(id); err != nil {
+				log.Warnf("mesh: leave claim mesh %s: %s", id, err)
 			} else {
-				log.Infof("mesh: left joining mesh %s (fleet mesh carries us)", joining)
-				delete(present, joining)
+				log.Infof("mesh: left claim mesh %s (fleet mesh carries us)", id)
+				delete(present, id)
 			}
 		}
+		if code := b.state.ClaimCode(); code != "" {
+			delete(present, claimCodeNetworkID(code))
+			b.retireClaimCodeMesh()
+		}
 	} else if b.state.Owner() != "" {
-		// Claimed but keyless: keep the joining mesh (reachable) and don't
-		// shed — the claim is mid-flight, not finished.
+		// Claimed but keyless: keep every claim rendezvous (reachable) and
+		// don't shed — the claim is mid-flight, not finished; the Claimed
+		// reply and the fleet-key handoff ride whichever mesh carried the
+		// claim.
 		if !present[joining] {
-			cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
-			if err := b.networkAdd(cfg); err != nil {
+			if err := b.networkAdd(b.joiningMeshConfig(joining)); err != nil {
 				return err
 			}
 			present[joining] = true
+			b.state.SetJoiningPublic(public)
 			log.Infof("mesh: on joining mesh %s (claimed, awaiting fleet key)", joining)
 		}
 	} else {
-		// Unclaimed: the joining mesh is the ONLY legitimate membership —
-		// owner-added meshes require an owner and a fleet mesh requires a
-		// key, so anything else here is leftovers from an unclaim that died
-		// mid-teardown (or an old fleet). Shedding them on connect makes the
-		// unclaim reset convergent no matter where it was interrupted.
+		// Unclaimed: the claim rendezvous meshes are the ONLY legitimate
+		// memberships — owner-added meshes require an owner and a fleet mesh
+		// requires a key, so anything else here is leftovers from an unclaim
+		// that died mid-teardown (or an old fleet). Shedding them on connect
+		// makes the unclaim reset convergent no matter where it was
+		// interrupted.
+		keep := map[string]bool{joining: true, localClaimMesh: true}
+		codeNet := ""
+		if public {
+			codeNet = claimCodeNetworkID(b.state.EnsureClaimCode())
+			keep[codeNet] = true
+		}
 		for id := range present {
-			if id == joining {
+			if keep[id] {
 				continue
 			}
 			if err := b.networkRemove(id); err != nil {
@@ -459,12 +500,38 @@ func (b *Bridge) ensureMemberships() error {
 			// admission. Drop the flag and every peer wedges at
 			// PendingApproval with no one on this headless box to approve
 			// them.
-			cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
-			if err := b.networkAdd(cfg); err != nil {
+			if err := b.networkAdd(b.joiningMeshConfig(joining)); err != nil {
 				return err
 			}
 			present[joining] = true
 			log.Infof("mesh: joined joining mesh %s", joining)
+		}
+		b.state.SetJoiningPublic(public)
+		// The well-known LAN claim rendezvous: every AllMyStuff node always
+		// sits on it (mDNS-only), so a claimable KVM on the same LAN simply
+		// appears in its claim sheet — no id transcription, no mesh joining.
+		if !present[localClaimMesh] {
+			if err := b.networkAdd(b.localClaimConfig()); err != nil {
+				log.Warnf("mesh: join LAN claim mesh: %s", err)
+			} else {
+				present[localClaimMesh] = true
+				log.Infof("mesh: joined LAN claim mesh %s", localClaimMesh)
+			}
+		}
+		// The claim-code rendezvous (public claims on): the random,
+		// rotating WAN meeting point behind AllMyStuff's "Claim a remote
+		// device" flow. The code is surfaced on the device's web page.
+		if codeNet != "" {
+			if !present[codeNet] {
+				cfg := b.networkConfig(codeNet, codeNet, "Remote claiming", b.mesh.Relays, nil, "open", true)
+				if err := b.networkAdd(cfg); err != nil {
+					log.Warnf("mesh: join claim rendezvous: %s", err)
+				} else {
+					present[codeNet] = true
+				}
+			}
+			log.Infof("mesh: remote claiming enabled — claim code %s (AllMyStuff → Fleet → \"Claim a remote device\")",
+				formatClaimCode(b.state.ClaimCode()))
 		}
 	}
 
@@ -610,13 +677,13 @@ func (b *Bridge) unclaim(from string) {
 		}
 	}
 	if !onJoining {
-		cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
-		if err := b.networkAdd(cfg); err != nil {
+		if err := b.networkAdd(b.joiningMeshConfig(joining)); err != nil {
 			log.Warnf("mesh: unclaim rejoin %s failed — keeping current meshes, will retry on reconnect: %s", joining, err)
 			b.syncIdentityLabel()
 			b.reAdvertise()
 			return
 		}
+		b.state.SetJoiningPublic(b.publicClaimsAllowed())
 	}
 	if err := b.joinPlanes(joining); err != nil {
 		log.Warnf("mesh: unclaim join planes on %s failed — keeping current meshes: %s", joining, err)
@@ -624,8 +691,27 @@ func (b *Bridge) unclaim(from string) {
 		b.reAdvertise()
 		return
 	}
+	// Back on the LAN claim rendezvous too, so the reset device reappears in
+	// same-LAN claim sheets right away (best-effort — the next connect's
+	// ensureMemberships converges it regardless).
+	onLocalClaim := false
 	for _, n := range nets {
-		if n.NetworkID == joining {
+		if n.NetworkID == localClaimMesh {
+			onLocalClaim = true
+			break
+		}
+	}
+	if !onLocalClaim {
+		if err := b.networkAdd(b.localClaimConfig()); err != nil {
+			log.Warnf("mesh: unclaim rejoin LAN claim mesh: %s", err)
+		} else if err := b.joinPlanes(localClaimMesh); err != nil {
+			log.Warnf("mesh: unclaim join planes on %s: %s", localClaimMesh, err)
+		}
+	} else if err := b.joinPlanes(localClaimMesh); err != nil {
+		log.Warnf("mesh: unclaim join planes on %s: %s", localClaimMesh, err)
+	}
+	for _, n := range nets {
+		if n.NetworkID == joining || n.NetworkID == localClaimMesh {
 			continue
 		}
 		if err := b.networkRemove(n.NetworkID); err != nil {
@@ -687,18 +773,24 @@ func (b *Bridge) leaveJoiningMeshAfterAdoption() {
 	if err != nil {
 		return // the next connect's ensureMemberships finishes the job
 	}
+	// Every claim rendezvous has done its job: the joining mesh, the LAN
+	// claim mesh, and (via retire below) the claim-code rendezvous.
+	left := false
 	for _, n := range nets {
-		if n.NetworkID != joining {
+		if n.NetworkID != joining && n.NetworkID != localClaimMesh {
 			continue
 		}
-		if err := b.networkRemove(joining); err != nil {
-			log.Warnf("mesh: leave joining mesh %s: %s", joining, err)
-			return
+		if err := b.networkRemove(n.NetworkID); err != nil {
+			log.Warnf("mesh: leave claim mesh %s: %s", n.NetworkID, err)
+			continue
 		}
-		b.dropNetwork(joining)
-		log.Infof("mesh: left joining mesh %s (adopted into a fleet)", joining)
+		b.dropNetwork(n.NetworkID)
+		log.Infof("mesh: left claim mesh %s (adopted into a fleet)", n.NetworkID)
+		left = true
+	}
+	b.retireClaimCodeMesh()
+	if left {
 		b.reAdvertise()
-		return
 	}
 }
 
@@ -751,6 +843,83 @@ func (b *Bridge) networkConfig(id, networkID, label string, relays []string, ven
 		}
 	}
 	return cfg
+}
+
+// publicClaimsAllowed reports the device-local public-claims policy —
+// config-file only (see config.Mesh.PublicClaims); nothing remote can flip it.
+func (b *Bridge) publicClaimsAllowed() bool {
+	return b.mesh.PublicClaims
+}
+
+// claimNetworkAllowed reports whether an inbound Claim arriving on `network`
+// may be honored. The claim rendezvous meshes always may — the LAN claim
+// mesh and (LAN-only by default) the joining mesh, plus the device's own
+// claim-code rendezvous; anything else only when public claims are
+// deliberately enabled on this device.
+func (b *Bridge) claimNetworkAllowed(network string) bool {
+	if b.publicClaimsAllowed() {
+		return true
+	}
+	if network == localClaimMesh || network == b.joiningMeshID() {
+		return true
+	}
+	if code := b.state.ClaimCode(); code != "" && network == claimCodeNetworkID(code) {
+		return true
+	}
+	return false
+}
+
+// lanOnlySignaling pins a network config to LAN-local signaling: no remote
+// strategy, mDNS only, and explicit empty STUN/TURN lists so the daemon's
+// public-venue defaults never apply — the network touches no remote
+// infrastructure at all (and needs no wall clock, covering the KVM's
+// pre-NTP boot window).
+func lanOnlySignaling(cfg map[string]interface{}) map[string]interface{} {
+	cfg["signaling"] = map[string]interface{}{"strategy": "none", "mdns": true}
+	cfg["stun_servers"] = []interface{}{}
+	cfg["turn_servers"] = []interface{}{}
+	return cfg
+}
+
+// localClaimConfig builds the well-known LAN claim rendezvous config.
+func (b *Bridge) localClaimConfig() map[string]interface{} {
+	cfg := b.networkConfig(localClaimMesh, localClaimMesh, "Local claiming (this LAN)", nil, nil, "open", true)
+	return lanOnlySignaling(cfg)
+}
+
+// joiningMeshConfig builds the joining mesh's config under the current
+// public-claims policy: LAN-only signaling by default; the relay venue
+// (WAN claiming via the on-screen id) when public claims are enabled.
+func (b *Bridge) joiningMeshConfig(joining string) map[string]interface{} {
+	cfg := b.networkConfig(joining, joining, b.mesh.Label, b.mesh.Relays, nil, "open", true)
+	if !b.publicClaimsAllowed() {
+		return lanOnlySignaling(cfg)
+	}
+	return cfg
+}
+
+// retireClaimCodeMesh leaves the claim-code rendezvous (if joined) and
+// rotates the spent code — called once the fleet mesh carries the device.
+func (b *Bridge) retireClaimCodeMesh() {
+	code := b.state.ClaimCode()
+	if code == "" {
+		return
+	}
+	codeNet := claimCodeNetworkID(code)
+	if nets, err := b.ctlNetworksList(); err == nil {
+		for _, n := range nets {
+			if n.NetworkID != codeNet {
+				continue
+			}
+			if err := b.networkRemove(codeNet); err != nil {
+				log.Warnf("mesh: leave claim rendezvous %s: %s", codeNet, err)
+			} else {
+				log.Infof("mesh: left claim rendezvous %s (claimed — code rotated)", codeNet)
+			}
+			break
+		}
+	}
+	b.state.RotateClaimCode()
 }
 
 // joinFleetNetwork joins the fleet's closed network (derived from the fleet key)

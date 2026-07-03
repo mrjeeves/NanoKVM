@@ -238,20 +238,34 @@ func TestReleaseUnclaimsAndReturnsToJoiningMesh(t *testing.T) {
 			b.state.AttachedTo() == ""
 	})
 	waitFor(t, "joining mesh rejoined", func() bool {
-		req := lastRequest(f, "network_add")
-		if req == nil {
-			return false
+		for _, req := range f.requests("network_add") {
+			cfg, _ := req["config"].(map[string]interface{})
+			if cfg != nil && cfg["network_id"] == b.joiningMeshID() {
+				return true
+			}
 		}
-		cfg, _ := req["config"].(map[string]interface{})
-		return cfg != nil && cfg["network_id"] == b.joiningMeshID()
+		return false
 	})
 	waitFor(t, "fleet mesh left", func() bool {
-		req := lastRequest(f, "network_remove")
-		return req != nil && req["network"] == fleetNet && req["purge"] == true
+		for _, req := range f.requests("network_remove") {
+			if req["network"] == fleetNet && req["purge"] == true {
+				return true
+			}
+		}
+		return false
 	})
-	waitFor(t, "membership = joining mesh only", func() bool {
+	// The reset device sits on BOTH claim rendezvous meshes again: its own
+	// joining mesh and the well-known LAN claim mesh.
+	waitFor(t, "membership = claim rendezvous meshes", func() bool {
 		nets := b.networksSnapshot()
-		return len(nets) == 1 && nets[0] == b.joiningMeshID()
+		if len(nets) != 2 {
+			return false
+		}
+		seen := map[string]bool{}
+		for _, n := range nets {
+			seen[n] = true
+		}
+		return seen[b.joiningMeshID()] && seen[localClaimMesh]
 	})
 	// The identity label reverts to the brand name with the attachment gone.
 	waitFor(t, "identity label reset", func() bool {
@@ -305,7 +319,7 @@ func TestClaimAutoAttachUsesClaimerLabel(t *testing.T) {
 	b := connectedBridge(t, f)
 	b.notePeerLabel("owner-node-XY3ZW", json.RawMessage(`{"protocol":1,"node":"owner-node-XY3ZW","label":"Casey's Mac"}`))
 
-	b.handleOwnership("n", "owner-node-XY3ZW", &OwnershipControl{Kind: OwnershipKindClaim, Owner: "owner-node-XY3ZW"})
+	b.handleOwnership(localClaimMesh, "owner-node-XY3ZW", &OwnershipControl{Kind: OwnershipKindClaim, Owner: "owner-node-XY3ZW"})
 
 	if b.state.Owner() != "owner-node-XY3ZW" {
 		t.Fatalf("owner = %q", b.state.Owner())
@@ -329,7 +343,7 @@ func TestAttachLabelSelfHealsFromLivePresence(t *testing.T) {
 
 	// Claim with NO cached label (the racy order): the auto-attach bakes an
 	// empty label, so the advert falls back to the id.
-	b.handleOwnership("n", "den-tower-AB3CD", &OwnershipControl{Kind: OwnershipKindClaim, Owner: "den-tower-AB3CD"})
+	b.handleOwnership(localClaimMesh, "den-tower-AB3CD", &OwnershipControl{Kind: OwnershipKindClaim, Owner: "den-tower-AB3CD"})
 	if b.state.AttachedLabel() != "" {
 		t.Fatalf("expected an empty baked label, got %q", b.state.AttachedLabel())
 	}
@@ -362,21 +376,42 @@ func TestEnsureMembershipsMigratesLegacy(t *testing.T) {
 	if req := lastRequest(f, "network_remove"); req == nil || req["network"] != legacySharedMesh || req["purge"] != true {
 		t.Fatalf("legacy mesh not retired: %v", req)
 	}
-	req := lastRequest(f, "network_add")
-	cfg, _ := req["config"].(map[string]interface{})
-	if cfg == nil || cfg["network_id"] != b.joiningMeshID() {
-		t.Fatalf("joining mesh not joined: %v", req)
+	added := map[string]map[string]interface{}{}
+	for _, req := range f.requests("network_add") {
+		if cfg, _ := req["config"].(map[string]interface{}); cfg != nil {
+			if id, _ := cfg["network_id"].(string); id != "" {
+				added[id] = cfg
+			}
+		}
+	}
+	joinCfg := added[b.joiningMeshID()]
+	if joinCfg == nil {
+		t.Fatalf("joining mesh not joined: %v", added)
+	}
+	// Public claims are off (the default) — the joining mesh must be
+	// LAN-only: no remote strategy, mDNS on, and empty STUN/TURN pins so
+	// the daemon's public defaults never apply.
+	sig, _ := joinCfg["signaling"].(map[string]interface{})
+	if sig == nil || sig["strategy"] != "none" || sig["mdns"] != true {
+		t.Fatalf("joining mesh signaling = %v, want LAN-only (strategy none + mdns)", joinCfg["signaling"])
+	}
+	if _, ok := joinCfg["stun_servers"]; !ok {
+		t.Fatal("joining mesh must pin empty stun_servers (no public defaults)")
+	}
+	if added[localClaimMesh] == nil {
+		t.Fatalf("LAN claim mesh not joined: %v", added)
 	}
 	nets := b.networksSnapshot()
-	if len(nets) != 1 || nets[0] != b.joiningMeshID() {
-		t.Fatalf("membership = %v, want the joining mesh alone", nets)
+	if len(nets) != 2 {
+		t.Fatalf("membership = %v, want the joining mesh + the LAN claim mesh", nets)
 	}
 }
 
 // TestEnsureMembershipsUnclaimedShedsStaleMeshes: an unclaimed device's only
-// legitimate membership is its joining mesh — an old fleet mesh or owner-added
-// mesh left by an unclaim that died mid-teardown is shed on connect, making
-// the reset convergent no matter where it was interrupted.
+// legitimate memberships are its claim rendezvous meshes (the joining mesh +
+// the LAN claim mesh) — an old fleet mesh or owner-added mesh left by an
+// unclaim that died mid-teardown is shed on connect, making the reset
+// convergent no matter where it was interrupted.
 func TestEnsureMembershipsUnclaimedShedsStaleMeshes(t *testing.T) {
 	f := startFakeDaemon(t)
 	b := connectedBridge(t, f)
@@ -396,12 +431,24 @@ func TestEnsureMembershipsUnclaimedShedsStaleMeshes(t *testing.T) {
 	if !removed["lucky-gauss-e67fs"] || !removed["den-site-mesh"] {
 		t.Fatalf("stale meshes not shed: %v", removed)
 	}
-	if removed[b.joiningMeshID()] {
-		t.Fatal("the joining mesh itself was shed")
+	if removed[localClaimMesh] {
+		t.Fatal("the LAN claim mesh was shed")
+	}
+	// The joining mesh predates the public-claims policy here (no recorded
+	// signaling mode), so it IS removed once — the migration — but must be
+	// re-joined under the new LAN-only config in the same pass.
+	readded := false
+	for _, req := range f.requests("network_add") {
+		if cfg, _ := req["config"].(map[string]interface{}); cfg != nil && cfg["network_id"] == b.joiningMeshID() {
+			readded = true
+		}
+	}
+	if removed[b.joiningMeshID()] && !readded {
+		t.Fatal("the joining mesh was shed without being re-joined")
 	}
 	nets := b.networksSnapshot()
-	if len(nets) != 1 || nets[0] != b.joiningMeshID() {
-		t.Fatalf("membership = %v, want the joining mesh alone", nets)
+	if len(nets) != 2 {
+		t.Fatalf("membership = %v, want the joining mesh + the LAN claim mesh", nets)
 	}
 }
 

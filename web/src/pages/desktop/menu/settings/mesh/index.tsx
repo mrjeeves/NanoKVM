@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Divider, Tag, Typography } from 'antd';
+import { Button, Divider, Tag, Typography } from 'antd';
 import { LoaderCircleIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { getMeshStatus } from '@/api/mesh.ts';
+import { getMeshStatus, rotateClaimCode } from '@/api/mesh.ts';
 
 type MeshMembership = {
   networkId: string;
@@ -23,6 +23,8 @@ type MeshStatus = {
   attachedTo: string;
   attachedLabel: string;
   meshes: MeshMembership[];
+  publicClaims: boolean;
+  claimCode?: string;
 };
 
 export const Mesh = () => {
@@ -30,6 +32,25 @@ export const Mesh = () => {
 
   const [status, setStatus] = useState<MeshStatus>();
   const [errMsg, setErrMsg] = useState('');
+  const [rotating, setRotating] = useState(false);
+
+  function rotateCode() {
+    if (rotating) return;
+    setRotating(true);
+    rotateClaimCode()
+      .then((rsp) => {
+        if (rsp.code !== 0) {
+          setErrMsg(rsp.msg);
+          return;
+        }
+        setErrMsg('');
+        setStatus(rsp.data);
+      })
+      .catch((err) => {
+        setErrMsg(err?.message || t('settings.mesh.queryFailed'));
+      })
+      .finally(() => setRotating(false));
+  }
 
   useEffect(() => {
     function getStatus() {
@@ -90,6 +111,35 @@ export const Mesh = () => {
             )}
           </div>
           <Divider className="opacity-50" />
+
+          {/* remote claiming (claim code) — shown only while the device is
+              claimable with publicClaims enabled in server.yaml. The policy
+              itself is deliberately not settable here: config file only. */}
+          {status.claimable && (
+            <>
+              <div className="text-neutral-400">{t('settings.mesh.remoteClaiming')}</div>
+              <div className="mt-5 flex w-full flex-col items-center space-y-3 rounded-lg bg-neutral-800/50 px-5 py-6">
+                {status.publicClaims && status.claimCode ? (
+                  <>
+                    <Typography.Text className="break-all text-center font-mono text-xl" copyable>
+                      {status.claimCode}
+                    </Typography.Text>
+                    <span className="text-center text-sm text-neutral-400">
+                      {t('settings.mesh.claimCodeDesc')}
+                    </span>
+                    <Button size="small" loading={rotating} onClick={rotateCode}>
+                      {t('settings.mesh.rotateCode')}
+                    </Button>
+                  </>
+                ) : (
+                  <span className="text-center text-sm text-neutral-400">
+                    {t('settings.mesh.remoteClaimingOff')}
+                  </span>
+                )}
+              </div>
+              <Divider className="opacity-50" />
+            </>
+          )}
 
           {/* status */}
           <div className="text-neutral-400">{t('settings.mesh.status')}</div>

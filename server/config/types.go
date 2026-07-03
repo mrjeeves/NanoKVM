@@ -50,6 +50,21 @@ type Mesh struct {
 	// Relays is the explicit signaling relay list. Empty means use the public
 	// venue default (the daemon's built-in relays).
 	Relays []string `yaml:"relays"`
+	// PublicClaims gates whether an unclaimed KVM is claimable over the
+	// public mesh. Off (the default): the joining mesh runs LAN-only
+	// signaling (mDNS, no relays) — the device can only be claimed from the
+	// same local network, the id on its screen still working for whoever is
+	// standing at the hardware. On: the joining mesh signals over the relay
+	// venue too (WAN claiming via the on-screen id), and the device also
+	// mints a random claim code (shown on its web page) for AllMyStuff's
+	// "claim a remote device" flow.
+	//
+	// STRICTLY DEVICE-LOCAL POLICY: settable only here, in the deployed
+	// config file. There is deliberately no HTTP or mesh surface that
+	// mutates it — a remote system must never be able to open a device to
+	// public claiming. (Any future web toggle must reject mesh-authenticated
+	// requests; see middleware.WithMeshAuth.)
+	PublicClaims bool `yaml:"publicClaims"`
 	// DaemonBin is the best-guess path to the myownmesh daemon binary, used by
 	// the init script — not by the Go bridge directly.
 	DaemonBin string `yaml:"daemonBin"`
