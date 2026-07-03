@@ -69,7 +69,17 @@ func LoadState(home string) *State {
 			if err := json.Unmarshal(raw, &loaded); err == nil {
 				s.data = loaded
 			} else {
-				log.Warnf("mesh: failed to parse %s, starting fresh: %s", s.path, err)
+				// Keep the corrupt bytes for forensics before falling
+				// through to the fresh-device default. Note what "fresh"
+				// means here: the owner is forgotten and the device offers
+				// itself for claiming again — writes are atomic (see
+				// persistLocked) precisely so our own writer can never
+				// produce this file.
+				quarantined := s.path + ".corrupt"
+				if err := os.Rename(s.path, quarantined); err != nil {
+					quarantined = "(quarantine failed: " + err.Error() + ")"
+				}
+				log.Warnf("mesh: failed to parse %s (%s) — corrupt copy kept at %s, starting fresh (claimable)", s.path, err, quarantined)
 			}
 		}
 	}
@@ -85,6 +95,12 @@ func (s *State) OnChange(fn func()) {
 
 // persistLocked writes the current state to disk (caller holds s.mu). A missing
 // home directory is created; a write failure is logged but not fatal.
+//
+// The write is atomic — temp file, fsync, rename — because this file holds the
+// ownership record: a plain truncate-and-write interrupted by a power cut
+// leaves a 0-byte file, which loads as a *fresh device* on the next boot —
+// silently forgetting the owner and re-offering the KVM for claiming. The
+// fsync before the rename matters on the FAT-backed /data this runs from.
 func (s *State) persistLocked() {
 	if s.path == "" {
 		return
@@ -97,9 +113,34 @@ func (s *State) persistLocked() {
 		log.Warnf("mesh: marshal state: %s", err)
 		return
 	}
-	if err := os.WriteFile(s.path, raw, 0o600); err != nil {
-		log.Warnf("mesh: write state %s: %s", s.path, err)
+	tmp := s.path + ".tmp"
+	if err := writeFileSync(tmp, raw, 0o600); err != nil {
+		log.Warnf("mesh: write state %s: %s", tmp, err)
+		_ = os.Remove(tmp)
+		return
 	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		log.Warnf("mesh: publish state %s: %s", s.path, err)
+		_ = os.Remove(tmp)
+	}
+}
+
+// writeFileSync is os.WriteFile plus an fsync before close, so the rename
+// that follows can never land ahead of the data.
+func writeFileSync(path string, raw []byte, mode os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // snapshot returns a copy of the current state under the lock.
