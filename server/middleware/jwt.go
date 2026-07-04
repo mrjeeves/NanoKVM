@@ -43,6 +43,34 @@ func isMeshAuthed(r *http.Request) bool {
 	return ok && v
 }
 
+// MeshSessionCookie hands a mesh-tunneled request a session cookie so the web
+// UI treats a mesh-authorized viewer as already logged in — no KVM password.
+//
+// The SPA's login gate is purely client-side: components/auth.tsx renders the
+// app only when the readable `nano-kvm-token` cookie is present (existToken()).
+// A request that arrived over the AllMyStuff mesh is already authenticated by
+// the roster (the daemon proved the peer's identity, and CheckToken bypasses
+// the token for it), so we set the very cookie the login flow's setToken()
+// would — scoped to the tunnel's localhost:<port> origin. Direct LAN requests
+// are never mesh-marked, so they still get the login screen. No-op when a token
+// cookie is already present.
+func MeshSessionCookie() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if isMeshAuthed(c.Request) {
+			if _, err := c.Cookie("nano-kvm-token"); err != nil {
+				if token, gerr := GenerateJWT("mesh"); gerr == nil {
+					conf := config.GetInstance()
+					// httpOnly=false so the SPA reads it with JS (js-cookie),
+					// exactly like the login flow's setToken(); secure=false
+					// because the tunnel is plain http on localhost.
+					c.SetCookie("nano-kvm-token", token, int(conf.JWT.RefreshTokenDuration), "/", "", false, false)
+				}
+			}
+		}
+		c.Next()
+	}
+}
+
 func CheckToken() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if allowByToken(c) {
