@@ -3,6 +3,10 @@
 # `just build-risc` produces a COMPLETE device build in one step:
 #   server/NanoKVM-Server         the Go server (with the mesh bridge)
 #   kvmapp/system/bin/myownmesh   the MyOwnMesh daemon, pinned in .myownmesh-rev
+#   web/dist                      the web UI bundle the device serves (carries the
+#                                 Mesh settings tab) — built here, not the firmware's
+#   kvmapp/kvm_system/kvm_system  the OLED app (shows the joining-mesh/claim name
+#                                 on the screen, both the pcie and cube layouts)
 #
 # `just setup-risc` bootstraps everything: it installs + starts a Docker runtime
 # (Colima — lightweight, no Docker Desktop) if you don't have one, then builds
@@ -26,7 +30,9 @@
 set shell := ["bash", "-uc"]
 
 image := "nanokvm-builder"
+web_image := "nanokvm-web-builder"
 daemon_dst := "kvmapp/system/bin/myownmesh"
+oled_dst := "kvmapp/kvm_system/kvm_system"
 mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
 nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 
@@ -97,12 +103,17 @@ setup-risc:
     make builder-image
     echo "OK — now: just build-risc"
 
-# Build a complete device image — the server AND the pinned daemon — in one step.
-build-risc: build-server daemon
+# Build a complete device image — server, web UI, OLED app, and the pinned
+# daemon — in one step. The web bundle and the OLED app are part of the payload
+# now: the device serves OUR web (with the Mesh tab), and its screen shows the
+# joining-mesh name via OUR kvm_system, instead of whatever the firmware flashed.
+build-risc: build-server daemon build-web build-oled
     @echo
     @echo "Device build complete:"
     @echo "  server/NanoKVM-Server"
     @echo "  {{daemon_dst}}"
+    @echo "  web/dist"
+    @echo "  {{oled_dst}}"
     @echo "Deploy: just deploy <device-ip>"
 
 # Build just the NanoKVM server (Go, with the mesh bridge).
@@ -110,6 +121,57 @@ build-server:
     @echo "==> building NanoKVM-Server…"
     @make app
     @test -f server/NanoKVM-Server && echo "OK -> server/NanoKVM-Server"
+
+# Build the web UI bundle (the React/vite SPA the device serves) into web/dist.
+#
+# WHY this is built and shipped: the device serves this SPA — and it carries the
+# Mesh settings tab. The firmware flashes a STOCK web build with no Mesh tab, and
+# neither build-risc nor deploy used to ship a web at all, so the tab never
+# reached the device. We build OUR web (origin-relative, vite base '/') and ship
+# it. Built in a node:22 image (vite 7 needs Node >=20) so a Mac without Node
+# still builds it; the output is plain JS, so no amd64 pin (native = same bytes,
+# faster). The web-builder image bakes node-gyp's toolchain — see
+# docker/web.Dockerfile for why an optional `ws` addon forces that.
+build-web:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! docker info >/dev/null 2>&1; then
+      echo "==> Docker not running — running setup-risc first (bootstraps Docker)…"
+      just setup-risc
+    fi
+    if ! docker image inspect {{web_image}} >/dev/null 2>&1; then
+      echo "==> building the web-builder image (node:22 + node-gyp toolchain)…"
+      docker build -t {{web_image}} -f docker/web.Dockerfile docker
+    fi
+    echo "==> building the web bundle (vite) in {{web_image}}…"
+    docker run --rm \
+      -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+      -v "$(pwd)/web:/web" -w /web {{web_image}} bash -c '
+        set -e
+        pnpm install --frozen-lockfile
+        pnpm run build
+        chown -R "${HOST_UID}:${HOST_GID}" dist node_modules 2>/dev/null || true
+      '
+    test -f web/dist/index.html && echo "OK -> web/dist"
+
+# Build the OLED app (kvm_system) that draws the device screen — including the
+# joining-mesh/claim name, in both the pcie (small) and cube (large) layouts.
+#
+# This is the MaixCDK-based hardware firmware, so it needs the FULL builder image
+# (server + MaixCDK SDK) — heavier than the lean server image, and slow under
+# emulation on a Mac, but it's how the on-device screen gets OUR kvm_system (with
+# the mesh name) instead of the firmware's stock one. `make support` builds it
+# and `add_to_kvmapp` stages the binary at {{oled_dst}}.
+build-oled:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! docker info >/dev/null 2>&1; then
+      echo "==> Docker not running — running setup-risc first (bootstraps Docker)…"
+      just setup-risc
+    fi
+    echo "==> building the OLED app (kvm_system) via MaixCDK — first run pulls the full SDK image…"
+    make support
+    test -f "{{oled_dst}}" && echo "OK -> {{oled_dst}}"
 
 # The daemon is never built here — MyOwnMesh cross-compiles + publishes it, and
 # this fails with a clear pointer (not a wrong build) if the pinned release has
@@ -185,7 +247,9 @@ fetch VERSION="latest":
     cp "$tmp/NanoKVM-Server" server/NanoKVM-Server
     cp "$tmp/myownmesh"      "{{daemon_dst}}"
     chmod +x server/NanoKVM-Server "{{daemon_dst}}"
-    echo "OK -> server/NanoKVM-Server + {{daemon_dst}}"
+    rm -rf web/dist && mkdir -p web/dist && cp -a "$tmp/web/." web/dist/
+    echo "OK -> server/NanoKVM-Server + {{daemon_dst}} + web/dist"
+    echo "   (the OLED app isn't in the release bundle — build it with 'just build-oled' if you want the on-screen mesh name)"
     echo "Now: just deploy <device-ip>   (or use 'just install <device-ip>')"
 
 # Fetch the prebuilt device bundle (server + daemon) and deploy to a device.
@@ -218,7 +282,7 @@ release VERSION:
 deploy ip:
     #!/usr/bin/env bash
     set -euo pipefail
-    test -f server/NanoKVM-Server && test -f "{{daemon_dst}}" || { echo "❌ build first: just build-risc"; exit 1; }
+    test -f server/NanoKVM-Server && test -f "{{daemon_dst}}" && test -d web/dist || { echo "❌ build first: just build-risc"; exit 1; }
     echo "==> deploying to {{ip}}…"
     ssh root@{{ip}} 'mkdir -p /kvmapp/system/bin'
     scp "{{daemon_dst}}"                   root@{{ip}}:/kvmapp/system/bin/myownmesh
@@ -228,7 +292,24 @@ deploy ip:
     # source that the firmware build installs into /etc/init.d; on a running device
     # we have to place it there ourselves or it never autostarts.
     scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/etc/init.d/S94myownmesh
-    ssh root@{{ip}} 'chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /kvmapp/server/NanoKVM-Server'
+    # Web UI: the server serves /tmp/server/web (S95nanokvm copies /kvmapp→/tmp at
+    # boot), so replacing /kvmapp/server/web is safe — the reboot below re-copies
+    # and serves OUR web (with the Mesh tab). Stage web.new and rename over web so
+    # a partial scp never leaves a broken tree; same fs, so the rename is atomic.
+    ssh root@{{ip}} 'rm -rf /kvmapp/server/web.new /kvmapp/server/web.old'
+    scp -r web/dist                        root@{{ip}}:/kvmapp/server/web.new
+    ssh root@{{ip}} 'set -e; [ -d /kvmapp/server/web ] && mv /kvmapp/server/web /kvmapp/server/web.old; mv /kvmapp/server/web.new /kvmapp/server/web; rm -rf /kvmapp/server/web.old; chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /kvmapp/server/NanoKVM-Server'
+    # OLED app: same /tmp-copy story. Optional — only the local `build-risc` build
+    # produces it (the MaixCDK build is too heavy for the release CI), so the
+    # download/`install` path won't have it; ship it when it's present.
+    if [ -f "{{oled_dst}}" ]; then
+      ssh root@{{ip}} 'mkdir -p /kvmapp/kvm_system'
+      scp "{{oled_dst}}"                   root@{{ip}}:/kvmapp/kvm_system/kvm_system
+      ssh root@{{ip}} 'chmod +x /kvmapp/kvm_system/kvm_system'
+      echo "   + OLED app (kvm_system): joining-mesh name on screen"
+    else
+      echo "   (no {{oled_dst}} — skipping OLED; run 'just build-oled' to include it)"
+    fi
     echo "OK — just reboot {{ip}} && just verify {{ip}}"
 
 reboot ip:
@@ -243,5 +324,5 @@ undeploy ip:
     @ssh root@{{ip}} '/etc/init.d/S94myownmesh stop 2>/dev/null; rm -f /etc/init.d/S94myownmesh && reboot' || true
 
 clean-risc:
-    @rm -rf server/NanoKVM-Server {{daemon_dst}}
-    @echo "removed build outputs (Docker builder image kept)"
+    @rm -rf server/NanoKVM-Server {{daemon_dst}} web/dist {{oled_dst}}
+    @echo "removed build outputs (Docker builder images kept)"
