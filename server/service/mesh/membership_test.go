@@ -24,7 +24,7 @@ func connectedBridge(t *testing.T, f *fakeDaemon) *Bridge {
 		t.Fatalf("dial ctl: %v", err)
 	}
 	t.Cleanup(func() { _ = ctl.Close() })
-	if err := events.Subscribe(nil, nil); err != nil {
+	if err := events.Subscribe(nil, nil, nil); err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
 	meshConf := config.Mesh{Name: "CEC-KVM", Label: "CEC KVM Joining Mesh"}
