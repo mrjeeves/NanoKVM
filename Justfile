@@ -33,6 +33,7 @@ image := "nanokvm-builder"
 web_image := "nanokvm-web-builder"
 daemon_dst := "kvmapp/system/bin/myownmesh"
 oled_dst := "kvmapp/kvm_system/kvm_system"
+oled_logo := "tools/logo_generator/allmystuff/logo.bin"
 mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
 nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 
@@ -310,6 +311,10 @@ deploy ip:
     else
       echo "   (no {{oled_dst}} — skipping OLED; run 'just build-oled' to include it)"
     fi
+    # AllMyStuff OLED boot logo: kvm_system reads /boot/logo.bin (32 bytes, 16x16
+    # mono) and shows it instead of the built-in Sipeed logo. (The web logo is
+    # embedded in the build as web/public/sipeed.ico — no /boot/logo.ico needed.)
+    scp "{{oled_logo}}"                    root@{{ip}}:/boot/logo.bin
     echo "OK — just reboot {{ip}} && just verify {{ip}}"
 
 reboot ip:
