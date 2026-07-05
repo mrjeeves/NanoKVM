@@ -32,7 +32,7 @@ const nl = {
       loginButtonText: 'Inloggen',
       tips: {
         reset1:
-          'Om de wachtwoorden opnieuw in te stellen, houdt u de BOOT-knop op de NanoKVM 10 seconden lang ingedrukt.',
+          'Om de wachtwoorden opnieuw in te stellen, houdt u de BOOT-knop op de AllMyKVM 10 seconden lang ingedrukt.',
         reset2: 'Voor gedetailleerde stappen kunt u dit document raadplegen:',
         reset3: 'Standaard webaccount:',
         reset4: 'Standaard SSH-account:',
@@ -40,13 +40,13 @@ const nl = {
         change2: 'Web login wachtwoord',
         change3: 'Systeem root-wachtwoord (SSH-inlogwachtwoord)',
         change4:
-          'Om de wachtwoorden opnieuw in te stellen, houdt u de BOOT-knop op de NanoKVM ingedrukt.'
+          'Om de wachtwoorden opnieuw in te stellen, houdt u de BOOT-knop op de AllMyKVM ingedrukt.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Wi-Fi configureren voor NanoKVM',
-      success: 'Controleer de netwerkstatus van NanoKVM en bezoek het nieuwe IP-adres.',
+      description: 'Wi-Fi configureren voor AllMyKVM',
+      success: 'Controleer de netwerkstatus van AllMyKVM en bezoek het nieuwe IP-adres.',
       failed: 'De bewerking is mislukt. Probeer het opnieuw.',
       invalidMode:
         'De huidige modus ondersteunt geen netwerkconfiguratie. Ga naar uw apparaat en schakel de configuratiemodus Wi-Fi in.',
@@ -168,10 +168,10 @@ const nl = {
       resetHid: 'HID resetten',
       hidOnly: {
         title: 'Alleen HID-modus',
-        desc: 'Als uw muis en toetsenbord niet meer reageren en het opnieuw instellen van HID niet helpt, kan er sprake zijn van een compatibiliteitsprobleem tussen de NanoKVM en het apparaat. Probeer de modus HID-Only in te schakelen voor betere compatibiliteit.',
+        desc: 'Als uw muis en toetsenbord niet meer reageren en het opnieuw instellen van HID niet helpt, kan er sprake zijn van een compatibiliteitsprobleem tussen de AllMyKVM en het apparaat. Probeer de modus HID-Only in te schakelen voor betere compatibiliteit.',
         tip1: 'Als u de modus HID-Only inschakelt, worden de virtuele U-schijf en het virtuele netwerk ontkoppeld',
         tip2: 'In de modus HID-Alleen is beeldmontage uitgeschakeld',
-        tip3: 'NanoKVM wordt automatisch opnieuw opgestart na het wisselen van modus',
+        tip3: 'AllMyKVM wordt automatisch opnieuw opgestart na het wisselen van modus',
         enable: 'Schakel de modus HID-Alleen in',
         disable: 'Schakel de modus HID-Alleen uit'
       }
@@ -194,18 +194,18 @@ const nl = {
       cancelBtn: 'Nee',
       tips: {
         title: 'Hoe te uploaden',
-        usb1: 'Verbind de NanoKVM met uw computer via USB.',
+        usb1: 'Verbind de AllMyKVM met uw computer via USB.',
         usb2: 'Zorg ervoor dat de virtuele schijf is gekoppeld (Instellingen - Virtuele schijf).',
         usb3: 'Open de virtuele schijf op uw computer en kopieer het imagebestand naar de hoofdmap van de virtuele schijf.',
-        scp1: 'Zorg ervoor dat de NanoKVM en uw computer zich in hetzelfde lokale netwerk bevinden.',
-        scp2: 'Open een terminal op uw computer en gebruik het SCP-commando om het imagebestand te uploaden naar de /data directory op de NanoKVM.',
+        scp1: 'Zorg ervoor dat de AllMyKVM en uw computer zich in hetzelfde lokale netwerk bevinden.',
+        scp2: 'Open een terminal op uw computer en gebruik het SCP-commando om het imagebestand te uploaden naar de /data directory op de AllMyKVM.',
         scp3: 'Voorbeeld: scp uw-image-pad root@uw-nanokvm-ip:/data',
         tfCard: 'TF-kaart',
         tf1: 'Deze methode wordt ondersteund op Linux-systemen',
-        tf2: 'Haal de TF-kaart uit de NanoKVM (voor de VOLLEDIGE versie, demonteer eerst de behuizing).',
+        tf2: 'Haal de TF-kaart uit de AllMyKVM (voor de VOLLEDIGE versie, demonteer eerst de behuizing).',
         tf3: 'Plaats de TF-kaart in een kaartlezer en verbind deze met uw computer.',
         tf4: 'Kopieer het imagebestand naar de /data directory op de TF-kaart.',
-        tf5: 'Plaats de TF-kaart terug in de NanoKVM.'
+        tf5: 'Plaats de TF-kaart terug in de AllMyKVM.'
       }
     },
     script: {
@@ -223,7 +223,7 @@ const nl = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'NanoKVM Terminal',
+      nanokvm: 'AllMyKVM Terminal',
       serial: 'Seriële poort terminal',
       serialPort: 'Seriële poort',
       serialPortPlaceholder: 'Voer de seriële poort in',
@@ -272,14 +272,14 @@ const nl = {
     settings: {
       title: 'Instellingen',
       about: {
-        title: 'Over NanoKVM',
+        title: 'Over AllMyKVM',
         information: 'Informatie',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Applicatie versie',
-        applicationTip: 'Versie van de NanoKVM-webapplicatie',
+        applicationTip: 'Versie van de AllMyKVM-webapplicatie',
         image: 'Image versie',
-        imageTip: 'Versie van de NanoKVM-systeemimage',
+        imageTip: 'Versie van de AllMyKVM-systeemimage',
         deviceKey: 'Apparaat sleutel',
         community: 'Community',
         hostname: 'Hostnaam',
@@ -368,7 +368,7 @@ const nl = {
         network: 'Virtueel Netwerk',
         networkDesc: 'Koppel virtueel netwerk kaart aan de externe host',
         reboot: 'Opnieuw opstarten',
-        rebootDesc: 'Weet u zeker dat u NanoKVM opnieuw wilt opstarten?',
+        rebootDesc: 'Weet u zeker dat u AllMyKVM opnieuw wilt opstarten?',
         okBtn: 'Ja',
         cancelBtn: 'Nee'
       },
@@ -395,7 +395,7 @@ const nl = {
         },
         dns: {
           title: 'DNS',
-          description: 'Configureer DNS-servers voor NanoKVM',
+          description: 'Configureer DNS-servers voor AllMyKVM',
           mode: 'Modus',
           dhcp: 'DHCP',
           manual: 'Handmatig',
@@ -440,8 +440,8 @@ const nl = {
         download: 'Download het',
         package: 'installatiepakket',
         unzip: 'en pak het uit',
-        upTailscale: 'Upload tailscale naar NanoKVM directory /usr/bin/',
-        upTailscaled: 'Upload tailscaled naar NanoKVM directory /usr/sbin/',
+        upTailscale: 'Upload tailscale naar AllMyKVM directory /usr/bin/',
+        upTailscaled: 'Upload tailscaled naar AllMyKVM directory /usr/sbin/',
         refresh: 'Vernieuw huidige pagina',
         notRunning: 'Tailscale is niet actief. Start het programma om door te gaan.',
         run: 'Begin',
@@ -503,7 +503,7 @@ const nl = {
         defaultTitle: 'Algemene assistent',
         defaultDescription: 'Algemene hulp bij chatten, zoeken en werkruimte.',
         kvmTitle: 'Bediening op afstand',
-        kvmDescription: 'Bedien de externe host via NanoKVM.',
+        kvmDescription: 'Bedien de externe host via AllMyKVM.',
         switched: 'Agentrol gewijzigd',
         switchFailed: 'Kan agentrol niet wisselen'
       },

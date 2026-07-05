@@ -31,20 +31,20 @@ const pt_br = {
       loginButtonText: 'Login',
       tips: {
         reset1:
-          'Para redefinir as senhas, pressione e segure o botão BOOT no NanoKVM por 10 segundos.',
+          'Para redefinir as senhas, pressione e segure o botão BOOT no AllMyKVM por 10 segundos.',
         reset2: 'Para etapas detalhadas, por favor, consulte este documento:',
         reset3: 'Conta padrão da Web:',
         reset4: 'Conta padrão SSH:',
         change1: 'Por favor, note que esta ação irá alterar as seguintes senhas:',
         change2: 'Senha de login da Web',
         change3: 'Senha root do sistema (senha de login SSH)',
-        change4: 'Para redefinir as senhas, pressione e segure o botão BOOT no NanoKVM.'
+        change4: 'Para redefinir as senhas, pressione e segure o botão BOOT no AllMyKVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Configurar Wi-Fi para o NanoKVM',
-      success: 'Por favor, verifique o status da rede do NanoKVM e visite o novo endereço IP.',
+      description: 'Configurar Wi-Fi para o AllMyKVM',
+      success: 'Por favor, verifique o status da rede do AllMyKVM e visite o novo endereço IP.',
       failed: 'Operação falhou, por favor, tente novamente.',
       invalidMode:
         'O modo atual não suporta configuração de rede. Vá para o seu dispositivo e ative o modo de configuração Wi-Fi.',
@@ -166,10 +166,10 @@ const pt_br = {
       resetHid: 'Redefinir HID',
       hidOnly: {
         title: 'Modo somente HID',
-        desc: 'Se o seu mouse e teclado pararem de responder e a redefinição de HID não ajudar, pode ser um problema de compatibilidade entre o NanoKVM e o dispositivo. Tente habilitar o modo Somente-HID para melhor compatibilidade.',
+        desc: 'Se o seu mouse e teclado pararem de responder e a redefinição de HID não ajudar, pode ser um problema de compatibilidade entre o AllMyKVM e o dispositivo. Tente habilitar o modo Somente-HID para melhor compatibilidade.',
         tip1: 'Habilitar o modo Somente-HID irá desmontar o U-disk virtual e a rede virtual',
         tip2: 'No modo Somente-HID, a montagem de imagem está desativada',
-        tip3: 'NanoKVM será reiniciado automaticamente após a troca de modos',
+        tip3: 'AllMyKVM será reiniciado automaticamente após a troca de modos',
         enable: 'Habilitar modo Somente-HID',
         disable: 'Desabilitar modo Somente-HID'
       }
@@ -192,18 +192,18 @@ const pt_br = {
       cancelBtn: 'Não',
       tips: {
         title: 'Como fazer upload',
-        usb1: 'Conecte o NanoKVM ao seu computador via USB.',
+        usb1: 'Conecte o AllMyKVM ao seu computador via USB.',
         usb2: 'Certifique-se de que o disco virtual está montado (Configurações - Disco Virtual).',
         usb3: 'Abra o disco virtual no seu computador e copie o arquivo de imagem para o diretório raiz do disco virtual.',
-        scp1: 'Certifique-se de que o NanoKVM e seu computador estão na mesma rede local.',
-        scp2: 'Abra um terminal no seu computador e use o comando SCP para fazer upload do arquivo de imagem para o diretório /data no NanoKVM.',
+        scp1: 'Certifique-se de que o AllMyKVM e seu computador estão na mesma rede local.',
+        scp2: 'Abra um terminal no seu computador e use o comando SCP para fazer upload do arquivo de imagem para o diretório /data no AllMyKVM.',
         scp3: 'Exemplo: scp seu-caminho-da-imagem root@seu-ip-nanokvm:/data',
         tfCard: 'Cartão TF',
         tf1: 'Este método é suportado em sistemas Linux',
-        tf2: 'Remova o cartão TF do NanoKVM (para a versão FULL, desmonte a caixa primeiro).',
+        tf2: 'Remova o cartão TF do AllMyKVM (para a versão FULL, desmonte a caixa primeiro).',
         tf3: 'Insira o cartão TF em um leitor de cartão e conecte-o ao seu computador.',
         tf4: 'Copie o arquivo de imagem para o diretório /data no cartão TF.',
-        tf5: 'Insira o cartão TF no NanoKVM.'
+        tf5: 'Insira o cartão TF no AllMyKVM.'
       }
     },
     script: {
@@ -221,7 +221,7 @@ const pt_br = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'Terminal NanoKVM',
+      nanokvm: 'Terminal AllMyKVM',
       serial: 'Terminal de Porta Serial',
       serialPort: 'Porta Serial',
       serialPortPlaceholder: 'Por favor, digite a porta serial',
@@ -270,14 +270,14 @@ const pt_br = {
     settings: {
       title: 'Configurações',
       about: {
-        title: 'Sobre o NanoKVM',
+        title: 'Sobre o AllMyKVM',
         information: 'Informação',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Versão do Aplicativo',
-        applicationTip: 'Versão do aplicativo web NanoKVM',
+        applicationTip: 'Versão do aplicativo web AllMyKVM',
         image: 'Versão da Imagem',
-        imageTip: 'Versão da imagem do sistema NanoKVM',
+        imageTip: 'Versão da imagem do sistema AllMyKVM',
         deviceKey: 'Chave do Dispositivo',
         community: 'Comunidade',
         hostname: 'Nome do Host',
@@ -365,7 +365,7 @@ const pt_br = {
         network: 'Rede Virtual',
         networkDesc: 'Montar placa de rede virtual no host remoto',
         reboot: 'Reiniciar',
-        rebootDesc: 'Tem certeza de que deseja reiniciar o NanoKVM?',
+        rebootDesc: 'Tem certeza de que deseja reiniciar o AllMyKVM?',
         okBtn: 'Sim',
         cancelBtn: 'Não'
       },
@@ -392,7 +392,7 @@ const pt_br = {
         },
         dns: {
           title: 'DNS',
-          description: 'Configurar servidores DNS para o NanoKVM',
+          description: 'Configurar servidores DNS para o AllMyKVM',
           mode: 'Modo',
           dhcp: 'DHCP',
           manual: 'Manual',
@@ -437,8 +437,8 @@ const pt_br = {
         download: 'Baixar o',
         package: 'pacote de instalação',
         unzip: 'e descompacte-o',
-        upTailscale: 'Fazer upload do tailscale para o diretório NanoKVM /usr/bin/',
-        upTailscaled: 'Fazer upload do tailscaled para o diretório NanoKVM /usr/sbin/',
+        upTailscale: 'Fazer upload do tailscale para o diretório AllMyKVM /usr/bin/',
+        upTailscaled: 'Fazer upload do tailscaled para o diretório AllMyKVM /usr/sbin/',
         refresh: 'Atualizar página atual',
         notRunning: 'Tailscale não está em execução. Por favor, inicie-o para continuar.',
         run: 'Iniciar',
@@ -500,7 +500,7 @@ const pt_br = {
         defaultTitle: 'Assistente geral',
         defaultDescription: 'Ajuda geral sobre bate-papo, pesquisa e espaço de trabalho.',
         kvmTitle: 'Controle remoto',
-        kvmDescription: 'Opera o host remoto por meio de NanoKVM.',
+        kvmDescription: 'Opera o host remoto por meio de AllMyKVM.',
         switched: 'Função de agente trocada',
         switchFailed: 'Falha ao mudar de função de agente'
       },

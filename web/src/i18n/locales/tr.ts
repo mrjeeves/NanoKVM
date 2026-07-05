@@ -31,7 +31,7 @@ const tr = {
       loginButtonText: 'Giriş',
       tips: {
         reset1:
-          'Şifreleri sıfırlamak için NanoKVM üzerinde bulunan BOOT tuşuna 10 saniye boyunca basılı tutun.',
+          'Şifreleri sıfırlamak için AllMyKVM üzerinde bulunan BOOT tuşuna 10 saniye boyunca basılı tutun.',
         reset2: 'Ayrıntılı adımlar için dökümana göz atın:',
         reset3: 'Arayüz varsayılan hesap:',
         reset4: 'Güvenli Kabuk Bağlantısı (SSH) varsayılan hesap:',
@@ -39,13 +39,13 @@ const tr = {
         change2: 'Arayüz giriş şifresi',
         change3: 'Sistem yöneticisi şifresi (Güvenli Kabuk Bağlantısı (SSH) giriş şifresi)',
         change4:
-          'Şifreleri sıfırlamak için NanoKVM üzerinde bulunan BOOT tuşuna 10 saniye boyunca basılı tutun.'
+          'Şifreleri sıfırlamak için AllMyKVM üzerinde bulunan BOOT tuşuna 10 saniye boyunca basılı tutun.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'NanoKVM için Wi-Fi ayarlarını ayarlayın',
-      success: "NanoKVM'in bağlantı durumunu kontrol edin ve yeni IP adresini ziyaret edin.",
+      description: 'AllMyKVM için Wi-Fi ayarlarını ayarlayın',
+      success: "AllMyKVM'in bağlantı durumunu kontrol edin ve yeni IP adresini ziyaret edin.",
       failed: 'İşlem başarısız oldu, lütfen tekrar deneyiniz.',
       invalidMode:
         'Geçerli mod ağ kurulumunu desteklemiyor. Lütfen cihazınıza gidin ve Wi-Fi yapılandırma modunu etkinleştirin.',
@@ -165,10 +165,10 @@ const tr = {
       resetHid: 'HID’yi sıfırla',
       hidOnly: {
         title: 'Yalnızca HID modu',
-        desc: 'Fare ve klavye yanıt vermeyi durdurursa ve HID sıfırlama yardımcı olmazsa, NanoKVM ile cihaz arasında bir uyumluluk sorunu olabilir. Daha iyi uyumluluk için yalnızca HID modunu etkinleştirmeyi deneyin.',
+        desc: 'Fare ve klavye yanıt vermeyi durdurursa ve HID sıfırlama yardımcı olmazsa, AllMyKVM ile cihaz arasında bir uyumluluk sorunu olabilir. Daha iyi uyumluluk için yalnızca HID modunu etkinleştirmeyi deneyin.',
         tip1: 'Yalnızca HID modunu etkinleştirmek sanal U-disk’i ve sanal ağı ayırır',
         tip2: 'Yalnızca HID modunda imaj bağlama devre dışıdır',
-        tip3: 'NanoKVM mod değişiminden sonra kendiliğinden yeniden başlatılacaktır',
+        tip3: 'AllMyKVM mod değişiminden sonra kendiliğinden yeniden başlatılacaktır',
         enable: 'Yalnızca HID modunu etkinleştir',
         disable: 'Yalnızca HID modunu devre dışı bırak'
       }
@@ -191,18 +191,18 @@ const tr = {
       cancelBtn: 'Hayır',
       tips: {
         title: 'Nasıl yüklenir',
-        usb1: "NanoKVM'i bilgisayarınıza USB ile bağlayın.",
+        usb1: "AllMyKVM'i bilgisayarınıza USB ile bağlayın.",
         usb2: 'Sanal diskin bağlı olduğundan emin olun (Ayarlar - Sanal Disk).',
         usb3: 'Sanal diski bilgisayarınızda açın ve disk imajı dosyanızı sanal diskin kök dizinine kopyalayın.',
-        scp1: 'NanoKVM ve bilgisayarınızın aynı yerel ağda bulunduğundan emin olun.',
-        scp2: "Bilgisayarınızda uçbirimi açın ve disk imajı dosyanını SCP komudunu kullanarak NanoKVM'in /data dizinine yükleyin.",
+        scp1: 'AllMyKVM ve bilgisayarınızın aynı yerel ağda bulunduğundan emin olun.',
+        scp2: "Bilgisayarınızda uçbirimi açın ve disk imajı dosyanını SCP komudunu kullanarak AllMyKVM'in /data dizinine yükleyin.",
         scp3: 'Örnek: scp senin-disk-imajı-dizinin root@senin-nanokvm-ip:/data',
         tfCard: 'micro SD kart',
         tf1: 'Bu yöntem Linux sistemlerde desteklenmektedir.',
-        tf2: "NanoKVM'den micro SD kartı çıkartın(TAM sürüm için öncelikle kutuyu sökün).",
+        tf2: "AllMyKVM'den micro SD kartı çıkartın(TAM sürüm için öncelikle kutuyu sökün).",
         tf3: 'micro SD kartı kart okuyucusuna takın ve bilgisayarınıza bağlayın.',
         tf4: 'Disk imajı dosyanını micro SD kartın /data dizinine kopyalayın.',
-        tf5: "micro SD kartı NanoKVM'e geri yerleştirin."
+        tf5: "micro SD kartı AllMyKVM'e geri yerleştirin."
       }
     },
     script: {
@@ -220,7 +220,7 @@ const tr = {
     },
     terminal: {
       title: 'Uçbirim',
-      nanokvm: 'NanoKVM Uçbirimi',
+      nanokvm: 'AllMyKVM Uçbirimi',
       serial: 'Serial Port Uçbirimi',
       serialPort: 'Seri port',
       serialPortPlaceholder: 'Lütfen serial portunu giriniz',
@@ -269,14 +269,14 @@ const tr = {
     settings: {
       title: 'Ayarlar',
       about: {
-        title: 'NanoKVM Hakkında',
+        title: 'AllMyKVM Hakkında',
         information: 'Bilgi',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Uygulama sürümü',
-        applicationTip: 'NanoKVM web uygulaması sürümü',
+        applicationTip: 'AllMyKVM web uygulaması sürümü',
         image: 'İmaj Sürümü',
-        imageTip: 'NanoKVM sistem imajı sürümü',
+        imageTip: 'AllMyKVM sistem imajı sürümü',
         deviceKey: 'Cihaz Anahtarı',
         community: 'Topluluk',
         hostname: 'Ana makine adı',
@@ -365,7 +365,7 @@ const tr = {
         network: 'Sanal Ağ',
         networkDesc: 'Sanal ağ kartını uzak ana bilgisayara bağla',
         reboot: 'Yeniden Başlat',
-        rebootDesc: "NanoKVM'i yeniden başlatmak istediğinizden emin misiniz?",
+        rebootDesc: "AllMyKVM'i yeniden başlatmak istediğinizden emin misiniz?",
         okBtn: 'Evet',
         cancelBtn: 'Hayır'
       },
@@ -392,7 +392,7 @@ const tr = {
         },
         dns: {
           title: 'DNS',
-          description: 'NanoKVM için DNS sunucularını yapılandır',
+          description: 'AllMyKVM için DNS sunucularını yapılandır',
           mode: 'Mod',
           dhcp: 'DHCP',
           manual: 'Manuel',
@@ -437,8 +437,8 @@ const tr = {
         download: 'İndir',
         package: 'yükleme paketi',
         unzip: 'sıkışmış dosyayı açın',
-        upTailscale: "tailscale dosyasını NanoKVM'in /usr/bin dizinine yükleyin",
-        upTailscaled: "tailscaled dosyasını NanoKVM'in /usr/sbin dizinine yükleyin",
+        upTailscale: "tailscale dosyasını AllMyKVM'in /usr/bin dizinine yükleyin",
+        upTailscaled: "tailscaled dosyasını AllMyKVM'in /usr/sbin dizinine yükleyin",
         refresh: 'İçinde bulunduğunuz sayfayı yenileyin',
         notRunning: 'Tailscale çalışmıyor. Devam etmek için lütfen başlatın.',
         run: 'Başlat',
@@ -499,7 +499,7 @@ const tr = {
         defaultTitle: 'Genel Asistan',
         defaultDescription: 'Genel sohbet, arama ve çalışma alanı yardımı.',
         kvmTitle: 'Uzaktan Kontrol',
-        kvmDescription: 'Uzak ana bilgisayarı NanoKVM aracılığıyla çalıştırın.',
+        kvmDescription: 'Uzak ana bilgisayarı AllMyKVM aracılığıyla çalıştırın.',
         switched: 'Temsilci rolü değiştirildi',
         switchFailed: 'Temsilci rolü değiştirilemedi'
       },

@@ -1,5 +1,5 @@
-import { DiscordOutlined, GithubOutlined, XOutlined } from '@ant-design/icons';
-import { BookOpenIcon, MessageCircleQuestionIcon } from 'lucide-react';
+import { GithubOutlined } from '@ant-design/icons';
+import { BookOpenIcon, DownloadIcon, MessageCircleQuestionIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 export const Community = () => {
@@ -10,17 +10,12 @@ export const Community = () => {
     {
       name: 'GitHub',
       icon: <GithubOutlined style={{ fontSize: '20px' }} width={24} height={24} />,
-      url: 'https://github.com/sipeed/NanoKVM'
+      url: 'https://github.com/mrjeeves/NanoKVM'
     },
     {
-      name: 'X',
-      icon: <XOutlined style={{ fontSize: '20px' }} width={24} height={24} />,
-      url: 'https://twitter.com/SipeedIO'
-    },
-    {
-      name: 'Discord',
-      icon: <DiscordOutlined style={{ fontSize: '20px' }} width={24} height={24} />,
-      url: 'https://discord.gg/V4sAZ9XWpN'
+      name: 'AllMyStuff',
+      icon: <DownloadIcon size={24} />,
+      url: 'https://allmystuff.works'
     },
     {
       name: 'FAQ',

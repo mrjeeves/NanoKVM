@@ -29,20 +29,20 @@ const se = {
       cancel: 'Avbryt',
       loginButtonText: 'Logga in',
       tips: {
-        reset1: 'För att återställa lösenordet, håll in BOOT-knappen på NanoKVM i 10 sekunder.',
+        reset1: 'För att återställa lösenordet, håll in BOOT-knappen på AllMyKVM i 10 sekunder.',
         reset2: 'För detaljerade steg, se detta dokument:',
         reset3: 'Standardkonto för webben:',
         reset4: 'Standardkonto för SSH:',
         change1: 'Observera att denna åtgärd ändrar följande lösenord:',
         change2: 'Webbinloggningslösenord',
         change3: 'Systemets root-lösenord (SSH-lösenord)',
-        change4: 'För att återställa lösenordet, håll in BOOT-knappen på NanoKVM.'
+        change4: 'För att återställa lösenordet, håll in BOOT-knappen på AllMyKVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Konfigurera Wi-Fi för NanoKVM',
-      success: 'Kontrollera nätverksstatusen för NanoKVM och besök den nya IP-adressen.',
+      description: 'Konfigurera Wi-Fi för AllMyKVM',
+      success: 'Kontrollera nätverksstatusen för AllMyKVM och besök den nya IP-adressen.',
       failed: 'Åtgärden misslyckades, försök igen.',
       invalidMode:
         'Det aktuella läget stöder inte nätverksinstallation. Gå till din enhet och aktivera Wi-Fi konfigurationsläge.',
@@ -163,10 +163,10 @@ const se = {
       resetHid: 'Återställ HID',
       hidOnly: {
         title: 'Endast HID-läge',
-        desc: 'Om din mus och ditt tangentbord slutar svara och återställning av HID inte hjälper, kan det bero på kompatibilitetsproblem mellan NanoKVM och enheten. Prova att aktivera Endast-HID-läge för bättre kompatibilitet.',
+        desc: 'Om din mus och ditt tangentbord slutar svara och återställning av HID inte hjälper, kan det bero på kompatibilitetsproblem mellan AllMyKVM och enheten. Prova att aktivera Endast-HID-läge för bättre kompatibilitet.',
         tip1: 'Aktivering av Endast-HID-läge avmonterar den virtuella U-disken och nätverket',
         tip2: 'I Endast-HID-läge är avbildningsmontering inaktiverat',
-        tip3: 'NanoKVM kommer automatiskt att starta om efter lägesbyte',
+        tip3: 'AllMyKVM kommer automatiskt att starta om efter lägesbyte',
         enable: 'Aktivera Endast-HID-läge',
         disable: 'Inaktivera Endast-HID-läge'
       }
@@ -189,18 +189,18 @@ const se = {
       cancelBtn: 'Nej',
       tips: {
         title: 'Hur man laddar upp',
-        usb1: 'Anslut NanoKVM till din dator via USB.',
+        usb1: 'Anslut AllMyKVM till din dator via USB.',
         usb2: 'Säkerställ att den virtuella disken är monterad (Inställningar - Virtuell Disk).',
         usb3: 'Öppna den virtuella disken på din dator och kopiera avbildningsfilen till rotkatalogen.',
-        scp1: 'Säkerställ att NanoKVM och din dator är på samma lokala nätverk.',
-        scp2: 'Öppna en terminal på din dator och använd SCP-kommandot för att ladda upp avbildningen till /data på NanoKVM.',
+        scp1: 'Säkerställ att AllMyKVM och din dator är på samma lokala nätverk.',
+        scp2: 'Öppna en terminal på din dator och använd SCP-kommandot för att ladda upp avbildningen till /data på AllMyKVM.',
         scp3: 'Exempel: scp din-avbildningssökväg root@din-nanokvm-ip:/data',
         tfCard: 'TF-kort',
         tf1: 'Denna metod stöds på Linux-system',
-        tf2: 'Ta ut TF-kortet från NanoKVM (för FULL-versionen, öppna chassit först).',
+        tf2: 'Ta ut TF-kortet från AllMyKVM (för FULL-versionen, öppna chassit först).',
         tf3: 'Sätt in TF-kortet i en kortläsare och anslut till din dator.',
         tf4: 'Kopiera avbildningsfilen till /data på TF-kortet.',
-        tf5: 'Sätt in TF-kortet i NanoKVM.'
+        tf5: 'Sätt in TF-kortet i AllMyKVM.'
       }
     },
     script: {
@@ -218,7 +218,7 @@ const se = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'NanoKVM Terminal',
+      nanokvm: 'AllMyKVM Terminal',
       serial: 'Serieport-terminal',
       serialPort: 'Serieport',
       serialPortPlaceholder: 'Ange serieport',
@@ -267,14 +267,14 @@ const se = {
     settings: {
       title: 'Inställningar',
       about: {
-        title: 'Om NanoKVM',
+        title: 'Om AllMyKVM',
         information: 'Information',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Applikationsversion',
-        applicationTip: 'NanoKVM webbapplikationsversion',
+        applicationTip: 'AllMyKVM webbapplikationsversion',
         image: 'Systemversion',
-        imageTip: 'NanoKVM systemavbildningsversion',
+        imageTip: 'AllMyKVM systemavbildningsversion',
         deviceKey: 'Enhetsnyckel',
         community: 'Community',
         hostname: 'Värdnamn',
@@ -361,7 +361,7 @@ const se = {
         network: 'Virtuellt nätverk',
         networkDesc: 'Montera virtuell nätverkskort på fjärrvärden',
         reboot: 'Starta om',
-        rebootDesc: 'Är du säker på att du vill starta om NanoKVM?',
+        rebootDesc: 'Är du säker på att du vill starta om AllMyKVM?',
         okBtn: 'Ja',
         cancelBtn: 'Nej'
       },
@@ -388,7 +388,7 @@ const se = {
         },
         dns: {
           title: 'DNS',
-          description: 'Konfigurera DNS-servrar för NanoKVM',
+          description: 'Konfigurera DNS-servrar för AllMyKVM',
           mode: 'Läge',
           dhcp: 'DHCP',
           manual: 'Manuell',
@@ -433,8 +433,8 @@ const se = {
         download: 'Ladda ner',
         package: 'installationspaketet',
         unzip: 'och packa upp det',
-        upTailscale: 'Ladda upp tailscale till NanoKVM-katalogen /usr/bin/',
-        upTailscaled: 'Ladda upp tailscaled till NanoKVM-katalogen /usr/sbin/',
+        upTailscale: 'Ladda upp tailscale till AllMyKVM-katalogen /usr/bin/',
+        upTailscaled: 'Ladda upp tailscaled till AllMyKVM-katalogen /usr/sbin/',
         refresh: 'Uppdatera sidan',
         notRunning: 'Tailscale körs inte. Starta den för att fortsätta.',
         run: 'Start',
@@ -495,7 +495,7 @@ const se = {
         defaultTitle: 'Allmän assistent',
         defaultDescription: 'Allmän hjälp för chatt, sökning och arbetsyta.',
         kvmTitle: 'Fjärrstyrning',
-        kvmDescription: 'Manövrera fjärrvärden genom NanoKVM.',
+        kvmDescription: 'Manövrera fjärrvärden genom AllMyKVM.',
         switched: 'Agentroll bytte',
         switchFailed: 'Det gick inte att byta agentroll'
       },

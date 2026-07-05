@@ -32,20 +32,20 @@ const cz = {
       loginButtonText: 'Přihlášení',
       tips: {
         reset1:
-          'To reset the passwords, pressing and holding the BOOT button on the NanoKVM for 10 seconds.',
+          'To reset the passwords, pressing and holding the BOOT button on the AllMyKVM for 10 seconds.',
         reset2: 'Podrobné kroky najdete v tomto dokumentu:',
         reset3: 'Výchozí webový účet:',
         reset4: 'Výchozí účet SSH:',
         change1: 'Upozorňujeme, že tato akce změní následující hesla:',
         change2: 'Heslo pro webové přihlášení',
         change3: 'Heslo systémového uživatele root (heslo pro přihlášení SSH)',
-        change4: 'Chcete-li hesla resetovat, podržte tlačítko BOOT na NanoKVM.'
+        change4: 'Chcete-li hesla resetovat, podržte tlačítko BOOT na AllMyKVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Nastavit Wi-Fi pro NanoKVM',
-      success: 'Please check the network status of NanoKVM and visit the new IP address.',
+      description: 'Nastavit Wi-Fi pro AllMyKVM',
+      success: 'Please check the network status of AllMyKVM and visit the new IP address.',
       failed: 'Operace selhala, zkuste to znovu.',
       invalidMode:
         'Aktuální režim nepodporuje nastavení sítě. Přejděte do svého zařízení a povolte konfigurační režim Wi-Fi.',
@@ -167,10 +167,10 @@ const cz = {
       resetHid: 'Resetovat HID',
       hidOnly: {
         title: 'Režim pouze HID',
-        desc: 'Pokud vaše myš a klávesnice přestanou reagovat a resetování HID nepomůže, může jít o problém s kompatibilitou mezi NanoKVM a zařízením. Zkuste povolit režim HID-Only pro lepší kompatibilitu.',
+        desc: 'Pokud vaše myš a klávesnice přestanou reagovat a resetování HID nepomůže, může jít o problém s kompatibilitou mezi AllMyKVM a zařízením. Zkuste povolit režim HID-Only pro lepší kompatibilitu.',
         tip1: 'Povolení režimu HID-Only odpojí virtuální U-disk a virtuální síť',
         tip2: 'V režimu HID-Only je připojení obrazu zakázáno',
-        tip3: 'NanoKVM se po přepnutí režimů automaticky restartuje',
+        tip3: 'AllMyKVM se po přepnutí režimů automaticky restartuje',
         enable: 'Povolit režim HID-Only',
         disable: 'Zakázat režim HID-Only'
       }
@@ -193,18 +193,18 @@ const cz = {
       cancelBtn: 'Ne',
       tips: {
         title: 'Jak nahrát',
-        usb1: 'Připojte NanoKVM k vašemu počítači přes USB.',
+        usb1: 'Připojte AllMyKVM k vašemu počítači přes USB.',
         usb2: 'Ujistěte se, že je virtuální disk připojen (Nastavení - Virtuální disk).',
         usb3: 'Otevřete virtuální disk na vašem počítači a zkopírujte soubor s obrazem do kořenového adresáře virtuálního disku.',
-        scp1: 'Ujistěte se, že jsou NanoKVM a váš počítač ve stejné místní síti.',
-        scp2: 'Otevřete terminál na vašem počítači a použijte příkaz SCP pro nahrání souboru s obrazem do adresáře /data na zařízení NanoKVM.',
+        scp1: 'Ujistěte se, že jsou AllMyKVM a váš počítač ve stejné místní síti.',
+        scp2: 'Otevřete terminál na vašem počítači a použijte příkaz SCP pro nahrání souboru s obrazem do adresáře /data na zařízení AllMyKVM.',
         scp3: 'Příklad: scp cesta-k-vašemu-obrazu root@ip-nanokvm:/data',
         tfCard: 'SD Karta',
         tf1: 'Tato metoda je podporována na systémech Linux',
-        tf2: 'Vyjměte SD kartu z NanoKVM (u plné verze nejprve rozložte krabičku).',
+        tf2: 'Vyjměte SD kartu z AllMyKVM (u plné verze nejprve rozložte krabičku).',
         tf3: 'Vložte SD kartu do čtečky karet a připojte ji k vašemu počítači.',
         tf4: 'Zkopírujte soubor s obrazem do adresáře /data na SD kartě.',
-        tf5: 'Vložte SD kartu zpět do NanoKVM.'
+        tf5: 'Vložte SD kartu zpět do AllMyKVM.'
       }
     },
     script: {
@@ -222,7 +222,7 @@ const cz = {
     },
     terminal: {
       title: 'Terminál',
-      nanokvm: 'Terminál NanoKVM',
+      nanokvm: 'Terminál AllMyKVM',
       serial: 'Terminál sériového portu',
       serialPort: 'Sériový port',
       serialPortPlaceholder: 'Zadejte prosím sériový port',
@@ -271,14 +271,14 @@ const cz = {
     settings: {
       title: 'Nastavení',
       about: {
-        title: 'O NanoKVM',
+        title: 'O AllMyKVM',
         information: 'Informace',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Verze aplikace',
-        applicationTip: 'Verze webové aplikace NanoKVM',
+        applicationTip: 'Verze webové aplikace AllMyKVM',
         image: 'Verze obrazu',
-        imageTip: 'Verze systémového obrazu NanoKVM',
+        imageTip: 'Verze systémového obrazu AllMyKVM',
         deviceKey: 'Klíč zařízení',
         community: 'Komunita',
         hostname: 'Název hostitele',
@@ -365,7 +365,7 @@ const cz = {
         network: 'Virtuální síť',
         networkDesc: 'Připojit virtuální síťovou kartu na vzdáleném hostiteli',
         reboot: 'Restartujte',
-        rebootDesc: 'Opravdu chcete restartovat NanoKVM?',
+        rebootDesc: 'Opravdu chcete restartovat AllMyKVM?',
         okBtn: 'Ano',
         cancelBtn: 'Ne'
       },
@@ -392,7 +392,7 @@ const cz = {
         },
         dns: {
           title: 'DNS',
-          description: 'Nastavit DNS servery pro NanoKVM',
+          description: 'Nastavit DNS servery pro AllMyKVM',
           mode: 'Režim',
           dhcp: 'DHCP',
           manual: 'Ručně',
@@ -437,8 +437,8 @@ const cz = {
         download: 'Stáhnout',
         package: 'instalační balíček',
         unzip: 'a rozbalit ho',
-        upTailscale: 'Nahrajte Tailscale do adresáře NanoKVM /usr/bin/',
-        upTailscaled: 'Nahrajte Tailscaled do adresáře NanoKVM /usr/sbin/',
+        upTailscale: 'Nahrajte Tailscale do adresáře AllMyKVM /usr/bin/',
+        upTailscaled: 'Nahrajte Tailscaled do adresáře AllMyKVM /usr/sbin/',
         refresh: 'Obnovit stránku',
         notRunning: 'Tailscale neběží. Chcete-li pokračovat, spusťte jej.',
         run: 'Spustit',
@@ -500,7 +500,7 @@ const cz = {
         defaultTitle: 'Obecný asistent',
         defaultDescription: 'Obecná nápověda pro chat, vyhledávání a pracovní prostor.',
         kvmTitle: 'Vzdálené ovládání',
-        kvmDescription: 'Ovládejte vzdáleného hostitele prostřednictvím NanoKVM.',
+        kvmDescription: 'Ovládejte vzdáleného hostitele prostřednictvím AllMyKVM.',
         switched: 'Role agenta změněna',
         switchFailed: 'Přepnutí role agenta se nezdařilo'
       },

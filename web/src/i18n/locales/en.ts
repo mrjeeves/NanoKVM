@@ -30,20 +30,20 @@ const en = {
       loginButtonText: 'Login',
       tips: {
         reset1:
-          'To reset the passwords, press and hold the BOOT button on the NanoKVM for 10 seconds.',
+          'To reset the passwords, press and hold the BOOT button on the AllMyKVM for 10 seconds.',
         reset2: 'For detailed steps, please consult this document:',
         reset3: 'Web default account:',
         reset4: 'SSH default account:',
         change1: 'Please note that this action will change the following passwords:',
         change2: 'Web login password',
         change3: 'System root password (SSH login password)',
-        change4: 'To reset the passwords, press and hold the BOOT button on the NanoKVM.'
+        change4: 'To reset the passwords, press and hold the BOOT button on the AllMyKVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Configure Wi-Fi for NanoKVM',
-      success: 'Please go to the device to check the network status of NanoKVM.',
+      description: 'Configure Wi-Fi for AllMyKVM',
+      success: 'Please go to the device to check the network status of AllMyKVM.',
       failed: 'Operation failed, please try again.',
       invalidMode:
         'The current mode does not support network setup. Please go to your device and enable Wi-Fi configuration mode.',
@@ -164,10 +164,10 @@ const en = {
       resetHid: 'Reset HID',
       hidOnly: {
         title: 'HID-Only mode',
-        desc: "If your mouse and keyboard stop responding and resetting HID doesn't help, it could be a compatibility issue between the NanoKVM and the device. Try to enable HID-Only mode for better compatibility.",
+        desc: "If your mouse and keyboard stop responding and resetting HID doesn't help, it could be a compatibility issue between the AllMyKVM and the device. Try to enable HID-Only mode for better compatibility.",
         tip1: 'Enabling HID-Only mode will unmount the virtual U-disk and virtual network',
         tip2: 'In HID-Only mode, image mounting is disabled',
-        tip3: 'NanoKVM will automatically reboot after switching modes',
+        tip3: 'AllMyKVM will automatically reboot after switching modes',
         enable: 'Enable HID-Only mode',
         disable: 'Disable HID-Only mode'
       }
@@ -190,18 +190,18 @@ const en = {
       cancelBtn: 'No',
       tips: {
         title: 'How to upload',
-        usb1: 'Connect the NanoKVM to your computer via USB.',
+        usb1: 'Connect the AllMyKVM to your computer via USB.',
         usb2: 'Ensure that the virtual disk is mounted (Settings - Virtual Disk).',
         usb3: 'Open the virtual disk on your computer and copy the image file to the root directory of the virtual disk.',
-        scp1: 'Make sure the NanoKVM and your computer are on the same local network.',
-        scp2: 'Open a terminal on your computer and use the SCP command to upload the image file to the /data directory on the NanoKVM.',
+        scp1: 'Make sure the AllMyKVM and your computer are on the same local network.',
+        scp2: 'Open a terminal on your computer and use the SCP command to upload the image file to the /data directory on the AllMyKVM.',
         scp3: 'Example: scp your-image-path root@your-nanokvm-ip:/data',
         tfCard: 'TF Card',
         tf1: 'This method is supported on Linux system',
-        tf2: 'Get TF card from the NanoKVM (for the FULL version, disassemble the case first).',
+        tf2: 'Get TF card from the AllMyKVM (for the FULL version, disassemble the case first).',
         tf3: 'Insert the TF card into a card reader and connect it to your computer.',
         tf4: 'Copy the image file to the /data directory on the TF card.',
-        tf5: 'Insert the TF card into the NanoKVM.'
+        tf5: 'Insert the TF card into the AllMyKVM.'
       }
     },
     script: {
@@ -219,7 +219,7 @@ const en = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'NanoKVM Terminal',
+      nanokvm: 'AllMyKVM Terminal',
       serial: 'Serial Port Terminal',
       serialPort: 'Serial Port',
       serialPortPlaceholder: 'Please enter the serial port',
@@ -268,14 +268,14 @@ const en = {
     settings: {
       title: 'Settings',
       about: {
-        title: 'About NanoKVM',
+        title: 'About AllMyKVM',
         information: 'Information',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Application Version',
-        applicationTip: 'NanoKVM web application version',
+        applicationTip: 'AllMyKVM web application version',
         image: 'Image Version',
-        imageTip: 'NanoKVM system image version',
+        imageTip: 'AllMyKVM system image version',
         deviceKey: 'Device Key',
         community: 'Community',
         hostname: 'Hostname',
@@ -362,7 +362,7 @@ const en = {
         network: 'Virtual Network',
         networkDesc: 'Mount virtual network card on the remote host',
         reboot: 'Reboot',
-        rebootDesc: 'Are you sure you want to reboot NanoKVM?',
+        rebootDesc: 'Are you sure you want to reboot AllMyKVM?',
         okBtn: 'Yes',
         cancelBtn: 'No'
       },
@@ -389,7 +389,7 @@ const en = {
         },
         dns: {
           title: 'DNS',
-          description: 'Configure DNS servers for NanoKVM',
+          description: 'Configure DNS servers for AllMyKVM',
           mode: 'Mode',
           dhcp: 'DHCP',
           manual: 'Manual',
@@ -466,8 +466,8 @@ const en = {
         download: 'Download the',
         package: 'installation package',
         unzip: 'and unzip it',
-        upTailscale: 'Upload tailscale to NanoKVM directory /usr/bin/',
-        upTailscaled: 'Upload tailscaled to NanoKVM directory /usr/sbin/',
+        upTailscale: 'Upload tailscale to AllMyKVM directory /usr/bin/',
+        upTailscaled: 'Upload tailscaled to AllMyKVM directory /usr/sbin/',
         refresh: 'Refresh current page',
         notRunning: 'Tailscale is not running. Please start it to continue.',
         run: 'Start',
@@ -529,7 +529,7 @@ const en = {
         defaultTitle: 'General Assistant',
         defaultDescription: 'General chat, search, and workspace help.',
         kvmTitle: 'Remote Control',
-        kvmDescription: 'Operate the remote host through NanoKVM.',
+        kvmDescription: 'Operate the remote host through AllMyKVM.',
         switched: 'Agent role switched',
         switchFailed: 'Failed to switch agent role'
       },
