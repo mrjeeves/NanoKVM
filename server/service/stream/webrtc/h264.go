@@ -2,8 +2,11 @@ package webrtc
 
 import (
 	"NanoKVM-Server/config"
+	"NanoKVM-Server/service/iceservers"
 	"encoding/json"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -103,6 +106,19 @@ func Connect(c *gin.Context) {
 func createICEServers() []webrtc.ICEServer {
 	var iceServers []webrtc.ICEServer
 
+	// Venue servers FIRST: the deduplicated STUN/TURN union of every mesh this
+	// KVM is on (fleet first), published by the mesh bridge. A remote viewer
+	// reaching this web UI through AllMyStuff's sites proxy shares a mesh with
+	// us, so these are the relays it can actually reach — offer them ahead of
+	// the locally-configured (often LAN-only) STUN/TURN.
+	for _, s := range iceservers.Get() {
+		iceServers = append(iceServers, webrtc.ICEServer{
+			URLs:       s.URLs,
+			Username:   s.Username,
+			Credential: s.Credential,
+		})
+	}
+
 	conf := config.GetInstance()
 
 	if conf.Stun != "" && conf.Stun != "disable" {
@@ -119,7 +135,27 @@ func createICEServers() []webrtc.ICEServer {
 		})
 	}
 
-	return iceServers
+	return dedupICEServers(iceServers)
+}
+
+// dedupICEServers collapses entries that share the same URL set, keeping the
+// first occurrence — so a venue TURN and a locally-configured TURN at the same
+// URL don't double up (the venue entry, prepended first, wins its credentials).
+func dedupICEServers(servers []webrtc.ICEServer) []webrtc.ICEServer {
+	seen := make(map[string]bool, len(servers))
+	out := make([]webrtc.ICEServer, 0, len(servers))
+	for _, s := range servers {
+		urls := make([]string, len(s.URLs))
+		copy(urls, s.URLs)
+		sort.Strings(urls)
+		key := strings.Join(urls, ",")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 type clientICEServer struct {

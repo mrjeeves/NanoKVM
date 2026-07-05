@@ -12,23 +12,19 @@
 MYOWNMESH_HOME=/data/myownmesh
 export MYOWNMESH_HOME
 
-# The NanoKVM never streams media over mesh tracks — its video rides its own
-# tunnelled web UI (the "sites" plane over the data channel), not a WebRTC media
-# lane. 0 = data-channel only: no tracks provisioned, no media m-lines in the
-# offer, no per-lane SRTP contexts — the entire media-section machinery is
-# bypassed. That's everything this appliance needs.
+# The native AllMyStuff bridge streams the KVM's screen over a real media track
+# now (Slice 1): the Go bridge pushes already-encoded H.264 onto the daemon's
+# native RTP video lane (media_track_pipe → the display route) and the remote
+# console renders it, with keyboard/mouse riding back over the input route. That
+# needs the daemon to provision the lane.
 #
-# Why 0 and not 1: with one lane the daemon's engine wedges on this device the
-# moment it builds the first offer — a synchronous spin somewhere in the
-# media-bearing offer path that only manifests on the C906 (the same build at
-# the same lane count completes in milliseconds on x86). The engine's offer
-# timeout can't rescue it (a poll that never returns can't be timed out), so
-# the whole engine freezes and the KVM never becomes claimable. Zero lanes
-# skips that path entirely; if video-over-mesh ever matters, the spin has to
-# be root-caused in the media path first.
+# 1 = one video+audio lane pair for the native screen route — enough for the
+# single screen v1 streams (the bridge always allocates lane 0). The web UI's
+# "sites" plane still rides the data channel alongside it; a viewer that prefers
+# the tunnelled UI is unaffected.
 # (Ignored by daemons that predate MYOWNMESH_MEDIA_LANES, so it's safe to set
 # regardless of the bundled daemon version.)
-MYOWNMESH_MEDIA_LANES=0
+MYOWNMESH_MEDIA_LANES=1
 export MYOWNMESH_MEDIA_LANES
 
 # The appliance's daemon version is owned by the NanoKVM release pipeline

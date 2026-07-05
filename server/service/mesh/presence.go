@@ -180,7 +180,7 @@ func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State,
 		Label:        label,
 		Hostname:     dev.hostname,
 		Summary:      dev.summary,
-		Capabilities: []Capability{}, // none in v1 — the tunneled web UI carries everything
+		Capabilities: nativeCapabilities(nodeID),
 		Owner:        owner,
 		Claimable:    snap.Claimable,
 		Boot:         boot,
@@ -200,6 +200,35 @@ func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State,
 			Web:         id,
 			JoiningMesh: joiningMesh,
 			Meshes:      meshes,
+		},
+	}
+}
+
+// nativeCapabilities is the KVM's routable capability matrix advertised in
+// presence: its captured screen (a display source) and its keyboard/mouse (an
+// input sink). The ids are nodeID-scoped (":screen"/":control") and match the
+// AllMyStuff golden fixture (contract-fixtures/node_profile_kvm.json). These
+// are the signal the console uses to offer display/input routes — the feature
+// tags (kvm/sites) stay as-is.
+func nativeCapabilities(nodeID string) []Capability {
+	return []Capability{
+		{
+			ID:      nodeID + capSuffixScreen,
+			Node:    nodeID,
+			Label:   "Captured screen",
+			Media:   RouteMediaDisplay,
+			Flow:    "source",
+			Origin:  "screen",
+			Default: false,
+		},
+		{
+			ID:      nodeID + capSuffixControl,
+			Node:    nodeID,
+			Label:   "Keyboard & mouse",
+			Media:   RouteMediaInput,
+			Flow:    "sink",
+			Origin:  "control",
+			Default: false,
 		},
 	}
 }

@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -508,4 +509,122 @@ func (s *Socket) ConfigShow() (json.RawMessage, error) {
 		return nil, err
 	}
 	return resp.Data, nil
+}
+
+// ---- MediaTrackPipe (native video lane) -------------------------------------
+
+// mediaKindVideo / mediaKindAudio are the frame `kind` byte of a native media
+// frame (see encodeMediaFrame). Slice 1 only pushes video.
+const (
+	mediaKindVideo uint8 = 0
+	mediaKindAudio uint8 = 1
+)
+
+// MediaTrackPipe is a SEPARATE daemon connection dedicated to pushing this KVM's
+// already-encoded H.264 onto myownmesh's native RTP video-track lane, with zero
+// base64. It is opened when a display route goes active and closed on teardown.
+//
+// Handshake: write one JSON line {"op":"media_track_pipe"}, read one JSON ack
+// line {"ok":true,"data":{"media_track_pipe":true}}; thereafter the connection
+// carries ONLY length-prefixed binary frames (see encodeMediaFrame).
+type MediaTrackPipe struct {
+	mu   sync.Mutex
+	conn net.Conn
+	w    *bufio.Writer
+}
+
+// DialMediaTrackPipe opens a fresh daemon connection and performs the
+// media_track_pipe op handshake, returning a pipe ready for WriteVideo.
+func DialMediaTrackPipe(sockPath string) (*MediaTrackPipe, error) {
+	conn, err := net.DialTimeout("unix", sockPath, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("dial media pipe %s: %w", sockPath, err)
+	}
+	p := &MediaTrackPipe{conn: conn, w: bufio.NewWriterSize(conn, 64*1024)}
+
+	if _, err := conn.Write([]byte(`{"op":"media_track_pipe"}` + "\n")); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("media_track_pipe handshake write: %w", err)
+	}
+	// One ack line. Bound the wait like every other daemon read; the binary
+	// frames written afterwards use their own write deadline.
+	r := bufio.NewReader(conn)
+	_ = conn.SetReadDeadline(time.Now().Add(daemonReadTimeout))
+	line, err := r.ReadBytes('\n')
+	_ = conn.SetReadDeadline(time.Time{})
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("media_track_pipe ack read: %w", err)
+	}
+	var ack Response
+	if err := json.Unmarshal(line, &ack); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("media_track_pipe ack decode: %w", err)
+	}
+	if !ack.OK {
+		_ = conn.Close()
+		return nil, fmt.Errorf("media_track_pipe refused: %s", ack.Error)
+	}
+	return p, nil
+}
+
+// WriteVideo frames one Annex-B H.264 access unit onto the native video lane.
+// network is the display offer's network, peer is the console's canonical
+// pubkey, lane is the announced lane index, durationUs is 1e6/fps. One access
+// unit per call (no chunking); the daemon re-derives the IDR flag from the NAL
+// stream, so no key/IDR flag is set here.
+func (p *MediaTrackPipe) WriteVideo(network, peer string, lane uint8, durationUs uint64, au []byte) error {
+	frame := encodeMediaFrame(mediaKindVideo, lane, durationUs, network, peer, au)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn == nil {
+		return fmt.Errorf("media pipe closed")
+	}
+	_ = p.conn.SetWriteDeadline(time.Now().Add(daemonReadTimeout))
+	if _, err := p.w.Write(frame); err != nil {
+		return err
+	}
+	return p.w.Flush()
+}
+
+// Close closes the pipe's daemon connection. Idempotent.
+func (p *MediaTrackPipe) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn == nil {
+		return nil
+	}
+	err := p.conn.Close()
+	p.conn = nil
+	return err
+}
+
+// encodeMediaFrame builds one length-prefixed native media frame per the
+// AllMyStuff media_track_pipe wire contract (all integers little-endian, NO
+// base64, NO JSON):
+//
+//	[u32 body_len][ kind:u8 · stream:u8 · duration_us:u64 ·
+//	                net_len:u16 · network:UTF8 · peer_len:u16 · peer:UTF8 ·
+//	                data:[remaining bytes = the Annex-B H.264 access unit] ]
+func encodeMediaFrame(kind, stream uint8, durationUs uint64, network, peer string, data []byte) []byte {
+	nb := []byte(network)
+	pb := []byte(peer)
+	bodyLen := 1 + 1 + 8 + 2 + len(nb) + 2 + len(pb) + len(data)
+	buf := make([]byte, 4+bodyLen)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(bodyLen))
+	o := 4
+	buf[o] = kind
+	o++
+	buf[o] = stream
+	o++
+	binary.LittleEndian.PutUint64(buf[o:o+8], durationUs)
+	o += 8
+	binary.LittleEndian.PutUint16(buf[o:o+2], uint16(len(nb)))
+	o += 2
+	o += copy(buf[o:], nb)
+	binary.LittleEndian.PutUint16(buf[o:o+2], uint16(len(pb)))
+	o += 2
+	o += copy(buf[o:], pb)
+	copy(buf[o:], data)
+	return buf
 }
