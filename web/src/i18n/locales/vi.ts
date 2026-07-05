@@ -31,20 +31,20 @@ const vi = {
       loginButtonText: 'Đăng nhập',
       tips: {
         reset1:
-          'To reset the passwords, pressing and holding the BOOT button on the NanoKVM for 10 seconds.',
+          'To reset the passwords, pressing and holding the BOOT button on the AllMyKVM for 10 seconds.',
         reset2: 'Để biết các bước chi tiết, vui lòng xem tài liệu này:',
         reset3: 'Tài khoản web mặc định:',
         reset4: 'Tài khoản SSH mặc định:',
         change1: 'Lưu ý rằng thao tác này sẽ thay đổi các mật khẩu sau:',
         change2: 'Mật khẩu đăng nhập web',
         change3: 'Mật khẩu root hệ thống (mật khẩu đăng nhập SSH)',
-        change4: 'Để đặt lại mật khẩu, hãy nhấn và giữ nút BOOT trên NanoKVM.'
+        change4: 'Để đặt lại mật khẩu, hãy nhấn và giữ nút BOOT trên AllMyKVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Cấu hình Wi-Fi cho NanoKVM',
-      success: 'Please check the network status of NanoKVM and visit the new IP address.',
+      description: 'Cấu hình Wi-Fi cho AllMyKVM',
+      success: 'Please check the network status of AllMyKVM and visit the new IP address.',
       failed: 'Thao tác thất bại, vui lòng thử lại.',
       invalidMode:
         'Chế độ hiện tại không hỗ trợ thiết lập mạng. Vui lòng truy cập thiết bị của bạn và bật chế độ cấu hình Wi-Fi.',
@@ -165,10 +165,10 @@ const vi = {
       resetHid: 'Đặt lại HID',
       hidOnly: {
         title: 'Chế độ chỉ HID',
-        desc: 'Nếu chuột và bàn phím của bạn ngừng phản hồi và việc đặt lại HID không có tác dụng thì đó có thể là sự cố tương thích giữa NanoKVM và thiết bị. Hãy thử bật chế độ HID-Only để tương thích tốt hơn.',
+        desc: 'Nếu chuột và bàn phím của bạn ngừng phản hồi và việc đặt lại HID không có tác dụng thì đó có thể là sự cố tương thích giữa AllMyKVM và thiết bị. Hãy thử bật chế độ HID-Only để tương thích tốt hơn.',
         tip1: 'Kích hoạt HID-Chế độ chỉ sẽ ngắt kết nối đĩa U ảo và mạng ảo',
         tip2: 'Ở chế độ HID-Chỉ, tính năng gắn hình ảnh bị tắt',
-        tip3: 'NanoKVM sẽ tự động khởi động lại sau khi chuyển chế độ',
+        tip3: 'AllMyKVM sẽ tự động khởi động lại sau khi chuyển chế độ',
         enable: 'Bật chế độ HID-Chỉ',
         disable: 'Tắt chế độ HID-Chỉ'
       }
@@ -190,18 +190,18 @@ const vi = {
       cancelBtn: 'Không',
       tips: {
         title: 'Cách tải lên',
-        usb1: 'Kết nối NanoKVM với máy tính của bạn qua USB.',
+        usb1: 'Kết nối AllMyKVM với máy tính của bạn qua USB.',
         usb2: 'Đảm bảo rằng đĩa ảo đã được gắn kết (Cài đặt - Đĩa ảo).',
         usb3: 'Mở đĩa ảo trên máy tính của bạn và sao chép vào thư mục gốc của đĩa ảo.',
-        scp1: 'Đảm bảo NanoKVM và máy tính của bạn đang trên cùng một mạng nội bộ.',
-        scp2: 'Mở terminal trên máy tính và sử dụng lệnh SCP để tải đĩa ảo lên thư mục /data trên NanoKVM.',
+        scp1: 'Đảm bảo AllMyKVM và máy tính của bạn đang trên cùng một mạng nội bộ.',
+        scp2: 'Mở terminal trên máy tính và sử dụng lệnh SCP để tải đĩa ảo lên thư mục /data trên AllMyKVM.',
         scp3: 'Ví dụ: scp đường-dẫn-image root@ip-của-nanokvm:/data',
         tfCard: 'Thẻ TF',
         tf1: 'Phương pháp này được hỗ trợ trên hệ thống Linux',
-        tf2: 'Lấy thẻ TF từ NanoKVM (với phiên bản FULL, hãy tháo vỏ trước).',
+        tf2: 'Lấy thẻ TF từ AllMyKVM (với phiên bản FULL, hãy tháo vỏ trước).',
         tf3: 'Chèn thẻ TF vào đầu đọc thẻ và kết nối với máy tính của bạn.',
         tf4: 'Sao chép tệp hình ảnh vào thư mục /data trên thẻ TF.',
-        tf5: 'Chèn thẻ TF vào NanoKVM.'
+        tf5: 'Chèn thẻ TF vào AllMyKVM.'
       }
     },
     script: {
@@ -219,7 +219,7 @@ const vi = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'Terminal NanoKVM',
+      nanokvm: 'Terminal AllMyKVM',
       serial: 'Terminal Cổng Nối Tiếp',
       serialPort: 'Cổng Nối Tiếp',
       serialPortPlaceholder: 'Vui lòng nhập cổng nối tiếp',
@@ -268,14 +268,14 @@ const vi = {
     settings: {
       title: 'Cài đặt',
       about: {
-        title: 'Giới thiệu về NanoKVM',
+        title: 'Giới thiệu về AllMyKVM',
         information: 'Thông tin',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Phiên bản Ứng dụng',
-        applicationTip: 'Phiên bản ứng dụng web NanoKVM',
+        applicationTip: 'Phiên bản ứng dụng web AllMyKVM',
         image: 'Phiên bản Hình ảnh',
-        imageTip: 'Phiên bản image hệ thống NanoKVM',
+        imageTip: 'Phiên bản image hệ thống AllMyKVM',
         deviceKey: 'Khóa Thiết bị',
         community: 'Cộng đồng',
         hostname: 'Tên máy chủ',
@@ -362,7 +362,7 @@ const vi = {
         network: 'Mạng ảo',
         networkDesc: 'Gắn card mạng ảo trên máy chủ từ xa',
         reboot: 'Khởi động lại',
-        rebootDesc: 'Bạn có chắc chắn muốn khởi động lại NanoKVM không?',
+        rebootDesc: 'Bạn có chắc chắn muốn khởi động lại AllMyKVM không?',
         okBtn: 'Có',
         cancelBtn: 'Không'
       },
@@ -389,7 +389,7 @@ const vi = {
         },
         dns: {
           title: 'DNS',
-          description: 'Cấu hình máy chủ DNS cho NanoKVM',
+          description: 'Cấu hình máy chủ DNS cho AllMyKVM',
           mode: 'Chế độ',
           dhcp: 'DHCP',
           manual: 'Thủ công',
@@ -434,8 +434,8 @@ const vi = {
         download: 'Tải xuống',
         package: 'gói cài đặt',
         unzip: 'và giải nén nó',
-        upTailscale: 'Tải tailscale lên thư mục /usr/bin/ của NanoKVM',
-        upTailscaled: 'Tải tailscaled lên thư mục /usr/sbin/ của NanoKVM',
+        upTailscale: 'Tải tailscale lên thư mục /usr/bin/ của AllMyKVM',
+        upTailscaled: 'Tải tailscaled lên thư mục /usr/sbin/ của AllMyKVM',
         refresh: 'Làm mới trang hiện tại',
         notRunning: 'Tailscale không chạy. Hãy bắt đầu nó để tiếp tục.',
         run: 'Bắt đầu',
@@ -498,7 +498,7 @@ const vi = {
         defaultTitle: 'Trợ lý chung',
         defaultDescription: 'Trợ giúp chung về trò chuyện, tìm kiếm và không gian làm việc.',
         kvmTitle: 'Điều khiển từ xa',
-        kvmDescription: 'Vận hành máy chủ từ xa thông qua NanoKVM.',
+        kvmDescription: 'Vận hành máy chủ từ xa thông qua AllMyKVM.',
         switched: 'Vai trò đại lý đã chuyển đổi',
         switchFailed: 'Chuyển đổi vai trò đại lý không thành công'
       },

@@ -29,20 +29,20 @@ const zh = {
       cancel: '取消',
       loginButtonText: '登录',
       tips: {
-        reset1: '长按 NanoKVM 上的 BOOT 按键 10 秒钟来重置帐号。',
+        reset1: '长按 AllMyKVM 上的 BOOT 按键 10 秒钟来重置帐号。',
         reset2: '详细操作步骤可参考此文档：',
         reset3: '网页默认帐号：',
         reset4: 'SSH 默认帐号：',
         change1: '请注意，此操作将同时更新以下密码：',
         change2: '网页的登录密码',
         change3: '系统 root 用户的密码（SSH 登录密码）',
-        change4: '如果您忘记了密码，需要长按 NanoKVM 上的 BOOT 按键来重置密码。'
+        change4: '如果您忘记了密码，需要长按 AllMyKVM 上的 BOOT 按键来重置密码。'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: '配置 NanoKVM Wi-Fi 信息',
-      success: '请前往设备检查 NanoKVM 的网络状态。',
+      description: '配置 AllMyKVM Wi-Fi 信息',
+      success: '请前往设备检查 AllMyKVM 的网络状态。',
       failed: '操作失败，请重试。',
       invalidMode: '当前模式不支持配置网络。请先前往设备启用 Wi-Fi 配置模式。',
       confirmBtn: '确定',
@@ -158,10 +158,10 @@ const zh = {
       resetHid: '重置 HID',
       hidOnly: {
         title: 'HID-Only 模式',
-        desc: '若使用过程中遇到鼠标键盘无响应，且重置 HID 无效，可能是 NanoKVM 与您的设备存在兼容性问题。建议尝试启用 HID-Only 模式以提升兼容性。',
+        desc: '若使用过程中遇到鼠标键盘无响应，且重置 HID 无效，可能是 AllMyKVM 与您的设备存在兼容性问题。建议尝试启用 HID-Only 模式以提升兼容性。',
         tip1: '启用 HID-Only 模式会卸载虚拟 U 盘和虚拟网络',
         tip2: 'HID-Only 模式下，镜像挂载将被禁用',
-        tip3: '切换模式后将自动重启 NanoKVM',
+        tip3: '切换模式后将自动重启 AllMyKVM',
         enable: '启用 HID-Only 模式',
         disable: '关闭 HID-Only 模式'
       }
@@ -182,18 +182,18 @@ const zh = {
       cancelBtn: '取消',
       tips: {
         title: '如何上传',
-        usb1: '将 NanoKVM 通过 USB 连接到你的电脑；',
+        usb1: '将 AllMyKVM 通过 USB 连接到你的电脑；',
         usb2: '确保已经挂载了虚拟硬盘（设置 - 虚拟硬盘）；',
         usb3: '在电脑上打开虚拟硬盘，将镜像文件拷贝到虚拟硬盘的根目录下。',
-        scp1: '确保 NanoKVM 和你的电脑在同一个局域网内；',
-        scp2: '在电脑上打开终端软件，使用 SCP 命令将镜像文件上传到 NanoKVM 的 /data 目录。',
+        scp1: '确保 AllMyKVM 和你的电脑在同一个局域网内；',
+        scp2: '在电脑上打开终端软件，使用 SCP 命令将镜像文件上传到 AllMyKVM 的 /data 目录。',
         scp3: '示例：scp your-image-path root@your-nanokvm-ip:/data',
         tfCard: 'TF 卡',
         tf1: '该方式适用于 Linux 系统',
-        tf2: '将 TF 卡从 NanoKVM 中取出（FULL 版本需要先拆开外壳）；',
+        tf2: '将 TF 卡从 AllMyKVM 中取出（FULL 版本需要先拆开外壳）；',
         tf3: '将 TF 卡插入读卡器并连接到你的电脑；',
         tf4: '从电脑上拷贝镜像文件到 TF 卡的 /data 目录下；',
-        tf5: '将 TF 卡重新插入 NanoKVM。'
+        tf5: '将 TF 卡重新插入 AllMyKVM。'
       }
     },
     script: {
@@ -211,7 +211,7 @@ const zh = {
     },
     terminal: {
       title: '终端',
-      nanokvm: 'NanoKVM 终端',
+      nanokvm: 'AllMyKVM 终端',
       serial: '串口终端',
       serialPort: '串口',
       serialPortPlaceholder: '请输入串口',
@@ -260,14 +260,14 @@ const zh = {
     settings: {
       title: '设置',
       about: {
-        title: '关于 NanoKVM',
+        title: '关于 AllMyKVM',
         information: '信息',
         ip: 'IP',
         mdns: 'mDNS',
         application: '应用版本',
-        applicationTip: 'NanoKVM 网页应用版本',
+        applicationTip: 'AllMyKVM 网页应用版本',
         image: '镜像版本',
-        imageTip: 'NanoKVM 系统镜像版本',
+        imageTip: 'AllMyKVM 系统镜像版本',
         deviceKey: '设备码',
         community: '社区',
         hostname: '主机名',
@@ -338,7 +338,7 @@ const zh = {
         },
         autostart: {
           title: '自动启动脚本设置',
-          description: '管理能够在 NanoKVM 启动时自动运行的脚本文件',
+          description: '管理能够在 AllMyKVM 启动时自动运行的脚本文件',
           new: '创建新脚本',
           deleteConfirm: '确定要删除该文件吗？',
           yes: '是',
@@ -354,7 +354,7 @@ const zh = {
         network: '虚拟网卡',
         networkDesc: '在远程主机中挂载虚拟网卡',
         reboot: '重新启动',
-        rebootDesc: '您确定要重新启动 NanoKVM 吗？',
+        rebootDesc: '您确定要重新启动 AllMyKVM 吗？',
         okBtn: '是',
         cancelBtn: '否'
       },
@@ -381,7 +381,7 @@ const zh = {
         },
         dns: {
           title: 'DNS',
-          description: '配置 NanoKVM 使用的 DNS 服务器',
+          description: '配置 AllMyKVM 使用的 DNS 服务器',
           mode: '模式',
           dhcp: 'DHCP',
           manual: '手动',
@@ -458,8 +458,8 @@ const zh = {
         download: '下载',
         package: '安装包',
         unzip: '并解压',
-        upTailscale: '将 tailscale 上传到 NanoKVM 的 /usr/bin/ 目录',
-        upTailscaled: '将 tailscaled 上传到 NanoKVM 的 /usr/sbin/ 目录',
+        upTailscale: '将 tailscale 上传到 AllMyKVM 的 /usr/bin/ 目录',
+        upTailscaled: '将 tailscaled 上传到 AllMyKVM 的 /usr/sbin/ 目录',
         refresh: '刷新页面',
         notRunning: 'Tailscale 尚未运行，请先执行启动操作',
         run: '启动',
@@ -519,7 +519,7 @@ const zh = {
         defaultTitle: '通用助手',
         defaultDescription: '适合普通问答、搜索和工作区辅助。',
         kvmTitle: '远程控制',
-        kvmDescription: '通过 NanoKVM 操作下游远程主机。',
+        kvmDescription: '通过 AllMyKVM 操作下游远程主机。',
         switched: '角色已切换',
         switchFailed: '切换角色失败'
       },

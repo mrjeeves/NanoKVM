@@ -30,7 +30,7 @@ const ja = {
       cancel: 'キャンセル',
       loginButtonText: 'ログイン',
       tips: {
-        reset1: 'パスワードをリセットするには、NanoKVM の BOOT ボタンを 10 秒間押し続けます。',
+        reset1: 'パスワードをリセットするには、AllMyKVM の BOOT ボタンを 10 秒間押し続けます。',
         reset2: '詳細な手順については、次のドキュメントを参照してください：',
         reset3: 'ウェブデフォルトアカウント：',
         reset4: 'SSH デフォルトアカウント：',
@@ -38,13 +38,13 @@ const ja = {
         change2: 'ウェブログインパスワード',
         change3: 'システム root パスワード（SSH ログインパスワード）',
         change4:
-          'パスワードを忘れた場合は、NanoKVM の BOOT ボタンを長押ししてパスワードをリセットする必要があります。'
+          'パスワードを忘れた場合は、AllMyKVM の BOOT ボタンを長押ししてパスワードをリセットする必要があります。'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'NanoKVM の Wi-Fi を設定する',
-      success: 'NanoKVM のネットワークステータスを確認するにはデバイスにアクセスしてください。',
+      description: 'AllMyKVM の Wi-Fi を設定する',
+      success: 'AllMyKVM のネットワークステータスを確認するにはデバイスにアクセスしてください。',
       failed: '操作に失敗しました。もう一度お試しください。',
       invalidMode:
         '現在のモードではネットワーク設定はサポートされていません。デバイスで Wi-Fi 設定モードを有効にしてください。',
@@ -166,10 +166,10 @@ const ja = {
       resetHid: 'HID をリセット',
       hidOnly: {
         title: 'HID-Only モード',
-        desc: '使用中にマウスとキーボードが反応しなくなり、HID をリセットしても効果がない場合は、NanoKVM とデバイス間の互換性に問題がある可能性があります。互換性を向上させるために、HID-Only モードを有効にすることをお勧めします。',
+        desc: '使用中にマウスとキーボードが反応しなくなり、HID をリセットしても効果がない場合は、AllMyKVM とデバイス間の互換性に問題がある可能性があります。互換性を向上させるために、HID-Only モードを有効にすることをお勧めします。',
         tip1: 'HID-Only モードを有効にすると、仮想 U ディスクと仮想ネットワークがアンマウントされます',
         tip2: 'HID-Only モードでは、イメージのマウントは無効になります',
-        tip3: 'モードを切り替えると、NanoKVM は自動的に再起動します。',
+        tip3: 'モードを切り替えると、AllMyKVM は自動的に再起動します。',
         enable: 'HID-Only モードを有効化',
         disable: 'HID-Only モードを無効化'
       }
@@ -192,18 +192,18 @@ const ja = {
       cancelBtn: 'いいえ',
       tips: {
         title: 'アップロード方法',
-        usb1: 'NanoKVM を USB 経由でコンピュータに接続します；',
+        usb1: 'AllMyKVM を USB 経由でコンピュータに接続します；',
         usb2: '仮想ディスクがマウントされていることを確認します（設定 - 仮想ディスク）；',
         usb3: 'コンピュータ上で仮想ディスクを開き、イメージファイルを仮想ディスクのルートディレクトリにコピーします。',
-        scp1: 'NanoKVM とコンピュータが同じローカルエリアネットワークに接続されていることを確認します；',
-        scp2: 'コンピュータでターミナルを開き、SCP コマンドを使用してイメージファイルを NanoKVM の /data ディレクトリにアップロードします。',
+        scp1: 'AllMyKVM とコンピュータが同じローカルエリアネットワークに接続されていることを確認します；',
+        scp2: 'コンピュータでターミナルを開き、SCP コマンドを使用してイメージファイルを AllMyKVM の /data ディレクトリにアップロードします。',
         scp3: '例：scp your-image-path root@your-nanokvm-ip:/data',
         tfCard: 'TF カード',
         tf1: 'この方法は Linux システムでサポートされています',
-        tf2: 'NanoKVM から TF カードを取り出します（フルバージョンでは、まずケースを分解してください）；',
+        tf2: 'AllMyKVM から TF カードを取り出します（フルバージョンでは、まずケースを分解してください）；',
         tf3: 'TF カードをカードリーダーに挿入してコンピュータに接続します；',
         tf4: 'コンピューターから TF カードの /data ディレクトリにイメージファイルをコピーします；',
-        tf5: 'TF カードを NanoKVM に挿入します。'
+        tf5: 'TF カードを AllMyKVM に挿入します。'
       }
     },
     script: {
@@ -221,7 +221,7 @@ const ja = {
     },
     terminal: {
       title: 'ターミナル',
-      nanokvm: 'NanoKVM ターミナル',
+      nanokvm: 'AllMyKVM ターミナル',
       serial: 'シリアルポートターミナル',
       serialPort: 'シリアルポート',
       serialPortPlaceholder: 'シリアルポートを入力してください',
@@ -271,14 +271,14 @@ const ja = {
     settings: {
       title: '設定',
       about: {
-        title: 'NanoKVM について',
+        title: 'AllMyKVM について',
         information: '情報',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'アプリケーションバージョン',
-        applicationTip: 'NanoKVM ウェブアプリケーションバージョン',
+        applicationTip: 'AllMyKVM ウェブアプリケーションバージョン',
         image: 'イメージバージョン',
-        imageTip: 'NanoKVM システムイメージバージョン',
+        imageTip: 'AllMyKVM システムイメージバージョン',
         deviceKey: 'デバイスキー',
         community: 'コミュニティ',
         hostname: 'ホスト名',
@@ -349,7 +349,7 @@ const ja = {
         },
         autostart: {
           title: '自動起動スクリプト設定',
-          description: 'NanoKVM の起動時に自動的に実行されるスクリプトファイルを管理します',
+          description: 'AllMyKVM の起動時に自動的に実行されるスクリプトファイルを管理します',
           new: '新しいスクリプトを作成する',
           deleteConfirm: 'このファイルを削除してもよろしいですか？',
           yes: 'はい',
@@ -366,7 +366,7 @@ const ja = {
         network: '仮想ネットワークカード',
         networkDesc: 'リモートホストに仮想ネットワークカードをマウントする',
         reboot: '再起動',
-        rebootDesc: 'NanoKVM を再起動してもよろしいですか?',
+        rebootDesc: 'AllMyKVM を再起動してもよろしいですか?',
         okBtn: 'はい',
         cancelBtn: 'いいえ'
       },
@@ -393,7 +393,7 @@ const ja = {
         },
         dns: {
           title: 'DNS',
-          description: 'NanoKVM の DNS サーバーを設定',
+          description: 'AllMyKVM の DNS サーバーを設定',
           mode: 'モード',
           dhcp: 'DHCP',
           manual: '手動',
@@ -438,8 +438,8 @@ const ja = {
         download: 'ダウンロードして',
         package: 'インストールパッケージを',
         unzip: '解凍してください',
-        upTailscale: 'tailscale ファイルを NanoKVM の /usr/bin ディレクトリにアップロードします',
-        upTailscaled: 'tailscaled ファイルを NanoKVM の /usr/sbin ディレクトリにアップロードします',
+        upTailscale: 'tailscale ファイルを AllMyKVM の /usr/bin ディレクトリにアップロードします',
+        upTailscaled: 'tailscaled ファイルを AllMyKVM の /usr/sbin ディレクトリにアップロードします',
         refresh: 'ページを更新します',
         notRunning: 'Tailscale はまだ実行されていません。起動操作を実行してください',
         run: '起動',
@@ -502,7 +502,7 @@ const ja = {
         defaultTitle: '一般アシスタント',
         defaultDescription: '一般的なチャット、検索、およびワークスペースのヘルプ。',
         kvmTitle: 'リモート操作',
-        kvmDescription: 'NanoKVM を通じてリモート ホストを操作します。',
+        kvmDescription: 'AllMyKVM を通じてリモート ホストを操作します。',
         switched: 'エージェントの役割が切り替わりました',
         switchFailed: 'エージェントの役割を切り替えることができませんでした'
       },

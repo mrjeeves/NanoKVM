@@ -30,20 +30,20 @@ const ko = {
       cancel: '취소',
       loginButtonText: '로그인',
       tips: {
-        reset1: '비밀번호를 재설정하려면 NanoKVM의 BOOT 버튼을 10초 동안 누르고 계세요.',
+        reset1: '비밀번호를 재설정하려면 AllMyKVM의 BOOT 버튼을 10초 동안 누르고 계세요.',
         reset2: '자세한 절차는 이 문서를 참조하세요:',
         reset3: '웹 기본 계정:',
         reset4: 'SSH 기본 계정:',
         change1: '이 작업을 수행하면 다음 비밀번호가 변경됩니다:',
         change2: '웹 로그인 비밀번호',
         change3: '시스템 루트 비밀번호 (SSH 로그인 비밀번호)',
-        change4: '비밀번호를 재설정하려면 NanoKVM의 BOOT 버튼을 길게 누르세요.'
+        change4: '비밀번호를 재설정하려면 AllMyKVM의 BOOT 버튼을 길게 누르세요.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'NanoKVM Wi-Fi 설정',
-      success: 'NanoKVM의 네트워크 상태를 확인하고 새 IP 주소로 접속하세요.',
+      description: 'AllMyKVM Wi-Fi 설정',
+      success: 'AllMyKVM의 네트워크 상태를 확인하고 새 IP 주소로 접속하세요.',
       failed: '작업에 실패했습니다. 다시 시도하세요.',
       invalidMode:
         '현재 모드는 네트워크 설정을 지원하지 않습니다. 장치로 이동하여 Wi-Fi 구성 모드를 활성화하십시오.',
@@ -162,10 +162,10 @@ const ko = {
       resetHid: 'HID 초기화',
       hidOnly: {
         title: 'HID 전용 모드',
-        desc: '마우스와 키보드가 응답하지 않고 HID 초기화도 도움이 되지 않는다면, NanoKVM과 장치 간의 호환성 문제일 수 있습니다. 더 나은 호환성을 위해 HID 전용 모드를 활성화해 보세요.',
+        desc: '마우스와 키보드가 응답하지 않고 HID 초기화도 도움이 되지 않는다면, AllMyKVM과 장치 간의 호환성 문제일 수 있습니다. 더 나은 호환성을 위해 HID 전용 모드를 활성화해 보세요.',
         tip1: 'HID 전용 모드를 활성화하면 가상 USB와 가상 네트워크가 언마운트됩니다',
         tip2: 'HID 전용 모드에서는 이미지 마운트가 비활성화됩니다',
-        tip3: '모드 전환 후 NanoKVM이 자동으로 재부팅됩니다',
+        tip3: '모드 전환 후 AllMyKVM이 자동으로 재부팅됩니다',
         enable: 'HID 전용 모드 활성화',
         disable: 'HID 전용 모드 비활성화'
       }
@@ -188,18 +188,18 @@ const ko = {
       cancelBtn: '아니오',
       tips: {
         title: '업로드 방법',
-        usb1: 'USB를 통해 NanoKVM을 컴퓨터에 연결하세요.',
+        usb1: 'USB를 통해 AllMyKVM을 컴퓨터에 연결하세요.',
         usb2: '가상 디스크가 마운트되었는지 확인하세요. (설정 - 가상 디스크).',
         usb3: '컴퓨터에서 가상 디스크를 열고 이미지 파일을 가상 디스크의 루트 디렉토리로 복사하세요.',
-        scp1: 'NanoKVM과 컴퓨터가 동일한 로컬 네트워크에 있는지 확인하세요.',
-        scp2: '컴퓨터에서 터미널을 열고 SCP 명령을 사용하여 이미지 파일을 NanoKVM의 /data 디렉터리에 업로드하세요.',
-        scp3: '예시: scp [이미지 파일 경로] root@[NanoKVM IP 주소]:/data',
+        scp1: 'AllMyKVM과 컴퓨터가 동일한 로컬 네트워크에 있는지 확인하세요.',
+        scp2: '컴퓨터에서 터미널을 열고 SCP 명령을 사용하여 이미지 파일을 AllMyKVM의 /data 디렉터리에 업로드하세요.',
+        scp3: '예시: scp [이미지 파일 경로] root@[AllMyKVM IP 주소]:/data',
         tfCard: 'TF 카드',
         tf1: '이 방법은 Linux 시스템에서 지원됩니다',
-        tf2: 'NanoKVM에서 TF 카드를 가져옵니다(전체 버전의 경우 먼저 케이스를 분해하세요).',
+        tf2: 'AllMyKVM에서 TF 카드를 가져옵니다(전체 버전의 경우 먼저 케이스를 분해하세요).',
         tf3: 'TF 카드를 카드 리더기에 삽입하고 컴퓨터에 연결하세요.',
         tf4: '이미지 파일을 TF 카드의 /data 디렉터리에 복사하세요.',
-        tf5: 'TF 카드를 NanoKVM에 삽입하세요.'
+        tf5: 'TF 카드를 AllMyKVM에 삽입하세요.'
       }
     },
     script: {
@@ -217,7 +217,7 @@ const ko = {
     },
     terminal: {
       title: '터미널',
-      nanokvm: 'NanoKVM 터미널',
+      nanokvm: 'AllMyKVM 터미널',
       serial: '시리얼 포트 터미널',
       serialPort: '시리얼 포트',
       serialPortPlaceholder: '시리얼 포트를 입력하세요',
@@ -266,14 +266,14 @@ const ko = {
     settings: {
       title: '설정',
       about: {
-        title: 'NanoKVM 정보',
+        title: 'AllMyKVM 정보',
         information: '정보',
         ip: 'IP',
         mdns: 'mDNS',
         application: '펌웨어 버전',
-        applicationTip: 'NanoKVM 웹 애플리케이션 버전',
+        applicationTip: 'AllMyKVM 웹 애플리케이션 버전',
         image: '이미지 버전',
-        imageTip: 'NanoKVM 시스템 이미지 버전',
+        imageTip: 'AllMyKVM 시스템 이미지 버전',
         deviceKey: '장치 키',
         community: '커뮤니티',
         hostname: '호스트 이름',
@@ -360,7 +360,7 @@ const ko = {
         network: '가상 네트워크',
         networkDesc: '원격 호스트에서 가상 네트워크 카드를 마운트합니다.',
         reboot: '재부팅',
-        rebootDesc: 'NanoKVM을 재부팅하시겠습니까?',
+        rebootDesc: 'AllMyKVM을 재부팅하시겠습니까?',
         okBtn: '네',
         cancelBtn: '아니오'
       },
@@ -387,7 +387,7 @@ const ko = {
         },
         dns: {
           title: 'DNS',
-          description: 'NanoKVM의 DNS 서버 설정',
+          description: 'AllMyKVM의 DNS 서버 설정',
           mode: '모드',
           dhcp: 'DHCP',
           manual: '수동',
@@ -432,8 +432,8 @@ const ko = {
         download: '다운로드 중 :',
         package: '패키지 설치',
         unzip: '압축 해제',
-        upTailscale: 'tailscale을 NanoKVM의 /usr/bin/ 경로에 업로드 했습니다.',
-        upTailscaled: 'tailscaled을 NanoKVM의 /usr/sbin/ 경로에 업로드 했습니다.',
+        upTailscale: 'tailscale을 AllMyKVM의 /usr/bin/ 경로에 업로드 했습니다.',
+        upTailscaled: 'tailscaled을 AllMyKVM의 /usr/sbin/ 경로에 업로드 했습니다.',
         refresh: '현재 페이지 새로고침',
         notRunning: 'Tailscale이 실행되고 있지 않습니다. 계속하려면 시작해 주세요.',
         run: '시작',
@@ -493,7 +493,7 @@ const ko = {
         defaultTitle: '일반 어시스턴트',
         defaultDescription: '일반 대화, 검색, 작업 공간 지원.',
         kvmTitle: '원격 제어',
-        kvmDescription: 'NanoKVM을 통한 원격 호스트 제어.',
+        kvmDescription: 'AllMyKVM을 통한 원격 호스트 제어.',
         switched: '에이전트 역할 변경됨',
         switchFailed: '에이전트 역할 변경에 실패했습니다'
       },

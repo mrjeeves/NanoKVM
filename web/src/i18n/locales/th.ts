@@ -29,20 +29,20 @@ const th = {
       cancel: 'ยกเลิก',
       loginButtonText: 'เข้าสู่ระบบ',
       tips: {
-        reset1: 'หากต้องการรีเซ็ตรหัสผ่าน ให้กดปุ่ม BOOT บน NanoKVM ค้างไว้ 10 วินาที',
+        reset1: 'หากต้องการรีเซ็ตรหัสผ่าน ให้กดปุ่ม BOOT บน AllMyKVM ค้างไว้ 10 วินาที',
         reset2: 'สำหรับวิธีแบบลงลึก โปรดอ่าน::',
         reset3: 'ค่าเริ่มต้นบัญชีเว็บ:',
         reset4: 'ค่าเริ่มต้นบัญชี SSH:',
         change1: 'โปรดทราบ การกระทำนี้จะเปลี่ยนรหัสดีงกล่าว:',
         change2: 'รหัสผ่านเว็บไชต์',
         change3: 'รหัส Root ของระบบ (ใช้เข้า SSH)',
-        change4: 'เพื่อรีเช็ทรหัสผ่าน, กรุณากดปุ่ม BOOT บนอุปกรณ์ NanoKVM ค้างไว้.'
+        change4: 'เพื่อรีเช็ทรหัสผ่าน, กรุณากดปุ่ม BOOT บนอุปกรณ์ AllMyKVM ค้างไว้.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'ตั้งค้า Wi-Fi สำหรับ NanoKVM',
-      success: 'กรุณาตรวจสอบสถานะเครื่องข่ายของ NanoKVM และไปที่ IP address ใหม่',
+      description: 'ตั้งค้า Wi-Fi สำหรับ AllMyKVM',
+      success: 'กรุณาตรวจสอบสถานะเครื่องข่ายของ AllMyKVM และไปที่ IP address ใหม่',
       failed: 'เกิดข้อผิดพลาด กรุณาลองใหม่.',
       invalidMode:
         'โหมดปัจจุบันไม่รองรับการตั้งค่าเครือข่าย โปรดไปที่อุปกรณ์ของคุณและเปิดใช้งานโหมดการกำหนดค่า Wi-Fi',
@@ -161,10 +161,10 @@ const th = {
       resetHid: 'รีเซ็ต HID',
       hidOnly: {
         title: 'โหมด HID เท่านั้น',
-        desc: 'หากเมาส์และคีย์บอร์ดของคุณหยุดตอบสนองและการรีเซ็ต HID ไม่ช่วย อาจเป็นปัญหาความเข้ากันได้ระหว่าง NanoKVM และอุปกรณ์ ลองเปิดโหมด HID-Only เพื่อความเข้ากันได้ที่ดีขึ้น',
+        desc: 'หากเมาส์และคีย์บอร์ดของคุณหยุดตอบสนองและการรีเซ็ต HID ไม่ช่วย อาจเป็นปัญหาความเข้ากันได้ระหว่าง AllMyKVM และอุปกรณ์ ลองเปิดโหมด HID-Only เพื่อความเข้ากันได้ที่ดีขึ้น',
         tip1: 'การเปิดโหมด HID-Only จะปิดการทำงานดิสก์จำลองและ NIC จำลอง',
         tip2: 'ในโหมด HID-Only ดิสก์จะลองจะถูกปิดใช้งาน',
-        tip3: 'NanoKVM จะรีบูตอัตโนมัติหลังจากเปลี่ยนโหมด',
+        tip3: 'AllMyKVM จะรีบูตอัตโนมัติหลังจากเปลี่ยนโหมด',
         enable: 'เปิดใช้งานโหมด HID-Only',
         disable: 'ปิดใช้งานโหมด HID-Only'
       }
@@ -186,18 +186,18 @@ const th = {
       cancelBtn: 'ไม่ใช่',
       tips: {
         title: 'วิธีการอัปโหลด',
-        usb1: 'เชื่อมต่อ NanoKVM กับคอมพิวเตอร์ของคุณผ่าน USB',
+        usb1: 'เชื่อมต่อ AllMyKVM กับคอมพิวเตอร์ของคุณผ่าน USB',
         usb2: 'ตรวจสอบให้แน่ใจว่าได้เปิดใช้งานดิสก์เสมือนแล้ว (ตั้งค่า - ดิสก์เสมือน)',
         usb3: 'เปิดดิสก์บนคอมพิวเตอร์ของคุณและคัดลอกไฟล์อิมเมจไปยังไดเรกทอรีหลักของดิสก์',
-        scp1: 'ตรวจสอบให้แน่ใจว่า NanoKVM และคอมพิวเตอร์ของคุณอยู่ในเครือข่ายเดียวกัน',
-        scp2: 'เปิดเทอร์มินัลบนคอมพิวเตอร์ของคุณและใช้คำสั่ง SCP เพื่ออัปโหลดไฟล์อิมเมจไปยังไดเรกทอรี /data บน NanoKVM',
+        scp1: 'ตรวจสอบให้แน่ใจว่า AllMyKVM และคอมพิวเตอร์ของคุณอยู่ในเครือข่ายเดียวกัน',
+        scp2: 'เปิดเทอร์มินัลบนคอมพิวเตอร์ของคุณและใช้คำสั่ง SCP เพื่ออัปโหลดไฟล์อิมเมจไปยังไดเรกทอรี /data บน AllMyKVM',
         scp3: 'ตัวอย่าง: scp <ที่อยู่ของไฟล์> root@<ip อุปกรณ์>:/data',
         tfCard: 'การ์ด TF',
         tf1: 'วิธีนี้รองรับแค่บนระบบปฏิบัติการ Linux',
-        tf2: 'นำการ์ด TF ออกจาก NanoKVM',
+        tf2: 'นำการ์ด TF ออกจาก AllMyKVM',
         tf3: 'ใส่การ์ด TF ลงในเครื่องอ่านการ์ดและเชื่อมต่อกับคอมพิวเตอร์ของคุณ',
         tf4: 'คัดลอกไฟล์อิมเมจไปยังไดเรกทอรี /data บนการ์ด TF',
-        tf5: 'ใส่การ์ด TF กลับเข้า NanoKVM'
+        tf5: 'ใส่การ์ด TF กลับเข้า AllMyKVM'
       }
     },
     script: {
@@ -215,7 +215,7 @@ const th = {
     },
     terminal: {
       title: 'เทอร์มินอล',
-      nanokvm: 'เทอร์มินอลของ NanoKVM',
+      nanokvm: 'เทอร์มินอลของ AllMyKVM',
       serial: 'เทอร์มินอลของ Serial Port',
       serialPort: 'พอร์ตอนุกรม',
       serialPortPlaceholder: 'กรุณาเลือก serial port',
@@ -264,14 +264,14 @@ const th = {
     settings: {
       title: 'การตั้งค่า',
       about: {
-        title: 'เกี๋ยวกับ NanoKVM',
+        title: 'เกี๋ยวกับ AllMyKVM',
         information: 'ข้อมูล',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'เวอร์ชั่นแอปพิเคชั่น',
-        applicationTip: 'เวอร์ชั่นเว็บ NanoKVM',
+        applicationTip: 'เวอร์ชั่นเว็บ AllMyKVM',
         image: 'เวอร์ชั่น Image ระบบ',
-        imageTip: 'เวอร์ชั่น Image ระบบ NanoKVM',
+        imageTip: 'เวอร์ชั่น Image ระบบ AllMyKVM',
         deviceKey: 'คีย์อุปกรณ์',
         community: 'ชุมชน',
         hostname: 'ชื่อโฮสต์',
@@ -358,7 +358,7 @@ const th = {
         network: 'เครือข่ายจำลอง',
         networkDesc: 'เปิดใช้งานอุปกรณ์เครือข่ายจำลอง',
         reboot: 'รีบูต',
-        rebootDesc: 'คุณแน่ใจหรือไม่ว่าต้องการรีบูต NanoKVM',
+        rebootDesc: 'คุณแน่ใจหรือไม่ว่าต้องการรีบูต AllMyKVM',
         okBtn: 'ใช่',
         cancelBtn: 'ไม่ใช่'
       },
@@ -385,7 +385,7 @@ const th = {
         },
         dns: {
           title: 'DNS',
-          description: 'ตั้งค่าเซิร์ฟเวอร์ DNS สำหรับ NanoKVM',
+          description: 'ตั้งค่าเซิร์ฟเวอร์ DNS สำหรับ AllMyKVM',
           mode: 'โหมด',
           dhcp: 'DHCP',
           manual: 'กำหนดเอง',
@@ -430,8 +430,8 @@ const th = {
         download: 'ดาวน์โหลด',
         package: 'แพ็กเกจการติดตั้ง',
         unzip: 'และแตกไฟล์',
-        upTailscale: 'อัปโหลด tailscale ไปยังไดเรกทอรี /usr/bin/ ของ NanoKVM',
-        upTailscaled: 'อัปโหลด tailscaled ไปยังไดเรกทอรี /usr/sbin/ ของ NanoKVM',
+        upTailscale: 'อัปโหลด tailscale ไปยังไดเรกทอรี /usr/bin/ ของ AllMyKVM',
+        upTailscaled: 'อัปโหลด tailscaled ไปยังไดเรกทอรี /usr/sbin/ ของ AllMyKVM',
         refresh: 'รีเฟรชหน้าปัจจุบัน',
         notRunning: 'Tailscale ไม่ทำงาน กรุณาเริ่มต้นเพื่อดำเนินการต่อ',
         run: 'เริ่ม',
@@ -492,7 +492,7 @@ const th = {
         defaultTitle: 'ผู้ช่วยทั่วไป',
         defaultDescription: 'แชททั่วไป การค้นหา และพื้นที่ช่วยเหลือ',
         kvmTitle: 'การควบคุมระยะไกล',
-        kvmDescription: 'ใช้งานโฮสต์ระยะไกลผ่าน NanoKVM',
+        kvmDescription: 'ใช้งานโฮสต์ระยะไกลผ่าน AllMyKVM',
         switched: 'เปลี่ยนบทบาทตัวแทนแล้ว',
         switchFailed: 'ไม่สามารถเปลี่ยนบทบาทตัวแทนได้'
       },

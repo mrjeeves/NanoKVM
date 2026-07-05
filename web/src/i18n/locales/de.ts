@@ -31,7 +31,7 @@ const de = {
       loginButtonText: 'Anmelden',
       tips: {
         reset1:
-          'Um das Passwort zurückzusetzen, drücken und halten Sie den BOOT Knopf auf dem NanoKVM für 10 Sekunden.',
+          'Um das Passwort zurückzusetzen, drücken und halten Sie den BOOT Knopf auf dem AllMyKVM für 10 Sekunden.',
         reset2: 'Für detailliertere Anweisungen lesen Sie folgendes Dokument:',
         reset3: 'Web Standard-Account:',
         reset4: 'SSH Standard-Account:',
@@ -39,14 +39,14 @@ const de = {
         change2: 'Web Anmelde-Passwort',
         change3: 'System root Passwort (SSH Anmelde-Passwort)',
         change4:
-          'Um die Passwörter zurückzusetzen, drücken und halten Sie den BOOT Knopf auf dem NanoKVM.'
+          'Um die Passwörter zurückzusetzen, drücken und halten Sie den BOOT Knopf auf dem AllMyKVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Wi-Fi Konfiguration für NanoKVM',
+      description: 'Wi-Fi Konfiguration für AllMyKVM',
       success:
-        'Bitte überprüfen Sie den Netzwerk-Status des NanoKVM und greifen Sie über die neue IP Adresse darauf zu.',
+        'Bitte überprüfen Sie den Netzwerk-Status des AllMyKVM und greifen Sie über die neue IP Adresse darauf zu.',
       failed: 'Aktion fehlgeschlagen, bitte erneut versuchen.',
       invalidMode:
         'Der aktuelle Modus unterstützt keine Netzwerkeinrichtung. Bitte gehen Sie zu Ihrem Gerät und aktivieren Sie den Wi-Fi-Konfigurationsmodus.',
@@ -169,10 +169,10 @@ const de = {
       resetHid: 'HID zurücksetzen',
       hidOnly: {
         title: 'HID-Only-Modus',
-        desc: 'Wenn Ihre Maus und Tastatur nicht mehr reagieren und das Zurücksetzen der HID-Verbindung nicht hilft, könnte es sich um ein Kompatibilitätsproblem zwischen dem NanoKVM und dem Gerät handeln. Versuchen Sie, den HID-Only Modus zu aktivieren, um die Kompatibilität zu verbessern.',
+        desc: 'Wenn Ihre Maus und Tastatur nicht mehr reagieren und das Zurücksetzen der HID-Verbindung nicht hilft, könnte es sich um ein Kompatibilitätsproblem zwischen dem AllMyKVM und dem Gerät handeln. Versuchen Sie, den HID-Only Modus zu aktivieren, um die Kompatibilität zu verbessern.',
         tip1: 'Die Aktivierung des HID-Only Modus entfernt das virtuelle U-Laufwerk und das virtuelle Netzwerk.',
         tip2: 'Im HID-Only Modus ist das Einbinden von Systemabbilder deaktiviert.',
-        tip3: 'NanoKVM wird nach dem Wechsel in den neuen Modus automatisch neu gestartet.',
+        tip3: 'AllMyKVM wird nach dem Wechsel in den neuen Modus automatisch neu gestartet.',
         enable: 'HID-Only Modus aktivieren',
         disable: 'HID-Only Modus deaktivieren'
       }
@@ -195,18 +195,18 @@ const de = {
       cancelBtn: 'Nein',
       tips: {
         title: 'So laden Sie Dateien hoch',
-        usb1: 'Verbinden Sie den NanoKVM über USB mit Ihrem Computer.',
+        usb1: 'Verbinden Sie den AllMyKVM über USB mit Ihrem Computer.',
         usb2: 'Stellen Sie sicher, dass die virtuelle Festplatte eingebunden ist (Einstellungen – Virtuelle Festplatte).',
         usb3: 'Öffnen Sie die virtuelle Festplatte auf Ihrem Computer und kopieren Sie die Image-Datei in das Stammverzeichnis der virtuellen Festplatte.',
-        scp1: 'Stellen Sie sicher, dass sich der NanoKVM und Ihr Computer im selben lokalen Netzwerk befinden.',
-        scp2: 'Öffnen Sie ein Terminal auf Ihrem Computer und verwenden Sie den SCP-Befehl, um die Image-Datei in das Verzeichnis /data auf dem NanoKVM hochzuladen.',
+        scp1: 'Stellen Sie sicher, dass sich der AllMyKVM und Ihr Computer im selben lokalen Netzwerk befinden.',
+        scp2: 'Öffnen Sie ein Terminal auf Ihrem Computer und verwenden Sie den SCP-Befehl, um die Image-Datei in das Verzeichnis /data auf dem AllMyKVM hochzuladen.',
         scp3: 'Beispiel: scp your-image-path root@your-nanokvm-ip:/data',
         tfCard: 'TF-Karte',
         tf1: 'Diese Methode wird unter Linux-Systemen unterstützt.',
-        tf2: 'Entnehmen Sie die TF-Karte aus dem NanoKVM (bei der FULL-Version muss zuvor das Gehäuse geöffnet werden).',
+        tf2: 'Entnehmen Sie die TF-Karte aus dem AllMyKVM (bei der FULL-Version muss zuvor das Gehäuse geöffnet werden).',
         tf3: 'Stecken Sie die TF-Karte in einen Kartenleser und verbinden Sie diesen mit Ihrem Computer.',
         tf4: 'Kopieren Sie die Image-Datei in das Verzeichnis /data auf der TF-Karte.',
-        tf5: 'Setzen Sie die TF-Karte wieder in den NanoKVM ein.'
+        tf5: 'Setzen Sie die TF-Karte wieder in den AllMyKVM ein.'
       }
     },
     script: {
@@ -224,7 +224,7 @@ const de = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'NanoKVM Terminal',
+      nanokvm: 'AllMyKVM Terminal',
       serial: 'Serieller Anschluss Terminal',
       serialPort: 'Serieller Anschluss',
       serialPortPlaceholder: 'Bitte seriellen Anschluss angeben',
@@ -274,14 +274,14 @@ const de = {
     settings: {
       title: 'Einstellungen',
       about: {
-        title: 'Über NanoKVM',
+        title: 'Über AllMyKVM',
         information: 'Informationen',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Applikations-Version',
-        applicationTip: 'NanoKVM Web Applikations-Version',
+        applicationTip: 'AllMyKVM Web Applikations-Version',
         image: 'Systemabbild-Version',
-        imageTip: 'NanoKVM Systemabbild-Version',
+        imageTip: 'AllMyKVM Systemabbild-Version',
         deviceKey: 'Geräteschlüssel',
         community: 'Community',
         hostname: 'Hostname',
@@ -369,7 +369,7 @@ const de = {
         network: 'Virtuelles Netzwerk',
         networkDesc: 'Binde die virtuelle Netzwerkkarte an den entfernten Host',
         reboot: 'Neustarten',
-        rebootDesc: 'Sind Sie sicher dass Sie NanoKVM neustarten möchten?',
+        rebootDesc: 'Sind Sie sicher dass Sie AllMyKVM neustarten möchten?',
         okBtn: 'Ja',
         cancelBtn: 'Nein'
       },
@@ -396,7 +396,7 @@ const de = {
         },
         dns: {
           title: 'DNS',
-          description: 'DNS-Server für NanoKVM konfigurieren',
+          description: 'DNS-Server für AllMyKVM konfigurieren',
           mode: 'Modus',
           dhcp: 'DHCP',
           manual: 'Manuell',
@@ -441,8 +441,8 @@ const de = {
         download: 'Laden Sie das',
         package: 'Installations-Paket herunter',
         unzip: 'und entpacken Sie es',
-        upTailscale: 'Tailscale nach /usr/bin/ auf NanoKVM hochladen',
-        upTailscaled: 'Tailscaled nach /usr/bin/ auf NanoKVM hochladen',
+        upTailscale: 'Tailscale nach /usr/bin/ auf AllMyKVM hochladen',
+        upTailscaled: 'Tailscaled nach /usr/bin/ auf AllMyKVM hochladen',
         refresh: 'Aktuelle Seite neu laden',
         notRunning: 'Tailscale läuft nicht. Bitte starten Sie es, um fortzufahren.',
         run: 'Start',
@@ -505,7 +505,7 @@ const de = {
         defaultTitle: 'Allgemeiner Assistent',
         defaultDescription: 'Allgemeine Chat-, Such- und Arbeitsbereichshilfe.',
         kvmTitle: 'Fernsteuerung',
-        kvmDescription: 'Betreiben Sie den Remote-Host über NanoKVM.',
+        kvmDescription: 'Betreiben Sie den Remote-Host über AllMyKVM.',
         switched: 'Agentenrolle gewechselt',
         switchFailed: 'Agentenrolle konnte nicht gewechselt werden'
       },

@@ -31,20 +31,20 @@ const ca = {
       loginButtonText: 'Inicia sessió',
       tips: {
         reset1:
-          'Per restablir les contrasenyes, mantingues premut el botó BOOT del NanoKVM durant 10 segons.',
+          'Per restablir les contrasenyes, mantingues premut el botó BOOT del AllMyKVM durant 10 segons.',
         reset2: 'Per veure els passos detallats, consulta aquest document:',
         reset3: 'Compte web per defecte:',
         reset4: 'Compte SSH per defecte:',
         change1: 'Aquesta acció canviarà les següents contrasenyes:',
         change2: "Contrasenya d'inici de sessió web",
         change3: 'Contrasenya root del sistema (inici de sessió SSH)',
-        change4: 'Per restablir les contrasenyes, mantingues premut el botó BOOT del NanoKVM.'
+        change4: 'Per restablir les contrasenyes, mantingues premut el botó BOOT del AllMyKVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Configura Wi-Fi per al NanoKVM',
-      success: "Comprova l'estat de la xarxa del NanoKVM i visita la nova adreça IP.",
+      description: 'Configura Wi-Fi per al AllMyKVM',
+      success: "Comprova l'estat de la xarxa del AllMyKVM i visita la nova adreça IP.",
       failed: "L'operació ha fallat, torna-ho a intentar.",
       invalidMode:
         'El mode actual no admet la configuració de xarxa. Aneu al vostre dispositiu i activeu el mode de configuració Wi-Fi.',
@@ -165,10 +165,10 @@ const ca = {
       resetHid: 'Restablir HID',
       hidOnly: {
         title: 'Mode només HID',
-        desc: 'Si el ratolí i el teclat deixen de respondre i restablir HID no ajuda, pot ser un problema de compatibilitat entre el NanoKVM i el dispositiu. Proveu d’activar el mode només HID per millorar la compatibilitat.',
+        desc: 'Si el ratolí i el teclat deixen de respondre i restablir HID no ajuda, pot ser un problema de compatibilitat entre el AllMyKVM i el dispositiu. Proveu d’activar el mode només HID per millorar la compatibilitat.',
         tip1: 'Activar el mode només HID desmuntarà el disc virtual i la xarxa virtual',
         tip2: 'En mode només HID, no es pot muntar imatges',
-        tip3: 'El NanoKVM es reiniciarà automàticament en canviar de mode',
+        tip3: 'El AllMyKVM es reiniciarà automàticament en canviar de mode',
         enable: 'Activa mode només HID',
         disable: 'Desactiva mode només HID'
       }
@@ -190,18 +190,18 @@ const ca = {
       cancelBtn: 'No',
       tips: {
         title: 'Com pujar imatges',
-        usb1: 'Connecta el NanoKVM al teu ordinador via USB.',
+        usb1: 'Connecta el AllMyKVM al teu ordinador via USB.',
         usb2: "Assegura't que el disc virtual està muntat (Configuració - Disc Virtual).",
         usb3: "Obre el disc virtual i copia la imatge a l'arrel.",
-        scp1: 'Comprova que el NanoKVM i el teu ordinador estan a la mateixa xarxa.',
-        scp2: 'Obre un terminal i usa SCP per pujar la imatge al directori /data del NanoKVM.',
+        scp1: 'Comprova que el AllMyKVM i el teu ordinador estan a la mateixa xarxa.',
+        scp2: 'Obre un terminal i usa SCP per pujar la imatge al directori /data del AllMyKVM.',
         scp3: 'Exemple: scp ruta-de-la-imatge root@ip-del-nanokvm:/data',
         tfCard: 'Targeta TF',
         tf1: 'Mètode disponible a sistemes GNU/Linux',
-        tf2: 'Extreu la targeta TF del NanoKVM (versió FULL, cal obrir la carcassa).',
+        tf2: 'Extreu la targeta TF del AllMyKVM (versió FULL, cal obrir la carcassa).',
         tf3: "Introdueix la targeta en un lector i connecta'l a l'ordinador.",
         tf4: 'Copia la imatge al directori /data de la targeta.',
-        tf5: 'Reintrodueix la targeta al NanoKVM.'
+        tf5: 'Reintrodueix la targeta al AllMyKVM.'
       }
     },
     script: {
@@ -219,7 +219,7 @@ const ca = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'Terminal NanoKVM',
+      nanokvm: 'Terminal AllMyKVM',
       serial: 'Terminal de port sèrie',
       serialPort: 'Port sèrie',
       serialPortPlaceholder: 'Introdueix el port sèrie',
@@ -268,14 +268,14 @@ const ca = {
     settings: {
       title: 'Configuració',
       about: {
-        title: 'Sobre NanoKVM',
+        title: 'Sobre AllMyKVM',
         information: 'Informació',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Versió aplicació',
-        applicationTip: 'Versió de la interfície web de NanoKVM',
+        applicationTip: 'Versió de la interfície web de AllMyKVM',
         image: 'Versió de la imatge',
-        imageTip: 'Versió del sistema NanoKVM',
+        imageTip: 'Versió del sistema AllMyKVM',
         deviceKey: 'Clau del dispositiu',
         community: 'Comunitat',
         hostname: 'Nom del dispositiu',
@@ -362,7 +362,7 @@ const ca = {
         network: 'Xarxa virtual',
         networkDesc: 'Munta una targeta de xarxa virtual al dispositiu remot',
         reboot: 'Reinicia',
-        rebootDesc: 'Segur que vols reiniciar el NanoKVM?',
+        rebootDesc: 'Segur que vols reiniciar el AllMyKVM?',
         okBtn: 'Sí',
         cancelBtn: 'No'
       },
@@ -389,7 +389,7 @@ const ca = {
         },
         dns: {
           title: 'DNS',
-          description: 'Configura els servidors DNS per a NanoKVM',
+          description: 'Configura els servidors DNS per a AllMyKVM',
           mode: 'Mode',
           dhcp: 'DHCP',
           manual: 'Manual',
@@ -434,8 +434,8 @@ const ca = {
         download: 'Descarrega el',
         package: "paquet d'instal·lació",
         unzip: 'i descomprimeix-lo',
-        upTailscale: 'Puja tailscale al directori /usr/bin/ del NanoKVM',
-        upTailscaled: 'Puja tailscaled al directori /usr/sbin/ del NanoKVM',
+        upTailscale: 'Puja tailscale al directori /usr/bin/ del AllMyKVM',
+        upTailscaled: 'Puja tailscaled al directori /usr/sbin/ del AllMyKVM',
         refresh: 'Actualitza la pàgina',
         notRunning: "Tailscale no s'està executant. Si us plau, inicieu-lo per continuar.",
         run: 'Comença',
@@ -495,7 +495,7 @@ const ca = {
         defaultTitle: 'Assistent general',
         defaultDescription: 'Ajuda general de xat, cerca i espai de treball.',
         kvmTitle: 'Control remot',
-        kvmDescription: "Opera l'amfitrió remot mitjançant NanoKVM.",
+        kvmDescription: "Opera l'amfitrió remot mitjançant AllMyKVM.",
         switched: "Rol d'agent canviat",
         switchFailed: "No s'ha pogut canviar la funció d'agent"
       },

@@ -31,20 +31,20 @@ const da = {
       loginButtonText: 'Log ind',
       tips: {
         reset1:
-          'To reset the passwords, pressing and holding the BOOT button on the NanoKVM for 10 seconds.',
+          'To reset the passwords, pressing and holding the BOOT button on the AllMyKVM for 10 seconds.',
         reset2: 'Se detaljerede trin i dette dokument:',
         reset3: 'Standard webkonto:',
         reset4: 'Standard SSH-konto:',
         change1: 'Bemærk, at denne handling ændrer følgende adgangskoder:',
         change2: 'Adgangskode til weblogin',
         change3: 'Systemets root-adgangskode (SSH-loginadgangskode)',
-        change4: 'For at nulstille adgangskoderne skal du holde BOOT-knappen på NanoKVM nede.'
+        change4: 'For at nulstille adgangskoderne skal du holde BOOT-knappen på AllMyKVM nede.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Konfigurer Wi-Fi for NanoKVM',
-      success: 'Please check the network status of NanoKVM and visit the new IP address.',
+      description: 'Konfigurer Wi-Fi for AllMyKVM',
+      success: 'Please check the network status of AllMyKVM and visit the new IP address.',
       failed: 'Handlingen mislykkedes, prøv igen.',
       invalidMode:
         'Den aktuelle tilstand understøtter ikke netværksopsætning. Gå til din enhed og aktiver Wi-Fi konfigurationstilstand.',
@@ -165,10 +165,10 @@ const da = {
       resetHid: 'Nulstil HID',
       hidOnly: {
         title: 'Kun HID-tilstand',
-        desc: 'Hvis din mus og tastatur holder op med at reagere, og nulstilling af HID ikke hjælper, kan det være et kompatibilitetsproblem mellem NanoKVM og enheden. Prøv at aktivere HID-Only-tilstand for bedre kompatibilitet.',
+        desc: 'Hvis din mus og tastatur holder op med at reagere, og nulstilling af HID ikke hjælper, kan det være et kompatibilitetsproblem mellem AllMyKVM og enheden. Prøv at aktivere HID-Only-tilstand for bedre kompatibilitet.',
         tip1: 'Aktivering af HID-Only-tilstand vil afmontere den virtuelle U-disk og det virtuelle netværk',
         tip2: 'I HID-Only-tilstand er billedmontering deaktiveret',
-        tip3: 'NanoKVM genstarter automatisk efter at have skiftet tilstand',
+        tip3: 'AllMyKVM genstarter automatisk efter at have skiftet tilstand',
         enable: 'Aktiver HID-kun tilstand',
         disable: 'Deaktiver HID-kun tilstand'
       }
@@ -191,18 +191,18 @@ const da = {
       cancelBtn: 'Annuller',
       tips: {
         title: 'Sådan uploader du',
-        usb1: 'Forbind din NanoKVM til din computer via USB.',
+        usb1: 'Forbind din AllMyKVM til din computer via USB.',
         usb2: 'Sørg for, at den virtuelle disk er monteret (Indstillinger -> Virtuel disk).',
         usb3: 'Åben den virtuelle disk på din computer og kopier diskbilledet til roden af den virtuelle disk.',
-        scp1: 'Kontroller at din NanoKVM og din computer er på samme lokale netværk.',
-        scp2: 'Åben en terminal på din computer og brug SCP-kommandoen for at uploade diskbilledet til /data mappen på din NanoKVM.',
+        scp1: 'Kontroller at din AllMyKVM og din computer er på samme lokale netværk.',
+        scp2: 'Åben en terminal på din computer og brug SCP-kommandoen for at uploade diskbilledet til /data mappen på din AllMyKVM.',
         scp3: 'Eksempel: scp sti-til-dit-diskbillede root@din-nanokvm-ip:/data',
         tfCard: 'microSD-kort',
         tf1: 'Denne metode er understøttet af Linux systemer',
-        tf2: 'Tag microSD-kortet ud af din NanoKVM (for den fulde version af NanoKVM skal du åbne enheden for at kunne tage microSD-kortet ud).',
+        tf2: 'Tag microSD-kortet ud af din AllMyKVM (for den fulde version af AllMyKVM skal du åbne enheden for at kunne tage microSD-kortet ud).',
         tf3: 'Indsæt microSD-kortet i en kortlæser og tilslut den til en computer.',
         tf4: 'Kopier diskbilledet til /data mappen på microSD-kortet.',
-        tf5: 'Skub microSD-kortet ud og indsæt microSD-kortet i din NanoKVM.'
+        tf5: 'Skub microSD-kortet ud og indsæt microSD-kortet i din AllMyKVM.'
       }
     },
     script: {
@@ -220,7 +220,7 @@ const da = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'Terminal til NanoKVM',
+      nanokvm: 'Terminal til AllMyKVM',
       serial: 'Terminal til seriel port',
       serialPort: 'Serial port',
       serialPortPlaceholder: 'Angiv seriel port',
@@ -269,14 +269,14 @@ const da = {
     settings: {
       title: 'Indstillinger',
       about: {
-        title: 'Om NanoKVM',
+        title: 'Om AllMyKVM',
         information: 'Information',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Program version',
-        applicationTip: 'Version af NanoKVM-webapplikationen',
+        applicationTip: 'Version af AllMyKVM-webapplikationen',
         image: 'Firmware version',
-        imageTip: 'Version af NanoKVM-systemimaget',
+        imageTip: 'Version af AllMyKVM-systemimaget',
         deviceKey: 'Enhedsnøgle',
         community: 'Fællesskab',
         hostname: 'Værtsnavn',
@@ -364,7 +364,7 @@ const da = {
         network: 'Virtuelt netværk',
         networkDesc: 'Monter det virtuelle netværkskort på den eksterne vært',
         reboot: 'Genstart',
-        rebootDesc: 'Er du sikker på, at du vil genstarte NanoKVM?',
+        rebootDesc: 'Er du sikker på, at du vil genstarte AllMyKVM?',
         okBtn: 'Ja',
         cancelBtn: 'Annuller'
       },
@@ -391,7 +391,7 @@ const da = {
         },
         dns: {
           title: 'DNS',
-          description: 'Konfigurer DNS-servere til NanoKVM',
+          description: 'Konfigurer DNS-servere til AllMyKVM',
           mode: 'Tilstand',
           dhcp: 'DHCP',
           manual: 'Manuel',
@@ -436,8 +436,8 @@ const da = {
         download: 'Download',
         package: 'installationspakken',
         unzip: 'og udpak den',
-        upTailscale: 'Upload tailscale til NanoKVM-mappen /usr/bin/',
-        upTailscaled: 'Upload tailscaled til NanoKVM-mappen /usr/sbin/',
+        upTailscale: 'Upload tailscale til AllMyKVM-mappen /usr/bin/',
+        upTailscaled: 'Upload tailscaled til AllMyKVM-mappen /usr/sbin/',
         refresh: 'Opdater sides',
         notRunning: 'Tailscale kører ikke. Start det for at fortsætte.',
         run: 'Start',
@@ -499,7 +499,7 @@ const da = {
         defaultTitle: 'Generel assistent',
         defaultDescription: 'Generel hjælp til chat, søgning og arbejdsområde.',
         kvmTitle: 'Fjernstyring',
-        kvmDescription: 'Betjen fjernværten gennem NanoKVM.',
+        kvmDescription: 'Betjen fjernværten gennem AllMyKVM.',
         switched: 'Agentrolle skiftet',
         switchFailed: 'Kunne ikke skifte agentrolle'
       },
