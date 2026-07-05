@@ -200,8 +200,15 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	var dropOnce sync.Once
 	onClose := func() { dropOnce.Do(func() { close(dropped) }) }
 
-	// 1. events_subscribe → capture client_id and start the reader.
-	if err := events.Subscribe(b.onChannelInbound, onClose); err != nil {
+	// A fatal error on the ctl request stream (a read timeout desyncs
+	// response correlation — see Socket.request) must drop the whole session,
+	// not just wedge ctl: route it into the same drop signal the events stream
+	// uses so connectAndRun returns and Start re-establishes cleanly.
+	ctl.SetOnFatal(onClose)
+
+	// 1. events_subscribe → capture client_id and start the reader. onMeshEvent
+	// consumes the engine event stream (observe-only — logs network changes).
+	if err := events.Subscribe(b.onChannelInbound, b.onMeshEvent, onClose); err != nil {
 		return err
 	}
 
@@ -248,6 +255,7 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	// 5. Presence loop until the connection drops or we're told to stop.
 	ticker := time.NewTicker(presenceInterval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-stop:
@@ -267,6 +275,26 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 			// renamed. Change-guarded, so it's a no-op once converged.
 			b.syncIdentityLabel()
 		}
+	}
+}
+
+// onMeshEvent consumes the daemon's engine event stream. It's observe-only: a
+// network-change diag (category "network", emitted when this device's interface
+// set moves — e.g. the Virtual Network toggle bringing usb0 up) is LOGGED for
+// diagnostics but does NOT drive a bridge re-establish.
+//
+// Reacting to it used to force a full reconnect, which was actively harmful: the
+// daemon already handles a network change itself (it restarts ICE on every peer
+// and recovers in ~10 s), and the bridge's channel subscriptions ride the LOCAL
+// daemon socket — unaffected by the mesh network moving — so they survive it.
+// Re-subscribing/re-advertising on top of the daemon's in-flight ICE restart
+// just piled load onto its stalled single-core engine and turned a brief blip
+// into a minute-long reconnect loop. The bridge now simply blocks through the
+// stall (see daemonReadTimeout) and resumes; site routes re-map on demand when a
+// viewer's next frame hits the reset route (the KVM NACKs, the app re-offers).
+func (b *Bridge) onMeshEvent(ev MeshEvent) {
+	if ev.EventKind == "diag" && ev.Category == "network" {
+		log.Infof("mesh: daemon reported a network change on %s (%s)", ev.NetworkID, ev.Message)
 	}
 }
 

@@ -1,0 +1,96 @@
+#!/bin/sh
+# S31usbnet — share the KVM's uplink internet with the USB-tethered host.
+#
+# The USB virtual network (NCM/RNDIS gadget, interface usb0) hands the attached
+# host a DHCP lease whose default gateway + DNS point at the KVM. Unless the KVM
+# actually routes that traffic onward, the host's default route is hijacked into
+# a black hole and its own internet breaks — the reported "the virtual network
+# kills my Mac's internet". This closes the missing half: enable IPv4 forwarding
+# and NAT usb0-originated traffic out whichever uplink (wlan0 / eth0 / …) carries
+# the KVM's own internet, so the tether EXTENDS the host's connectivity.
+#
+# Runs both at boot (Buildroot rcS calls "S31usbnet start"; it no-ops unless the
+# virtual network is enabled) and from the web UI's Virtual Network toggle.
+# Idempotent and best-effort: it always exits 0 so a toggle chained onto it can
+# never fail on a missing iptables module or a down interface, and its rules live
+# in dedicated USBNET chains so teardown is a clean flush, never a guess.
+
+NAT_CHAIN=USBNET
+IF=usb0
+
+network_enabled() {
+    [ -e /boot/usb.ncm ] || [ -e /boot/usb.rndis0 ]
+}
+
+have_iptables() {
+    command -v iptables >/dev/null 2>&1
+}
+
+# ensure_chain <table> <chain> <parent> — create+flush our chain and make the
+# parent jump to it exactly once.
+ensure_chain() {
+    _t=$1; _c=$2; _p=$3
+    iptables -t "$_t" -N "$_c" 2>/dev/null
+    iptables -t "$_t" -F "$_c" 2>/dev/null
+    iptables -t "$_t" -C "$_p" -j "$_c" 2>/dev/null || iptables -t "$_t" -A "$_p" -j "$_c"
+}
+
+# usb_cidr — the KVM-side usb0 address as CIDR (e.g. 192.168.7.1/24), or empty.
+usb_cidr() {
+    ip -o -4 addr show "$IF" 2>/dev/null | awk '{print $4; exit}'
+}
+
+start() {
+    network_enabled || { echo "usbnet-share: virtual network off; nothing to share"; return 0; }
+    have_iptables || { echo "usbnet-share: iptables not found; skipping"; return 0; }
+
+    echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null
+
+    # filter/FORWARD: let usb0 out to any uplink, and let replies come back.
+    ensure_chain filter "$NAT_CHAIN" FORWARD
+    iptables -A "$NAT_CHAIN" -i "$IF" ! -o "$IF" -j ACCEPT 2>/dev/null
+    iptables -A "$NAT_CHAIN" -o "$IF" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
+
+    # nat/POSTROUTING: masquerade usb0-sourced traffic as it leaves the uplink.
+    ensure_chain nat "$NAT_CHAIN" POSTROUTING
+    # Give the gadget a moment to gain its address on a fresh bring-up, then
+    # scope the masquerade to the usb0 subnet (iptables masks host bits, so the
+    # interface CIDR names the subnet). If no address surfaces, fall back to an
+    # interface-scoped rule — broader, still correct, since the FORWARD chain
+    # only ever admits usb0-originated flows.
+    cidr=$(usb_cidr)
+    i=0
+    while [ -z "$cidr" ] && [ "$i" -lt 3 ]; do
+        sleep 1; i=$((i + 1)); cidr=$(usb_cidr)
+    done
+    if [ -n "$cidr" ]; then
+        iptables -t nat -A "$NAT_CHAIN" -s "$cidr" ! -o "$IF" -j MASQUERADE 2>/dev/null
+    else
+        echo "usbnet-share: $IF has no IPv4 address yet; using interface-scoped NAT"
+        iptables -t nat -A "$NAT_CHAIN" ! -o "$IF" -j MASQUERADE 2>/dev/null
+    fi
+    echo "usbnet-share: internet sharing enabled for $IF (${cidr:-no-addr})"
+}
+
+stop() {
+    have_iptables || return 0
+    # Drop the jump before flushing+deleting: a chain can't be removed while a
+    # rule still references it.
+    iptables -t filter -D FORWARD -j "$NAT_CHAIN" 2>/dev/null
+    iptables -t filter -F "$NAT_CHAIN" 2>/dev/null
+    iptables -t filter -X "$NAT_CHAIN" 2>/dev/null
+    iptables -t nat -D POSTROUTING -j "$NAT_CHAIN" 2>/dev/null
+    iptables -t nat -F "$NAT_CHAIN" 2>/dev/null
+    iptables -t nat -X "$NAT_CHAIN" 2>/dev/null
+    echo "usbnet-share: internet sharing disabled for $IF"
+    # ip_forward is left as-is: tailscale subnet routing and others may rely on
+    # it, and a stray 1 with no USBNET rules is harmless.
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    *)       echo "usage: $0 {start|stop|restart}" ;;
+esac
+exit 0

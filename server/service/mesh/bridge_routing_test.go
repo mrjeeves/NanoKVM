@@ -136,7 +136,7 @@ func TestJoinPlanesRoutesChannelSubscribeOverCtl(t *testing.T) {
 	}
 	defer ctl.Close()
 
-	if err := events.Subscribe(nil, nil); err != nil {
+	if err := events.Subscribe(nil, nil, nil); err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
 	if got := events.ClientID(); got != "c7" {

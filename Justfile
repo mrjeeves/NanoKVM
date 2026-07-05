@@ -293,13 +293,17 @@ deploy ip:
     # source that the firmware build installs into /etc/init.d; on a running device
     # we have to place it there ourselves or it never autostarts.
     scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/etc/init.d/S94myownmesh
+    # USB virtual-network internet sharing (usb0 → uplink NAT), invoked by the
+    # web UI's Virtual Network toggle and re-applied at boot by rcS. Same /etc/init.d
+    # placement rationale as S94myownmesh above.
+    scp kvmapp/system/init.d/S31usbnet     root@{{ip}}:/etc/init.d/S31usbnet
     # Web UI: the server serves /tmp/server/web (S95nanokvm copies /kvmapp→/tmp at
     # boot), so replacing /kvmapp/server/web is safe — the reboot below re-copies
     # and serves OUR web (with the Mesh tab). Stage web.new and rename over web so
     # a partial scp never leaves a broken tree; same fs, so the rename is atomic.
     ssh root@{{ip}} 'rm -rf /kvmapp/server/web.new /kvmapp/server/web.old'
     scp -r web/dist                        root@{{ip}}:/kvmapp/server/web.new
-    ssh root@{{ip}} 'set -e; [ -d /kvmapp/server/web ] && mv /kvmapp/server/web /kvmapp/server/web.old; mv /kvmapp/server/web.new /kvmapp/server/web; rm -rf /kvmapp/server/web.old; chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /kvmapp/server/NanoKVM-Server'
+    ssh root@{{ip}} 'set -e; [ -d /kvmapp/server/web ] && mv /kvmapp/server/web /kvmapp/server/web.old; mv /kvmapp/server/web.new /kvmapp/server/web; rm -rf /kvmapp/server/web.old; chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /kvmapp/server/NanoKVM-Server'
     # OLED app: same /tmp-copy story. Optional — only the local `build-risc` build
     # produces it (the MaixCDK build is too heavy for the release CI), so the
     # download/`install` path won't have it; ship it when it's present.

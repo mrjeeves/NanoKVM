@@ -22,9 +22,15 @@ var (
 		"touch /boot/usb.rndis0",
 		"/etc/init.d/S03usbdev stop",
 		"/etc/init.d/S03usbdev start",
+		// Share the KVM's uplink internet with the tethered host, so the
+		// virtual network extends the host's connectivity instead of
+		// black-holing its default route. Best-effort (the script always
+		// exits 0), so it can't fail the toggle.
+		"/etc/init.d/S31usbnet start",
 	}
 
 	unmountNetworkCommands = []string{
+		"/etc/init.d/S31usbnet stop",
 		"/etc/init.d/S03usbdev stop",
 		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/rndis.usb0",
 		"rm /boot/usb.rndis0",

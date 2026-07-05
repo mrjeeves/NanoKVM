@@ -42,6 +42,32 @@ type ChannelInbound struct {
 // ChannelHandler is invoked for every channel_inbound frame on the event stream.
 type ChannelHandler func(ChannelInbound)
 
+// MeshEvent mirrors the daemon's engine event (myownmesh events.rs MeshEvent),
+// delivered inside a ServerOut::Event frame: {"kind":"event","event":{...}}.
+// The outer discriminator is "event_kind" (peer|phase|diag); a Peer/Phase
+// event additionally carries an inner "kind" variant tag (a Diag has none).
+// We decode a flat superset of only the fields the bridge reacts to — a diag's
+// category/message, a phase's kind/prev/next — and ignore everything else,
+// so new event families or fields are forward-compatible.
+type MeshEvent struct {
+	EventKind string `json:"event_kind"` // "peer" | "phase" | "diag"
+	NetworkID string `json:"network_id"`
+
+	// diag (event_kind == "diag"): category is an exact-match discriminator
+	// ("network", "ice", "signaling", …); message is human text, not parsed.
+	Level    string `json:"level"`
+	Category string `json:"category"`
+	Message  string `json:"message"`
+
+	// phase (event_kind == "phase"): Kind == "changed", prev/next are MeshPhase.
+	Kind string `json:"kind"`
+	Prev string `json:"prev"`
+	Next string `json:"next"`
+}
+
+// MeshEventHandler is invoked for every engine event frame on the event stream.
+type MeshEventHandler func(MeshEvent)
+
 // Socket is a connection to the myownmesh daemon control socket. A Socket is
 // either a single-shot request connection or (after Subscribe) an event-stream
 // connection carrying server-push frames. The bridge uses one of each.
@@ -59,8 +85,14 @@ type Socket struct {
 	writer *bufio.Writer
 
 	// event-stream state
-	clientID string
-	handler  ChannelHandler
+	clientID     string
+	handler      ChannelHandler
+	eventHandler MeshEventHandler
+
+	// onFatal fires once the request/response stream is compromised (a write,
+	// read, or decode failure) — set by the bridge to tear the whole session
+	// down and re-establish, rather than limping on a desynced socket.
+	onFatal func()
 }
 
 // Dial connects to the daemon control socket at sockPath.
@@ -115,8 +147,20 @@ func (s *Socket) writeLine(v interface{}) error {
 // daemonReadTimeout bounds how long a single-shot request/ack read waits for the
 // daemon. Without it, a daemon that's busy (e.g. mid peer-connection at boot) and
 // slow to answer would hang the bridge's handshake forever — no node id, no
-// error, no retry. On timeout connectAndRun returns and Start reconnects.
-const daemonReadTimeout = 10 * time.Second
+// error, no retry. On timeout the socket is treated as fatal (see request) and
+// the bridge re-establishes.
+//
+// It must be well ABOVE the daemon's transient engine stalls, not right at their
+// edge: a network change (e.g. the Virtual Network toggle changing usb0) makes
+// the daemon drop every peer and restart ICE, which stalls the single-core
+// engine driver for ~10 s while channel_send_* ops queue behind it. At 10 s this
+// timeout tripped exactly there, turning a stall into a fatal reconnect — and the
+// reconnect's re-subscribe/re-advertise piled more work onto the stalled engine,
+// so it looped for a minute+ instead of settling. 45 s lets those ops BLOCK
+// through the stall and succeed. A genuinely dead daemon is still caught
+// promptly — the socket closes and readLoop fires onClose — so this longer bound
+// only affects the alive-but-briefly-busy case it's meant to ride out.
+const daemonReadTimeout = 45 * time.Second
 
 func (s *Socket) request(req request) (Response, error) {
 	// The op name in every error is what separates "daemon down" from "one
@@ -131,6 +175,7 @@ func (s *Socket) request(req request) (Response, error) {
 	s.reqMu.Lock()
 	defer s.reqMu.Unlock()
 	if err := s.writeLine(req); err != nil {
+		s.fatal()
 		return Response{}, fmt.Errorf("%s: write request: %w", op, err)
 	}
 	// Snapshot the conn under s.mu: Close (from connectAndRun's teardown, a
@@ -148,16 +193,54 @@ func (s *Socket) request(req request) (Response, error) {
 	line, err := s.reader.ReadBytes('\n')
 	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
+		// A read failure (timeout, EOF, reset) breaks request/response
+		// correlation for good: the daemon may still emit THIS op's reply
+		// later, and the next request would then read that stale line as its
+		// own — a permanent desync only a reconnect clears. This is the
+		// "offline until restarted" path — an engine stall past
+		// daemonReadTimeout (e.g. the ICE-restart fan-out a network change
+		// kicks on this single-core device) timed out one request and left
+		// the ctl socket corrupt for the rest of the process's life. Tear the
+		// socket down and fire onFatal so the bridge re-establishes cleanly.
+		s.fatal()
 		return Response{}, fmt.Errorf("%s: read response: %w", op, err)
 	}
 	var resp Response
 	if err := json.Unmarshal(line, &resp); err != nil {
+		// Undecodable line = framing desync; same reasoning as a read error.
+		s.fatal()
 		return Response{}, fmt.Errorf("%s: decode response: %w", op, err)
 	}
 	if !resp.OK {
+		// A clean protocol-level refusal: the reply was read and framed
+		// correctly, so the stream is still in sync — NOT fatal.
 		return resp, fmt.Errorf("%s: daemon error: %s", op, resp.Error)
 	}
 	return resp, nil
+}
+
+// SetOnFatal registers a callback fired when this socket's request/response
+// stream is compromised (a write, read, or decode failure). The bridge uses it
+// to drop and re-establish the whole session instead of continuing on a
+// desynced connection.
+func (s *Socket) SetOnFatal(f func()) {
+	s.mu.Lock()
+	s.onFatal = f
+	s.mu.Unlock()
+}
+
+// fatal closes the connection and invokes onFatal (if set). Closing first makes
+// any concurrent or subsequent read fail fast rather than block on — or
+// misread — a stream we can no longer trust. Idempotent: Close guards a nil
+// conn, and the bridge's onFatal is itself sync.Once-guarded.
+func (s *Socket) fatal() {
+	s.mu.Lock()
+	f := s.onFatal
+	s.mu.Unlock()
+	_ = s.Close()
+	if f != nil {
+		f()
+	}
 }
 
 // ClientID returns the client id captured from the events_subscribe ack ("c<n>").
@@ -172,8 +255,9 @@ func (s *Socket) ClientID() string {
 // It returns once the ack is received; the reader runs until the connection
 // drops or onClose fires. onClose (may be nil) is invoked when the stream ends,
 // so the caller can reconnect.
-func (s *Socket) Subscribe(handler ChannelHandler, onClose func()) error {
+func (s *Socket) Subscribe(handler ChannelHandler, events MeshEventHandler, onClose func()) error {
 	s.handler = handler
+	s.eventHandler = events
 	if err := s.writeLine(request{"op": "events_subscribe"}); err != nil {
 		return err
 	}
@@ -243,9 +327,21 @@ func (s *Socket) readLoop(onClose func()) {
 			if s.handler != nil {
 				s.handler(ci)
 			}
+		case "event":
+			// ServerOut::Event{event: MeshEvent}. The bridge reacts to
+			// network-change diags here (re-establishing on an interface flip).
+			var frame struct {
+				Event MeshEvent `json:"event"`
+			}
+			if err := json.Unmarshal(line, &frame); err != nil {
+				continue
+			}
+			if s.eventHandler != nil {
+				s.eventHandler(frame.Event)
+			}
 		default:
-			// event / lagged / rpc_* / video_* / audio_* — not used by the
-			// bridge. Ignored, never an error (additive forward-compat).
+			// lagged / rpc_* / video_* / audio_* — not used by the bridge.
+			// Ignored, never an error (additive forward-compat).
 		}
 	}
 }
