@@ -2,7 +2,6 @@ package mesh
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,19 +55,6 @@ const presenceInterval = 30 * time.Second
 // reconnectDelay is how long the bridge waits before retrying a failed connect.
 const reconnectDelay = 5 * time.Second
 
-// reestablishDebounce is the quiet window after the last daemon network-change
-// event before the bridge re-establishes. A single interface flip fires a diag
-// per joined network (and a lost→returned pair as the interface bounces), so we
-// wait for the burst to settle and reconnect once, on the new interface.
-const reestablishDebounce = 2 * time.Second
-
-// errReestablish is connectAndRun's sentinel for a deliberate, healthy
-// re-establish (the daemon reported a network change) — as opposed to a
-// connection failure. Start reconnects immediately on it, skipping
-// reconnectDelay, so the device re-appears promptly instead of lingering
-// "offline" in AllMyStuff after its IP moved.
-var errReestablish = errors.New("mesh: re-establishing after network change")
-
 // Bridge orchestrates the AllMyStuff mesh integration: it owns the daemon
 // connections, the persisted state, and the site-tunnel host, and drives the
 // presence loop + control handling.
@@ -86,12 +72,6 @@ type Bridge struct {
 	// ctl is a separate single-shot request connection for outbound ops, so a
 	// blocking request never races the event reader on the same socket.
 	ctl *Socket
-
-	// netChangeC is poked (non-blocking, coalesced) by onMeshEvent when the
-	// daemon reports a network-change diag; connectAndRun's serve loop debounces
-	// it into a single re-establish. Session-scoped: set in connectAndRun, nil
-	// between sessions (so a poke after teardown is a no-op).
-	netChangeC chan struct{}
 
 	sites *siteHost
 
@@ -165,14 +145,7 @@ func (b *Bridge) Start(stop <-chan struct{}) {
 		default:
 		}
 
-		err := b.connectAndRun(stop)
-		if errors.Is(err, errReestablish) {
-			// A deliberate, healthy re-establish (the device's network moved):
-			// reconnect at once so it re-appears promptly, skipping the backoff.
-			// The stop check at the top of the loop still gates the next cycle.
-			continue
-		}
-		if err != nil {
+		if err := b.connectAndRun(stop); err != nil {
 			log.Warnf("mesh: bridge run ended: %s; retrying in %s", err, reconnectDelay)
 		}
 
@@ -199,20 +172,16 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 		return err
 	}
 
-	netChange := make(chan struct{}, 1)
-
 	b.mu.Lock()
 	b.events = events
 	b.ctl = ctl
 	b.running = true
 	b.greetedAt = nil // fresh session: re-greet every peer that announces
-	b.netChangeC = netChange
 	b.mu.Unlock()
 
 	defer func() {
 		b.mu.Lock()
 		b.running = false
-		b.netChangeC = nil
 		b.mu.Unlock()
 		_ = events.Close()
 		_ = ctl.Close()
@@ -238,7 +207,7 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	ctl.SetOnFatal(onClose)
 
 	// 1. events_subscribe → capture client_id and start the reader. onMeshEvent
-	// consumes the engine event stream (network-change diags drive re-establish).
+	// consumes the engine event stream (observe-only — logs network changes).
 	if err := events.Subscribe(b.onChannelInbound, b.onMeshEvent, onClose); err != nil {
 		return err
 	}
@@ -287,41 +256,12 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	ticker := time.NewTicker(presenceInterval)
 	defer ticker.Stop()
 
-	// Trailing-edge debounce for daemon network-change events. Started
-	// stopped; onMeshEvent's poke (Re)arms it, and it fires once the burst a
-	// single interface flip produces has settled.
-	reestablish := time.NewTimer(time.Hour)
-	if !reestablish.Stop() {
-		<-reestablish.C
-	}
-	defer reestablish.Stop()
-
 	for {
 		select {
 		case <-stop:
 			return nil
 		case <-dropped:
 			return nil
-		case <-netChange:
-			// (Re)arm the trailing edge (documented safe-reset idiom: stop,
-			// drain, reset), so a burst of per-network diags coalesces into one
-			// re-establish once the network stops moving.
-			if !reestablish.Stop() {
-				select {
-				case <-reestablish.C:
-				default:
-				}
-			}
-			reestablish.Reset(reestablishDebounce)
-		case <-reestablish.C:
-			// The network settled after a change. Re-establish so presence,
-			// plane subscriptions, capabilities, and site routes are rebuilt on
-			// the new interface — otherwise the device lingers "offline" in
-			// AllMyStuff (stale presence + dead routes) until a restart. The
-			// full-reconnect path (this returns → the defer tears down + Start
-			// re-dials) is the same proven handshake a socket drop takes.
-			log.Infof("mesh: network change settled — re-establishing bridge session")
-			return errReestablish
 		case <-ticker.C:
 			b.broadcastPresence()
 			// Keep the co-fleet authorization roster warm. Here (this
@@ -338,30 +278,23 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	}
 }
 
-// onMeshEvent consumes the daemon's engine event stream. The bridge reacts to
-// exactly one thing here: a network-change diag (category "network"), which the
-// daemon's network-watch emits when this device's primary interface moves — the
-// Virtual Network toggle changing the KVM's IP, a Wi-Fi↔Ethernet handoff, DHCP
-// renewing to a new address. That's when the mesh transport re-gathers ICE, and
-// when the bridge must re-establish so a stale presence + dead site routes don't
-// leave the device dark in AllMyStuff until a reboot. We poke the session's
-// debounce channel (coalesced to one queued re-establish); connectAndRun folds
-// the burst and reconnects. Runs on the event-stream goroutine — non-blocking.
+// onMeshEvent consumes the daemon's engine event stream. It's observe-only: a
+// network-change diag (category "network", emitted when this device's interface
+// set moves — e.g. the Virtual Network toggle bringing usb0 up) is LOGGED for
+// diagnostics but does NOT drive a bridge re-establish.
+//
+// Reacting to it used to force a full reconnect, which was actively harmful: the
+// daemon already handles a network change itself (it restarts ICE on every peer
+// and recovers in ~10 s), and the bridge's channel subscriptions ride the LOCAL
+// daemon socket — unaffected by the mesh network moving — so they survive it.
+// Re-subscribing/re-advertising on top of the daemon's in-flight ICE restart
+// just piled load onto its stalled single-core engine and turned a brief blip
+// into a minute-long reconnect loop. The bridge now simply blocks through the
+// stall (see daemonReadTimeout) and resumes; site routes re-map on demand when a
+// viewer's next frame hits the reset route (the KVM NACKs, the app re-offers).
 func (b *Bridge) onMeshEvent(ev MeshEvent) {
-	if ev.EventKind != "diag" || ev.Category != "network" {
-		return
-	}
-	b.mu.Lock()
-	ch := b.netChangeC
-	b.mu.Unlock()
-	if ch == nil {
-		return
-	}
-	select {
-	case ch <- struct{}{}:
-		log.Infof("mesh: daemon reported a network change on %s — re-establishing", ev.NetworkID)
-	default:
-		// A re-establish is already queued for this burst; nothing to add.
+	if ev.EventKind == "diag" && ev.Category == "network" {
+		log.Infof("mesh: daemon reported a network change on %s (%s)", ev.NetworkID, ev.Message)
 	}
 }
 

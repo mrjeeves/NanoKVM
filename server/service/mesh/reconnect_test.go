@@ -112,48 +112,17 @@ func TestReadLoopDispatchesEventFrame(t *testing.T) {
 	}
 }
 
-// TestOnMeshEventTriggersOnlyNetworkDiag pins the trigger filter: only a
-// network-change diag re-establishes. Peer/phase churn and other diag
-// categories (ice, signaling, …) are the daemon's own business and must not
-// bounce the bridge.
-func TestOnMeshEventTriggersOnlyNetworkDiag(t *testing.T) {
-	ch := make(chan struct{}, 1)
-	b := &Bridge{netChangeC: ch}
-
-	drained := func() bool {
-		select {
-		case <-ch:
-			return true
-		default:
-			return false
-		}
-	}
-
+// TestOnMeshEventIsObserveOnly pins that consuming engine events never drives a
+// reconnect and never panics — it's diagnostics only. Reacting to a
+// network-change diag with a full re-establish used to pile load onto the
+// daemon's in-flight ICE restart and turn a brief blip into a reconnect loop;
+// the bridge now blocks through the stall instead (see daemonReadTimeout).
+func TestOnMeshEventIsObserveOnly(t *testing.T) {
+	b := &Bridge{}
+	// A range of events, including the network-change diag that used to trigger
+	// a re-establish — all must be safe no-ops (no channel, no reconnect).
 	b.onMeshEvent(MeshEvent{EventKind: "diag", Category: "ice", NetworkID: "n"})
-	if drained() {
-		t.Fatal("an ice diag must not trigger re-establish")
-	}
 	b.onMeshEvent(MeshEvent{EventKind: "phase", Kind: "changed", NetworkID: "n"})
-	if drained() {
-		t.Fatal("a phase change must not trigger re-establish")
-	}
-	b.onMeshEvent(MeshEvent{EventKind: "diag", Category: "network", NetworkID: "n"})
-	if !drained() {
-		t.Fatal("a network diag must trigger re-establish")
-	}
-
-	// Burst coalescing: repeated network diags never block on the full buffer.
-	b.onMeshEvent(MeshEvent{EventKind: "diag", Category: "network", NetworkID: "a"})
-	b.onMeshEvent(MeshEvent{EventKind: "diag", Category: "network", NetworkID: "b"})
-	b.onMeshEvent(MeshEvent{EventKind: "diag", Category: "network", NetworkID: "c"})
-	if !drained() {
-		t.Fatal("expected exactly one queued re-establish from the burst")
-	}
-	if drained() {
-		t.Fatal("burst must coalesce to a single queued re-establish")
-	}
-
-	// After teardown (netChangeC nil) a late poke is a no-op, not a panic.
-	b.netChangeC = nil
-	b.onMeshEvent(MeshEvent{EventKind: "diag", Category: "network", NetworkID: "n"})
+	b.onMeshEvent(MeshEvent{EventKind: "diag", Category: "network", NetworkID: "n", Message: "Primary network interface changed"})
+	b.onMeshEvent(MeshEvent{EventKind: "peer", Kind: "dropped", NetworkID: "n"})
 }

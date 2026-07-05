@@ -147,8 +147,20 @@ func (s *Socket) writeLine(v interface{}) error {
 // daemonReadTimeout bounds how long a single-shot request/ack read waits for the
 // daemon. Without it, a daemon that's busy (e.g. mid peer-connection at boot) and
 // slow to answer would hang the bridge's handshake forever — no node id, no
-// error, no retry. On timeout connectAndRun returns and Start reconnects.
-const daemonReadTimeout = 10 * time.Second
+// error, no retry. On timeout the socket is treated as fatal (see request) and
+// the bridge re-establishes.
+//
+// It must be well ABOVE the daemon's transient engine stalls, not right at their
+// edge: a network change (e.g. the Virtual Network toggle changing usb0) makes
+// the daemon drop every peer and restart ICE, which stalls the single-core
+// engine driver for ~10 s while channel_send_* ops queue behind it. At 10 s this
+// timeout tripped exactly there, turning a stall into a fatal reconnect — and the
+// reconnect's re-subscribe/re-advertise piled more work onto the stalled engine,
+// so it looped for a minute+ instead of settling. 45 s lets those ops BLOCK
+// through the stall and succeed. A genuinely dead daemon is still caught
+// promptly — the socket closes and readLoop fires onClose — so this longer bound
+// only affects the alive-but-briefly-busy case it's meant to ride out.
+const daemonReadTimeout = 45 * time.Second
 
 func (s *Socket) request(req request) (Response, error) {
 	// The op name in every error is what separates "daemon down" from "one
