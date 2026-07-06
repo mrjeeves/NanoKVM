@@ -383,7 +383,20 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	var last time.Time
+	// Lifecycle diagnostics: a re-open that fails shows up here as either no
+	// "first frame" (the encoder went quiet after the prior session) or a low
+	// final frame count. Cheap: two INFO lines per session plus a stall warning.
+	log.Infof("mesh: display pump started (route %s, lane %d, peer %s)", sess.routeID, sess.lane, sess.peer)
+	var (
+		last        time.Time
+		frames      uint64
+		emptyStreak int
+		lastResult  int
+	)
+	defer func() {
+		log.Infof("mesh: display pump ended (route %s, %d frames sent)", sess.routeID, frames)
+	}()
+
 	for {
 		select {
 		case <-sess.cancel:
@@ -394,8 +407,17 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 		p := vs.Params()
 		au, result := vs.ReadH264(p.Width, p.Height, p.BitRate)
 		if result < 0 || len(au) == 0 {
+			lastResult = result
+			emptyStreak++
+			// ~2s of nothing (240 polls at 120 Hz) after the stream was flowing
+			// means the encoder stopped feeding this session — the prime suspect
+			// for "the second open shows no video".
+			if emptyStreak%240 == 0 {
+				log.Warnf("mesh: display pump %s: no frame from encoder for %d polls (last result=%d) — encoder may be stalled after a prior session", sess.routeID, emptyStreak, lastResult)
+			}
 			continue
 		}
+		emptyStreak = 0
 
 		// Measured inter-unit gap drives duration_us — a fixed 1/fps would lie
 		// whenever the encoder's real rate differs (it usually does), skewing the
@@ -414,6 +436,10 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 			b.stopDisplayRoute(sess.routeID)
 			return
 		}
+		if frames == 0 {
+			log.Infof("mesh: display pump %s: first frame sent (%d bytes, result=%d)", sess.routeID, len(au), result)
+		}
+		frames++
 
 		// A Tune may have changed the capture cadence (a pull encoder's fps);
 		// pick it up without restarting the pump.
