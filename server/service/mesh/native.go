@@ -3,6 +3,7 @@ package mesh
 import (
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -91,6 +92,13 @@ type displaySession struct {
 	lane    uint8           // the announced video lane
 	pipe    *MediaTrackPipe // the dedicated media-track connection
 	cancel  chan struct{}   // closed to stop runVideoPump
+
+	// needKey gates the pump so it never streams a delta before the viewer has a
+	// keyframe: set at session start and on every Refresh, the pump drops access
+	// units until it sees an IDR (so a decoder that can only cold-start on a
+	// keyframe — WebCodecs — always begins on one). It's set from control-handler
+	// goroutines while the pump reads it, so it's atomic.
+	needKey atomic.Bool
 }
 
 // maxVideoLanes bounds the lane allocator. v1 streams a single screen, so lane
@@ -183,6 +191,11 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 		pipe:    pipe,
 		cancel:  make(chan struct{}),
 	}
+	// Start gated: a fresh viewer decodes nothing until its first IDR, and the
+	// encoder is free-running, so the pump must drop deltas until a keyframe
+	// (the "second open shows no video" bug was the pump sending a mid-GOP
+	// P-frame first).
+	sess.needKey.Store(true)
 	b.display = sess
 	b.mu.Unlock()
 
@@ -242,6 +255,9 @@ func (b *Bridge) handleRouteRefresh(from string, rc *RouteControl) {
 		return
 	}
 	vs.ForceIDR()
+	// Re-gate: the viewer asked for a fresh start, so drop deltas until the next
+	// keyframe rather than feeding it P-frames it can't decode yet.
+	sess.needKey.Store(true)
 	log.Debugf("mesh: refresh (force IDR) on display route %s", rc.RouteID)
 }
 
@@ -392,6 +408,7 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 		frames      uint64
 		emptyStreak int
 		lastResult  int
+		preKeyDrops int
 	)
 	defer func() {
 		log.Infof("mesh: display pump ended (route %s, %d frames sent)", sess.routeID, frames)
@@ -419,6 +436,27 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 		}
 		emptyStreak = 0
 
+		// Drop deltas until the viewer's first keyframe. The encoder free-runs, so
+		// a session that opens mid-GOP gets a P-frame first; a WebCodecs decoder
+		// can't cold-start on that and shows nothing until it's torn down. We read
+		// the keyframe boundary off the Annex-B bitstream (not the source result
+		// code, which only the Pro fills with a frame type) so it's uniform across
+		// devices. This costs up to one GOP of latency at start / after a Refresh.
+		if sess.needKey.Load() {
+			if !containsKeyframe(au) {
+				preKeyDrops++
+				if preKeyDrops%300 == 0 {
+					log.Warnf("mesh: display pump %s: still waiting for a keyframe after %d deltas — encoder GOP may be very long", sess.routeID, preKeyDrops)
+				}
+				continue
+			}
+			sess.needKey.Store(false)
+			if preKeyDrops > 0 {
+				log.Infof("mesh: display pump %s: synced on keyframe after dropping %d delta(s)", sess.routeID, preKeyDrops)
+			}
+			preKeyDrops = 0
+		}
+
 		// Measured inter-unit gap drives duration_us — a fixed 1/fps would lie
 		// whenever the encoder's real rate differs (it usually does), skewing the
 		// RTP timestamps and the viewer's recv_fps. Seed the first unit at ~30fps.
@@ -437,7 +475,7 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 			return
 		}
 		if frames == 0 {
-			log.Infof("mesh: display pump %s: first frame sent (%d bytes, result=%d)", sess.routeID, len(au), result)
+			log.Infof("mesh: display pump %s: first frame sent (%d bytes, keyframe) — stream started", sess.routeID, len(au))
 		}
 		frames++
 
@@ -455,6 +493,28 @@ func (b *Bridge) sendRouteReject(network, from, routeID, reason string) {
 	if err := b.sendControlTo(network, from, NewRouteReject(routeID, reason)); err != nil {
 		log.Warnf("mesh: send route Reject to %s: %s", from, err)
 	}
+}
+
+// containsKeyframe reports whether an Annex-B access unit carries an IDR slice
+// (NAL unit type 5) — the random-access point a cold-starting decoder (Pion /
+// WebCodecs) must receive before any delta or it decodes nothing. These
+// hardware encoders emit SPS+PPS+IDR together in the keyframe AU, so the type-5
+// slice is the reliable "this AU is decodable from scratch" marker; a P-frame
+// AU (type 1) carries none. We read it off the bitstream rather than a source
+// result code because only the Pro's encoder reports a frame type — NanoKVM's
+// ReadH264 result is success/error only.
+func containsKeyframe(au []byte) bool {
+	// Scan for start codes (00 00 01, or the 4-byte 00 00 00 01 whose trailing
+	// three bytes are also 00 00 01) and test each NAL unit's type (low 5 bits).
+	for i := 0; i+3 < len(au); i++ {
+		if au[i] == 0x00 && au[i+1] == 0x00 && au[i+2] == 0x01 {
+			if au[i+3]&0x1f == 5 { // IDR slice
+				return true
+			}
+			i += 2 // skip past this start code
+		}
+	}
+	return false
 }
 
 // stringsContain reports whether want is in xs.
