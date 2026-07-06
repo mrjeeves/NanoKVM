@@ -22,7 +22,7 @@ const parseSignalingData = <T,>(data?: string): T | null => {
   return JSON.parse(data) as T;
 };
 
-export const H264Webrtc = () => {
+export const H264Webrtc = ({ onFailure }: { onFailure?: () => void }) => {
   const resolution = useAtomValue(resolutionAtom);
   const mouseStyle = useAtomValue(mouseStyleAtom);
   const [videoScale, setVideoScale] = useAtom(videoScaleAtom);
@@ -32,6 +32,11 @@ export const H264Webrtc = () => {
   const videoOfferSent = useRef(false);
   const videoIceCandidates = useRef<RTCIceCandidate[]>([]);
 
+  // Keep the latest onFailure reachable from the connection effect without
+  // adding it to the effect deps (which would tear down and reconnect the WS).
+  const onFailureRef = useRef(onFailure);
+  onFailureRef.current = onFailure;
+
   useEffect(() => {
     const url = `${getBaseUrl('ws')}/api/stream/h264`;
     const ws = new W3cWebSocket(url);
@@ -40,6 +45,43 @@ export const H264Webrtc = () => {
     let video: RTCPeerConnection | null = null;
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let disposed = false;
+
+    // --- Autodrop-to-MJPEG bookkeeping ---
+    // Fire onFailure at most once when the WebRTC media can't come up so the
+    // parent can swap in MJPEG. All timers are cleared on unmount.
+    let failureFired = false;
+    let connectWatchdog: ReturnType<typeof setTimeout> | null = null;
+    let disconnectGrace: ReturnType<typeof setTimeout> | null = null;
+    let mediaPlaying = false;
+
+    const fireFailure = () => {
+      if (failureFired || disposed) {
+        return;
+      }
+      failureFired = true;
+      onFailureRef.current?.();
+    };
+
+    const clearDisconnectGrace = () => {
+      if (disconnectGrace) {
+        clearTimeout(disconnectGrace);
+        disconnectGrace = null;
+      }
+    };
+
+    // The <video> firing 'playing' is the definitive "media is up" signal: it
+    // cancels the connect watchdog and any pending disconnect grace.
+    const onMediaPlaying = () => {
+      mediaPlaying = true;
+      if (connectWatchdog) {
+        clearTimeout(connectWatchdog);
+        connectWatchdog = null;
+      }
+      clearDisconnectGrace();
+    };
+    if (videoElement) {
+      videoElement.addEventListener('playing', onMediaPlaying);
+    }
 
     const sendMsg = (event: string, data: string) => {
       if (ws.readyState !== WebSocket.OPEN) {
@@ -95,6 +137,34 @@ export const H264Webrtc = () => {
       peer.onicecandidate = (event) => {
         if (event.candidate) {
           sendMsg('video-candidate', JSON.stringify(event.candidate));
+        }
+      };
+
+      peer.oniceconnectionstatechange = () => {
+        switch (peer.iceConnectionState) {
+          case 'connected':
+          case 'completed':
+            clearDisconnectGrace();
+            break;
+          case 'failed':
+            console.warn('WebRTC ICE failed — dropping to MJPEG');
+            fireFailure();
+            break;
+          case 'disconnected':
+            // A transient blip often recovers; only drop if it persists.
+            if (!disconnectGrace) {
+              disconnectGrace = setTimeout(() => {
+                disconnectGrace = null;
+                const state = peer.iceConnectionState;
+                if (state === 'disconnected' || state === 'failed') {
+                  console.warn('WebRTC ICE stayed disconnected — dropping to MJPEG');
+                  fireFailure();
+                }
+              }, 5 * 1000);
+            }
+            break;
+          default:
+            break;
         }
       };
 
@@ -155,6 +225,16 @@ export const H264Webrtc = () => {
       heartbeatTimer = setInterval(() => {
         sendMsg('heartbeat', '');
       }, 60 * 1000);
+
+      // Connect watchdog: if <video> hasn't started playing within 10s of the
+      // socket opening (ICE that never even produces candidates, no answer,
+      // etc.), drop to MJPEG. onMediaPlaying cancels this.
+      connectWatchdog = setTimeout(() => {
+        if (!mediaPlaying) {
+          console.warn('WebRTC media did not start within 10s — dropping to MJPEG');
+          fireFailure();
+        }
+      }, 10 * 1000);
     };
 
     ws.onmessage = (event) => {
@@ -214,6 +294,14 @@ export const H264Webrtc = () => {
         clearInterval(heartbeatTimer);
       }
       clearTimeout(loadingTimer);
+
+      if (connectWatchdog) {
+        clearTimeout(connectWatchdog);
+      }
+      clearDisconnectGrace();
+      if (videoElement) {
+        videoElement.removeEventListener('playing', onMediaPlaying);
+      }
     };
   }, []);
 

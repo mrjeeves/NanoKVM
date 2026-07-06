@@ -14,6 +14,7 @@ import (
 	"NanoKVM-Server/middleware"
 	"NanoKVM-Server/router"
 	"NanoKVM-Server/service/mesh"
+	"NanoKVM-Server/service/mesh/glue"
 	"NanoKVM-Server/service/vm/jiggler"
 	"NanoKVM-Server/utils"
 
@@ -85,6 +86,12 @@ func run() {
 	var bridge *mesh.Bridge
 	if conf.Mesh.Enabled {
 		bridge = mesh.NewBridge(r, conf)
+		// Wire the native (Slice 1) screen/HID path: the bridge is CGO-free, so
+		// its H.264 encoder and HID gadget arrive as injected interfaces from the
+		// on-device glue. A display route then streams the KVM's screen and an
+		// input route injects its keyboard/mouse.
+		bridge.SetVideoSource(glue.NewVideoSource())
+		bridge.SetInputSink(glue.NewInputSink())
 		go bridge.Start(make(chan struct{}))
 		log.Println("AllMyStuff mesh bridge started")
 	}

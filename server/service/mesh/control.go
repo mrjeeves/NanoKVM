@@ -204,38 +204,41 @@ func (b *Bridge) handleKvm(network, from string, kc *KvmControl) {
 	}
 }
 
-// handleRoute processes a site-route Offer/Teardown. A site route is generic
-// media whose `from` ends ":site"; we accept it (so MEDIA SiteFrames are served)
-// and reply Accept. Other route kinds/media are ignored in v1.
+// handleRoute processes a route Offer/Teardown/Refresh/Tune across the site AND
+// native planes. A site route (generic media, `from` ends ":site") is tunneled
+// as before; a display route (KVM = video source) starts the H.264 pump; an
+// input route (KVM = keyboard/mouse sink) is registered for HID injection.
 func (b *Bridge) handleRoute(network, from string, rc *RouteControl) {
 	if rc == nil {
 		return
 	}
 	switch rc.Kind {
 	case RouteControlKindOffer:
-		if rc.Route == nil || !rc.Route.IsSiteRoute() {
-			return // v1 only tunnels site routes (the web UI)
-		}
-		routeID := rc.Route.ID
-		if !b.senderMayControl(from) {
-			// Reject with a reason instead of silence: without it the offerer
-			// waits out its 15 s offer expiry and blames the network.
-			log.Infof("mesh: site route offer from non-owner %s rejected", from)
-			if err := b.sendControlTo(network, from,
-				NewRouteReject(routeID, "not this KVM's owner — claim it first")); err != nil {
-				log.Warnf("mesh: send route Reject to %s: %s", from, err)
-			}
+		if rc.Route == nil {
 			return
 		}
-		b.sites.markRouteActive(routeID, from)
-		if err := b.sendControlTo(network, from, NewRouteAccept(routeID)); err != nil {
-			log.Warnf("mesh: send route Accept to %s: %s", from, err)
+		switch {
+		case rc.Route.IsSiteRoute():
+			b.handleSiteOffer(network, from, rc)
+		case rc.Route.IsDisplayRoute():
+			b.handleDisplayOffer(network, from, rc)
+		case rc.Route.IsInputRoute():
+			b.handleInputOffer(network, from, rc)
+		default:
+			// A media kind this build doesn't stream — ignore.
 		}
-		log.Infof("mesh: accepted site route %s from %s", routeID, from)
 
 	case RouteControlKindTeardown:
 		b.sites.tearDownRoute(rc.RouteID)
+		b.stopDisplayRoute(rc.RouteID)
+		b.clearInputRoute(rc.RouteID)
 		log.Debugf("mesh: tore down route %s", rc.RouteID)
+
+	case RouteControlKindRefresh:
+		b.handleRouteRefresh(from, rc)
+
+	case RouteControlKindTune:
+		b.handleRouteTune(from, rc)
 
 	case RouteControlKindReject:
 		// The offerer refused/abandoned a route we track (e.g. it expired the
@@ -245,10 +248,32 @@ func (b *Bridge) handleRoute(network, from string, rc *RouteControl) {
 			b.sites.tearDownRoute(rc.RouteID)
 			log.Debugf("mesh: peer rejected route %s — torn down", rc.RouteID)
 		}
+		// A native route the offerer abandons is torn down the same way (the
+		// stop/clear helpers no-op unless the id matches the active route).
+		b.stopDisplayRoute(rc.RouteID)
+		b.clearInputRoute(rc.RouteID)
 
 	default:
-		// accept / unknown — nothing to do host-side.
+		// accept / video_lane / unknown — nothing to do host-side.
 	}
+}
+
+// handleSiteOffer accepts a "sites" plane route (the tunneled web UI) and replies
+// Accept, so MEDIA SiteFrames on it are served.
+func (b *Bridge) handleSiteOffer(network, from string, rc *RouteControl) {
+	routeID := rc.Route.ID
+	if !b.senderMayControl(from) {
+		// Reject with a reason instead of silence: without it the offerer
+		// waits out its 15 s offer expiry and blames the network.
+		log.Infof("mesh: site route offer from non-owner %s rejected", from)
+		b.sendRouteReject(network, from, routeID, "not this KVM's owner — claim it first")
+		return
+	}
+	b.sites.markRouteActive(routeID, from)
+	if err := b.sendControlTo(network, from, NewRouteAccept(routeID)); err != nil {
+		log.Warnf("mesh: send route Accept to %s: %s", from, err)
+	}
+	log.Infof("mesh: accepted site route %s from %s", routeID, from)
 }
 
 // senderMayControl reports whether `from` is allowed to curate this device —

@@ -99,6 +99,26 @@ type Bridge struct {
 	// join and each presence tick; a cache (never an inline roster_list) so
 	// authorization checks on the event-stream goroutine stay non-blocking.
 	fleetRoster map[string]struct{}
+
+	// ---- native screen/HID streaming (Slice 1), all guarded by b.mu --------
+
+	// videoSource / inputSink are injected by the on-device glue at
+	// construction (SetVideoSource / SetInputSink). They are nil on host test
+	// builds, in which case the display/input route arms simply reject.
+	videoSource VideoSource
+	inputSink   InputSink
+
+	// display is the one active mesh display route (v1 streams one screen at a
+	// time); nil when none is active. Its pump goroutine owns the media pipe.
+	display *displaySession
+	// lanes is the set of allocated native video lane indices.
+	lanes map[uint8]bool
+
+	// inputRoute is the active input route id ("" = none) and inputPeer the
+	// authenticated peer that offered it — the only sender whose InputEvents are
+	// injected.
+	inputRoute string
+	inputPeer  string
 }
 
 // NewBridge builds a Bridge from the gin engine and config. It does not connect;
@@ -116,6 +136,7 @@ func NewBridge(engine *gin.Engine, conf *config.Config) *Bridge {
 		state:  st,
 		dev:    dev,
 		boot:   newBootID(),
+		lanes:  make(map[uint8]bool),
 	}
 	// The site host serves only our advertised web port.
 	b.sites = newSiteHost(engine, port, b.sendSiteFrame)
@@ -192,6 +213,10 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 		// links anyway — the viewer re-offers on the fresh session, and a
 		// stray frame on the old route id gets a Reject.
 		b.sites.tearDownAll()
+		// The native display pump rides a SEPARATE daemon connection (the media
+		// pipe) that's now useless too: stop it and free its lane so the next
+		// session starts clean.
+		b.tearDownNative()
 	}()
 
 	// Connection-dropped signal: the event reader fires onClose when the stream
@@ -243,6 +268,13 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	// 4. Keep the daemon identity label in step with the display label
 	// (KVM-<target> when attached, the brand name otherwise).
 	b.syncIdentityLabel()
+
+	// 5. Publish the venue ICE-server union (the deduplicated STUN/TURN of every
+	// mesh we're on, fleet first) so the KVM's own web UI can hand a remote
+	// viewer that shares a mesh a reachable relay. Memberships (including the
+	// fleet join inside ensureMemberships) are settled, so the daemon config
+	// now reflects every network we're on.
+	b.publishVenueICEServers()
 
 	b.reAdvertise()
 	// The handshake is done — everything below is steady-state. Without this
@@ -626,6 +658,8 @@ func (b *Bridge) applyMeshAdd(networkID string) {
 		return
 	}
 	b.reAdvertise()
+	// A new mesh means new STUN/TURN — refresh the venue union for the web UI.
+	b.publishVenueICEServers()
 }
 
 // applyMeshRemove leaves a fleet-owner-named mesh (never the fleet mesh) and
@@ -666,6 +700,8 @@ func (b *Bridge) applyMeshRemove(networkID string) {
 	b.dropNetwork(id)
 	log.Infof("mesh: left mesh %s (owner request)", id)
 	b.reAdvertise()
+	// Dropping a mesh drops its STUN/TURN — refresh the venue union.
+	b.publishVenueICEServers()
 }
 
 // unclaim executes an owner-ordered Release: forget owner, attachment, and
@@ -953,6 +989,11 @@ func (b *Bridge) retireClaimCodeMesh() {
 // joinFleetNetwork joins the fleet's closed network (derived from the fleet key)
 // if not already joined, then subscribes the planes on it. Best-effort.
 func (b *Bridge) joinFleetNetwork(networkID, name string, venue *string) {
+	// However this returns (joined now, already joined, or planes dark), refresh
+	// the venue ICE union so the fleet's STUN/TURN reach the web UI — this path
+	// also runs on the mid-session fleet-key handoff, which bypasses connect's
+	// own publish.
+	defer b.publishVenueICEServers()
 	nets, err := b.ctlNetworksList()
 	if err != nil {
 		log.Warnf("mesh: networks_list before fleet join: %s", err)
@@ -1204,8 +1245,14 @@ func (b *Bridge) onChannelInbound(ci ChannelInbound) {
 		}
 		b.handleControl(ci.Network, ci.From, msg)
 	case ChannelMedia:
+		// The media plane multiplexes the site tunnel (t:"site") and the native
+		// input plane (t:"input"). Try site first (the common case), then input.
 		if f, ok := DecodeSiteFrame(ci.Payload); ok {
 			b.sites.handleFrame(ci.From, f)
+			return
+		}
+		if ev, ok := DecodeInputEvent(ci.Payload); ok {
+			b.handleInputEvent(ci.From, ev)
 		}
 	case ChannelPresence:
 		// A peer announced itself. Remember its display label (the KVM-<label>

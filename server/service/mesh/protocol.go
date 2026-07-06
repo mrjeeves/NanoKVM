@@ -2,13 +2,17 @@
 //
 // It connects to the local myownmesh daemon's control socket, advertises this
 // device as a KVM appliance on the AllMyStuff presence plane, tunnels its own
-// web UI over the mesh "sites" plane with the login bypassed, and supports
-// claim + attach/detach over the control plane.
+// web UI over the mesh "sites" plane with the login bypassed, supports claim +
+// attach/detach over the control plane, and — Slice 1 — streams the KVM's
+// captured screen and injects its keyboard/mouse NATIVELY over the mesh:
+// already-encoded H.264 is pushed onto the daemon's media-track lane (the
+// display route) and remote input events flow back and get injected via HID
+// (the input route).
 //
-// v1 scope: NO native screen/HID streaming — the tunneled web UI delivers the
-// full KVM experience. This package therefore imports none of the CGO/libkvm
-// packages (server/service/hid, server/common), so it builds and `go test`s on
-// host amd64.
+// The package stays CGO-FREE so it builds and `go test`s on host amd64: it
+// imports neither server/common (libkvm) nor server/service/hid. The native
+// path reaches those through injected interfaces (VideoSource / InputSink, see
+// native.go) that the on-device glue package wires up at construction.
 //
 // This file mirrors the AllMyStuff wire contract in Go with exact json tags.
 // Decoding is forward-compatible: we never use DisallowUnknownFields, and every
@@ -134,7 +138,9 @@ type Capability struct {
 }
 
 // Route is a live connection between two capabilities. A site route is
-// identified by Media == "generic" and From ending in ":site".
+// identified by Media == "generic" and From ending in ":site"; a display route
+// by Media == "display" (KVM = video source); an input route by Media ==
+// "input" (KVM = keyboard/mouse sink).
 type Route struct {
 	ID    string `json:"id"`
 	From  string `json:"from"`
@@ -142,10 +148,34 @@ type Route struct {
 	Media string `json:"media"`
 }
 
+// Media route kinds the native (Slice 1) path handles, and the KVM's own
+// capability-id suffixes. `media` is authoritative; the suffixes are a fallback.
+const (
+	RouteMediaDisplay = "display" // KVM streams its captured screen (source)
+	RouteMediaInput   = "input"   // KVM injects keyboard/mouse (sink)
+
+	capSuffixScreen  = ":screen"  // the KVM's display capability id
+	capSuffixControl = ":control" // the KVM's input capability id
+)
+
 // IsSiteRoute reports whether r is an AllMyStuff "sites" plane route — generic
 // media whose source capability id ends in ":site".
 func (r Route) IsSiteRoute() bool {
 	return r.Media == "generic" && endsWith(r.From, ":site")
+}
+
+// IsDisplayRoute reports whether r streams this KVM's captured screen (the KVM
+// is the video SOURCE). media is authoritative; the source cap ":screen" suffix
+// is the fallback.
+func (r Route) IsDisplayRoute() bool {
+	return r.Media == RouteMediaDisplay || endsWith(r.From, capSuffixScreen)
+}
+
+// IsInputRoute reports whether r injects keyboard/mouse into this KVM (the KVM
+// is the input SINK). media is authoritative; the sink cap ":control" suffix is
+// the fallback.
+func (r Route) IsInputRoute() bool {
+	return r.Media == RouteMediaInput || endsWith(r.To, capSuffixControl)
 }
 
 func endsWith(s, suffix string) bool {
@@ -392,18 +422,36 @@ const (
 	RouteControlKindAccept   RouteControlKind = "accept"
 	RouteControlKindReject   RouteControlKind = "reject"
 	RouteControlKindTeardown RouteControlKind = "teardown"
-	RouteControlKindUnknown  RouteControlKind = "unknown"
+	// Native (Slice 1) route kinds:
+	//   video_lane host→viewer announces the lane the H.264 rides;
+	//   refresh    viewer→host forces an IDR;
+	//   tune       viewer→host adjusts resolution/bitrate/fps.
+	RouteControlKindVideoLane RouteControlKind = "video_lane"
+	RouteControlKindRefresh   RouteControlKind = "refresh"
+	RouteControlKindTune      RouteControlKind = "tune"
+	RouteControlKindUnknown   RouteControlKind = "unknown"
 )
 
-// RouteControl is the lifecycle of a single cross-node route. Only fields
-// relevant to a "sites" route are mirrored (plus the route id for Accept/
-// Reject/Teardown); the many display/terminal-specific fields are forward-
-// compatibly ignored.
+// RouteControl is the lifecycle of a single cross-node route. It mirrors the
+// fields the bridge acts on across the site AND native paths: the route +
+// transports on an Offer, the route id on Accept/Reject/Teardown/Refresh, and
+// the tuning constraints on Tune. Unmirrored display/terminal-specific fields
+// are forward-compatibly ignored.
 type RouteControl struct {
 	Kind    RouteControlKind `json:"kind"`
 	Route   *Route           `json:"route,omitempty"`
 	RouteID string           `json:"route_id,omitempty"`
 	Reason  string           `json:"reason,omitempty"`
+	// Offer-only: the media transports the OFFERER (the console) can consume,
+	// and its session id. We only read Video (to confirm h264) + Session.
+	Video   []string `json:"video,omitempty"`
+	Audio   []string `json:"audio,omitempty"`
+	Session string   `json:"session,omitempty"`
+	// Tune-only (viewer→host): null fields are omitted, so pointers distinguish
+	// "leave unchanged" from an explicit zero.
+	MaxEdge *uint32 `json:"max_edge,omitempty"`
+	Bitrate *uint32 `json:"bitrate,omitempty"`
+	FPS     *uint32 `json:"fps,omitempty"`
 }
 
 // UnmarshalJSON decodes RouteControl, mapping an unrecognised "kind" to
@@ -417,7 +465,8 @@ func (rc *RouteControl) UnmarshalJSON(b []byte) error {
 	*rc = RouteControl(r)
 	switch rc.Kind {
 	case RouteControlKindOffer, RouteControlKindAccept,
-		RouteControlKindReject, RouteControlKindTeardown:
+		RouteControlKindReject, RouteControlKindTeardown,
+		RouteControlKindVideoLane, RouteControlKindRefresh, RouteControlKindTune:
 	default:
 		rc.Kind = RouteControlKindUnknown
 	}
@@ -430,6 +479,17 @@ func NewRouteAccept(routeID string) ControlMessage {
 		Kind    string `json:"kind"`
 		RouteID string `json:"route_id"`
 	}{Kind: string(RouteControlKindAccept), RouteID: routeID})
+}
+
+// NewRouteVideoLane builds the RouteControl VideoLane announcement a host sends
+// after Accepting a display route — it tells the viewer which native lane the
+// H.264 access units ride. lane is always emitted (0 is a valid lane).
+func NewRouteVideoLane(routeID string, lane uint8) ControlMessage {
+	return wrapControl(ControlKindRoute, struct {
+		Kind    string `json:"kind"`
+		RouteID string `json:"route_id"`
+		Lane    uint8  `json:"lane"`
+	}{Kind: string(RouteControlKindVideoLane), RouteID: routeID, Lane: lane})
 }
 
 // NewRouteReject builds the RouteControl Reject reply for a route id. The
@@ -530,4 +590,93 @@ func DecodeSiteFrame(raw json.RawMessage) (SiteFrame, bool) {
 		f.Kind = SiteEventKindUnknown
 	}
 	return f, true
+}
+
+// ---- InputEvent (native input plane, rides CHANNEL_MEDIA as t:"input") ------
+
+// InputActionKind discriminates one normalized input action (snake_case on the
+// wire). An unrecognised kind decodes to InputActionUnknown and is ignored,
+// never an error.
+type InputActionKind string
+
+const (
+	InputActionMouseMove   InputActionKind = "mouse_move"
+	InputActionMouseButton InputActionKind = "mouse_button"
+	InputActionWheel       InputActionKind = "wheel"
+	InputActionKey         InputActionKind = "key"
+	InputActionUnknown     InputActionKind = "unknown"
+)
+
+// InputAction is one normalized input action carried by an InputEvent. Only the
+// fields for Kind are meaningful; the rest are zero. The InputSink translates it
+// to a HID report.
+type InputAction struct {
+	Kind InputActionKind
+	// mouse_move: x,y normalized 0..1 over the source screen; Screen selects a
+	// screen on multi-head sources (nil = the only/primary screen).
+	X      float64
+	Y      float64
+	Screen *uint32
+	// mouse_button: 0=left, 1=middle, 2=right. Down is press vs release (shared
+	// with key).
+	Button uint8
+	Down   bool
+	// wheel: dx/dy in wheel lines (positive dy = down).
+	DX float64
+	DY float64
+	// key: DOM KeyboardEvent.key (always) + .code (when the sender has it).
+	Key  string
+	Code string
+}
+
+// InputEvent is one frame of a native input route, demuxed off CHANNEL_MEDIA by
+// t:"input". The action is flattened onto the frame (serde #[serde(flatten)]),
+// so the action's fields sit beside t/route/seq on the wire.
+type InputEvent struct {
+	Route  string
+	Seq    uint64
+	Action InputAction
+}
+
+// DecodeInputEvent parses a CHANNEL_MEDIA payload as an InputEvent. Returns
+// ok=false for any payload whose t tag isn't "input" (another media plane), and
+// maps an unknown action kind to InputActionUnknown rather than failing.
+func DecodeInputEvent(raw json.RawMessage) (InputEvent, bool) {
+	var probe struct {
+		T string `json:"t"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil || probe.T != "input" {
+		return InputEvent{}, false
+	}
+	// The flattened wire shape: frame fields + the tagged action fields.
+	var w struct {
+		Route  string  `json:"route"`
+		Seq    uint64  `json:"seq"`
+		Kind   string  `json:"kind"`
+		X      float64 `json:"x"`
+		Y      float64 `json:"y"`
+		Screen *uint32 `json:"screen"`
+		Button uint8   `json:"button"`
+		Down   bool    `json:"down"`
+		DX     float64 `json:"dx"`
+		DY     float64 `json:"dy"`
+		Key    string  `json:"key"`
+		Code   string  `json:"code"`
+	}
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return InputEvent{}, false
+	}
+	action := InputAction{
+		X: w.X, Y: w.Y, Screen: w.Screen,
+		Button: w.Button, Down: w.Down,
+		DX: w.DX, DY: w.DY,
+		Key: w.Key, Code: w.Code,
+	}
+	switch InputActionKind(w.Kind) {
+	case InputActionMouseMove, InputActionMouseButton, InputActionWheel, InputActionKey:
+		action.Kind = InputActionKind(w.Kind)
+	default:
+		action.Kind = InputActionUnknown
+	}
+	return InputEvent{Route: w.Route, Seq: w.Seq, Action: action}, true
 }
