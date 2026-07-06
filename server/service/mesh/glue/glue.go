@@ -65,10 +65,19 @@ func (videoSource) Tune(maxEdge, bitrate, fps *uint32) {
 	}
 }
 
-// ForceIDR is a best-effort no-op: libkvm exposes no "keyframe now" primitive,
-// but it re-emits SPS+PPS+IDR at every GOP boundary (screen.GOP frames), so a
-// refreshing viewer recovers on the next GOP.
-func (videoSource) ForceIDR() {}
+// ForceIDR asks the encoder for a fresh keyframe by (re)applying the GOP.
+// libkvm has no explicit "keyframe now" call, but SetGop restarts the encoder's
+// GOP structure so the next frame is a fresh SPS+PPS+IDR, and it establishes a
+// periodic-IDR cadence for the session. The pump calls this at session start so
+// a mid-stream (re)offer resolves its keyframe gate promptly instead of waiting
+// on a distant (or absent) GOP boundary and leaving the viewer black.
+func (videoSource) ForceIDR() {
+	gop := common.GetScreen().GOP
+	if gop < 1 {
+		gop = 30
+	}
+	common.GetKvmVision().SetGop(gop)
+}
 
 // Prepare is a no-op on NanoKVM: its libkvm has no stream-type mode to set (the
 // Pro's does).

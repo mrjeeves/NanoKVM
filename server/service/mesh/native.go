@@ -433,6 +433,13 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 	}
 
 	vs.Prepare()
+	// Request a fresh keyframe up front: the pump starts gated (needKey), and on a
+	// mid-stream (re)offer the free-running encoder hands back only P-frames until
+	// a GOP boundary that may be far off — so without this the gate can wait far
+	// too long and the viewer stays black. ForceIDR both forces the keyframe and
+	// (on the Pro) establishes a periodic-IDR cadence; it's a no-op where the
+	// source can't force one.
+	vs.ForceIDR()
 
 	interval := vs.CaptureInterval()
 	ticker := time.NewTicker(interval)
@@ -484,8 +491,15 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 		if sess.needKey.Load() {
 			if !containsKeyframe(au) {
 				preKeyDrops++
+				// Re-request a keyframe while we wait — the first ForceIDR may have
+				// landed before the encoder was ready to (re)apply its GOP. ~1s
+				// cadence at the 120 Hz drain, cheap, and it stops the moment a
+				// keyframe arrives (needKey clears).
+				if preKeyDrops%120 == 0 {
+					vs.ForceIDR()
+				}
 				if preKeyDrops%300 == 0 {
-					log.Warnf("mesh: display pump %s: still waiting for a keyframe after %d deltas — encoder GOP may be very long", sess.routeID, preKeyDrops)
+					log.Warnf("mesh: display pump %s: still waiting for a keyframe after %d deltas — encoder not emitting an IDR", sess.routeID, preKeyDrops)
 				}
 				continue
 			}
