@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"strconv"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -307,6 +308,16 @@ func (b *Bridge) tearDownNative() {
 	}
 }
 
+// One-shot diagnostics so the input path's fate is visible in the (INFO-level)
+// bridge log without per-event spam — each fires at most once per process.
+var (
+	inputArrivedOnce   sync.Once
+	inputDropRouteOnce sync.Once
+	inputDropPeerOnce  sync.Once
+	inputDropAuthOnce  sync.Once
+	inputInjectedOnce  sync.Once
+)
+
 // handleInputEvent injects one InputEvent that arrived on CHANNEL_MEDIA, if it
 // matches the active input route AND comes from that route's authorized offerer.
 func (b *Bridge) handleInputEvent(from string, ev InputEvent) {
@@ -316,21 +327,37 @@ func (b *Bridge) handleInputEvent(from string, ev InputEvent) {
 	is := b.inputSink
 	b.mu.Unlock()
 
+	inputArrivedOnce.Do(func() {
+		log.Infof("mesh: first native input event received (from %s, event-route %s, kind %s; active input-route=%q, sink=%t)",
+			from, ev.Route, ev.Action.Kind, route, is != nil)
+	})
+
 	if is == nil || route == "" || ev.Route != route {
+		inputDropRouteOnce.Do(func() {
+			log.Infof("mesh: input dropped — no matching input route (sink=%t, active=%q, event=%q)", is != nil, route, ev.Route)
+		})
 		return
 	}
 	// The mesh authenticates the sender; require it to be the peer that offered
 	// this route AND still authorized to curate the device.
 	if !canonicalEqual(peer, from) {
-		log.Debugf("mesh: input event on route %s from unexpected sender %s dropped", ev.Route, from)
+		inputDropPeerOnce.Do(func() {
+			log.Infof("mesh: input dropped — sender %s is not the route's offerer %s", from, peer)
+		})
 		return
 	}
 	if !b.senderMayControl(from) {
+		inputDropAuthOnce.Do(func() {
+			log.Infof("mesh: input dropped — sender %s is not this KVM's owner/fleet", from)
+		})
 		return
 	}
 	if ev.Action.Kind == InputActionUnknown {
 		return
 	}
+	inputInjectedOnce.Do(func() {
+		log.Infof("mesh: injecting native input to HID (first event kind %s)", ev.Action.Kind)
+	})
 	is.Apply(ev.Action)
 }
 
