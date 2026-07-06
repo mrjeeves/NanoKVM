@@ -9,6 +9,7 @@ package glue
 import (
 	"math"
 	"sync"
+	"time"
 
 	"NanoKVM-Server/common"
 	"NanoKVM-Server/service/hid"
@@ -68,6 +69,23 @@ func (videoSource) Tune(maxEdge, bitrate, fps *uint32) {
 // but it re-emits SPS+PPS+IDR at every GOP boundary (screen.GOP frames), so a
 // refreshing viewer recovers on the next GOP.
 func (videoSource) ForceIDR() {}
+
+// Prepare is a no-op on NanoKVM: its libkvm has no stream-type mode to set (the
+// Pro's does).
+func (videoSource) Prepare() {}
+
+// CaptureInterval follows the target fps: NanoKVM's encoder is PULL-driven —
+// each ReadH264 call yields one frame — so the poll rate is the frame rate.
+// Clamped to a safe positive value (Screen.FPS can be 0, meaning "encoder auto").
+func (videoSource) CaptureInterval() time.Duration {
+	fps := common.GetScreen().FPS
+	if fps < 1 {
+		fps = 30
+	} else if fps > 120 {
+		fps = 120
+	}
+	return time.Second / time.Duration(fps)
+}
 
 // resolutionForMaxEdge picks the largest resolution whose width (its longest
 // edge) fits within maxEdge, using common.ResolutionMap (height → width).

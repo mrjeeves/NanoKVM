@@ -44,6 +44,18 @@ type VideoSource interface {
 	// ForceIDR best-effort asks the encoder for a keyframe now; a source that
 	// can't relies on its periodic GOP to recover a refreshing viewer.
 	ForceIDR()
+	// Prepare puts the shared encoder into native H.264 capture mode before the
+	// pump drains it — defensive against a prior web session having left it in
+	// another stream type. A no-op where there's nothing to set.
+	Prepare()
+	// CaptureInterval is how often the pump polls ReadH264. It encodes the
+	// encoder's model: a PUSH-driven HDMI encoder (the Pro) hands back the next
+	// access unit (or nothing) and must be drained FASTER than the source rate
+	// so every unit is taken in order — poll too slowly and the viewer decodes
+	// P-frames whose reference frames it never received (one frame, then a
+	// frozen picture). A PULL-driven encoder (NanoKVM) yields exactly one frame
+	// per call, so the interval is simply the target fps.
+	CaptureInterval() time.Duration
 }
 
 // InputSink is the injected HID gadget the input route feeds. Apply translates
@@ -322,10 +334,12 @@ func (b *Bridge) handleInputEvent(from string, ev InputEvent) {
 	is.Apply(ev.Action)
 }
 
-// runVideoPump streams H.264 access units onto the session's lane at the
-// screen's fps until the route is torn down or a pipe write fails. Modeled on
-// webrtc/manager.go sendVideoStream: a ticker from the screen fps, re-read each
-// frame so a Tune reshapes the stream live.
+// runVideoPump drains H.264 access units off the encoder and onto the session's
+// lane until the route is torn down or a pipe write fails. Modeled on
+// webrtc/manager.go sendVideoStream: put the encoder in native mode, poll at the
+// source's own CaptureInterval (NOT the requested fps — see VideoSource), and
+// pace the daemon's RTP clock with the MEASURED gap between units, so the
+// viewer's jitter buffer tracks the encoder's real output rate.
 func (b *Bridge) runVideoPump(sess *displaySession) {
 	defer sess.pipe.Close()
 
@@ -336,11 +350,13 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 		return
 	}
 
-	fps := effectiveFPS(vs.Params().FPS)
-	duration := time.Second / time.Duration(fps)
-	ticker := time.NewTicker(duration)
+	vs.Prepare()
+
+	interval := vs.CaptureInterval()
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	var last time.Time
 	for {
 		select {
 		case <-sess.cancel:
@@ -354,18 +370,29 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 			continue
 		}
 
-		curFPS := effectiveFPS(p.FPS)
-		durationUs := uint64(1_000_000 / curFPS)
+		// Measured inter-unit gap drives duration_us — a fixed 1/fps would lie
+		// whenever the encoder's real rate differs (it usually does), skewing the
+		// RTP timestamps and the viewer's recv_fps. Seed the first unit at ~30fps.
+		now := time.Now()
+		durationUs := uint64(33_333)
+		if !last.IsZero() {
+			if d := now.Sub(last).Microseconds(); d > 0 {
+				durationUs = uint64(d)
+			}
+		}
+		last = now
+
 		if err := sess.pipe.WriteVideo(sess.network, sess.peer, sess.lane, durationUs, au); err != nil {
 			log.Warnf("mesh: display pump write failed on route %s: %s — tearing down", sess.routeID, err)
 			b.stopDisplayRoute(sess.routeID)
 			return
 		}
 
-		if curFPS != fps {
-			fps = curFPS
-			duration = time.Second / time.Duration(fps)
-			ticker.Reset(duration)
+		// A Tune may have changed the capture cadence (a pull encoder's fps);
+		// pick it up without restarting the pump.
+		if ni := vs.CaptureInterval(); ni != interval {
+			interval = ni
+			ticker.Reset(interval)
 		}
 	}
 }
@@ -375,15 +402,6 @@ func (b *Bridge) sendRouteReject(network, from, routeID, reason string) {
 	if err := b.sendControlTo(network, from, NewRouteReject(routeID, reason)); err != nil {
 		log.Warnf("mesh: send route Reject to %s: %s", from, err)
 	}
-}
-
-// effectiveFPS clamps a frame rate to a safe positive value (the C encoder
-// default is 30; a 0/negative would divide-by-zero the ticker + duration).
-func effectiveFPS(fps int) int {
-	if fps < 1 {
-		return 30
-	}
-	return fps
 }
 
 // stringsContain reports whether want is in xs.

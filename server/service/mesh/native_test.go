@@ -205,9 +205,11 @@ func (f *fakeVideoSource) ReadH264(_, _, _ int) ([]byte, int) {
 	}
 	return []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88}, 0
 }
-func (f *fakeVideoSource) SetFps(int)           {}
-func (f *fakeVideoSource) Tune(_, _, _ *uint32) {}
-func (f *fakeVideoSource) ForceIDR()            {}
+func (f *fakeVideoSource) SetFps(int)                     {}
+func (f *fakeVideoSource) Tune(_, _, _ *uint32)           {}
+func (f *fakeVideoSource) ForceIDR()                      {}
+func (f *fakeVideoSource) Prepare()                       {}
+func (f *fakeVideoSource) CaptureInterval() time.Duration { return 2 * time.Millisecond }
 
 type fakeInputSink struct {
 	mu      sync.Mutex
