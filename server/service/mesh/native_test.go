@@ -361,6 +361,72 @@ func TestDisplayRouteRejectsUnauthorizedAndUnavailable(t *testing.T) {
 	}
 }
 
+func TestDisplayRouteReofferSupersedesActiveSession(t *testing.T) {
+	f := startFakeDaemon(t)
+	b := newNativeTestBridge(t, f, "owner")
+	vs := &fakeVideoSource{read: make(chan struct{}, 8)}
+	b.SetVideoSource(vs)
+
+	offer := func(id string) *RouteControl {
+		return &RouteControl{
+			Kind:  RouteControlKindOffer,
+			Video: []string{"h264"},
+			Route: &Route{ID: id, From: "console:out", To: "kvm:screen", Media: RouteMediaDisplay},
+		}
+	}
+
+	// Arm the first display session.
+	b.handleRoute("netA", "owner", offer("disp-1"))
+	b.mu.Lock()
+	sess1 := b.display
+	b.mu.Unlock()
+	if sess1 == nil || sess1.routeID != "disp-1" || sess1.lane != 0 {
+		t.Fatalf("first display route not armed: %+v", sess1)
+	}
+
+	// A re-offer of the SAME id from the same owner (a window-transition re-home)
+	// supersedes the active session — evict-and-replace, NOT reject.
+	b.handleRoute("netA", "owner", offer("disp-1"))
+	b.mu.Lock()
+	sess2 := b.display
+	laneHeld := b.lanes[0]
+	b.mu.Unlock()
+	if sess2 == nil || sess2.routeID != "disp-1" || sess2.lane != 0 {
+		t.Fatalf("same-id re-offer did not arm a replacement: %+v", sess2)
+	}
+	if sess2 == sess1 {
+		t.Fatal("re-offer should install a NEW session, not reuse the old one")
+	}
+	if !laneHeld {
+		t.Fatal("lane 0 should remain allocated to the replacement session")
+	}
+	// The evicted pump was signaled to stop (its cancel is closed).
+	select {
+	case <-sess1.cancel:
+	case <-time.After(time.Second):
+		t.Fatal("old session's pump was not cancelled on supersede")
+	}
+
+	// A DIFFERENT-id re-offer (a monitor/source switch) also supersedes.
+	b.handleRoute("netA", "owner", offer("disp-2"))
+	b.mu.Lock()
+	sess3 := b.display
+	b.mu.Unlock()
+	if sess3 == nil || sess3.routeID != "disp-2" || sess3.lane != 0 {
+		t.Fatalf("different-id re-offer did not supersede: %+v", sess3)
+	}
+	select {
+	case <-sess2.cancel:
+	case <-time.After(time.Second):
+		t.Fatal("second session's pump was not cancelled on the source-switch supersede")
+	}
+
+	// None of the three offers was rejected — supersede replaces silently.
+	if n := countRejects(f); n != 0 {
+		t.Fatalf("supersede must not Reject; got %d rejects", n)
+	}
+}
+
 func TestInputRouteOfferRegistersAndInjects(t *testing.T) {
 	f := startFakeDaemon(t)
 	b := newNativeTestBridge(t, f, "owner")

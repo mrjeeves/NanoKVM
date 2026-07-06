@@ -139,7 +139,6 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 
 	b.mu.Lock()
 	vs := b.videoSource
-	active := b.display
 	b.mu.Unlock()
 
 	if vs == nil {
@@ -154,11 +153,10 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 		b.sendRouteReject(network, from, routeID, "this KVM only streams h264")
 		return
 	}
-	if active != nil {
-		log.Infof("mesh: display route %s offered while %s is active — rejecting (v1 streams one screen)", routeID, active.routeID)
-		b.sendRouteReject(network, from, routeID, "this KVM already has an active screen viewer")
-		return
-	}
+	// NOTE: an offer that arrives while a display session is already active is
+	// NOT rejected — it supersedes it (evict-and-replace below). See the commit
+	// block for why: a re-offer is the same authorized viewer re-homing its
+	// stream across a window transition, and rejecting only strands it.
 
 	// Dial the media pipe BEFORE committing state so a slow handshake never
 	// holds b.mu, and a failure leaves no half-armed route behind.
@@ -169,16 +167,29 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 		return
 	}
 
+	// One-screen policy with EVICT-AND-REPLACE. An authorized re-offer — the
+	// viewer re-homing its stream across a window transition (popout, source
+	// switch, a racing re-offer) — supersedes the active session instead of
+	// being rejected. senderMayControl already gated this to the owner/fleet, so
+	// any offer reaching here is the legitimate viewer; rejecting only ever
+	// stranded it mid-transition (the "video dies on a transition and never
+	// comes back" report). Evicting under the SAME lock that commits the
+	// replacement keeps b.display single-owner, and the old pump is cancelled
+	// only after the new session is in place — so a lane freed here is
+	// immediately re-taken by the replacement, and the old pump tears itself
+	// down by identity (stopDisplaySession), never by the reused route id.
 	b.mu.Lock()
-	if b.display != nil {
-		b.mu.Unlock()
-		_ = pipe.Close()
-		b.sendRouteReject(network, from, routeID, "this KVM already has an active screen viewer")
-		return
+	old := b.display
+	if old != nil {
+		b.display = nil
+		b.freeLaneLocked(old.lane)
 	}
 	lane, ok := b.allocLaneLocked()
 	if !ok {
 		b.mu.Unlock()
+		if old != nil {
+			close(old.cancel)
+		}
 		_ = pipe.Close()
 		b.sendRouteReject(network, from, routeID, "no free video lane")
 		return
@@ -198,6 +209,10 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 	sess.needKey.Store(true)
 	b.display = sess
 	b.mu.Unlock()
+	if old != nil {
+		close(old.cancel)
+		log.Infof("mesh: display route %s superseded by re-offer %s (one-screen evict-and-replace)", old.routeID, routeID)
+	}
 
 	if err := b.sendControlTo(network, from, NewRouteAccept(routeID)); err != nil {
 		log.Warnf("mesh: send route Accept to %s: %s", from, err)
@@ -282,11 +297,35 @@ func (b *Bridge) handleRouteTune(from string, rc *RouteControl) {
 // stopDisplayRoute stops the active display pump if it matches routeID (empty
 // matches any) and frees its lane. Safe to call repeatedly and from any
 // goroutine: the state clear is guarded by b.mu, so exactly one caller closes
-// the pump's cancel channel.
+// the pump's cancel channel. This is the control-plane stop (Teardown/Reject),
+// which legitimately addresses a route BY ID. The pump's own self-teardown must
+// NOT use this — the viewer reuses a deterministic route id across a re-offer,
+// so a lagging old pump matching by id would stop the freshly-armed new session
+// (same id). It uses stopDisplaySession (identity-keyed) instead.
 func (b *Bridge) stopDisplayRoute(routeID string) {
 	b.mu.Lock()
 	sess := b.display
 	if sess == nil || (routeID != "" && sess.routeID != routeID) {
+		b.mu.Unlock()
+		return
+	}
+	b.display = nil
+	b.freeLaneLocked(sess.lane)
+	b.mu.Unlock()
+	close(sess.cancel)
+	log.Infof("mesh: display route %s stopped", sess.routeID)
+}
+
+// stopDisplaySession stops a specific pump's own session by pointer identity —
+// the safe self-teardown for runVideoPump. If this exact session is no longer
+// the active one (it was already evicted by a re-offer that reused its route
+// id), it no-ops: it never touches the replacement, and it never double-closes
+// cancel (the evict path in handleDisplayOffer is the sole closer of an evicted
+// session's cancel; the winner of the b.display==sess check here is the sole
+// closer of a still-active session's cancel).
+func (b *Bridge) stopDisplaySession(sess *displaySession) {
+	b.mu.Lock()
+	if b.display != sess {
 		b.mu.Unlock()
 		return
 	}
@@ -471,7 +510,10 @@ func (b *Bridge) runVideoPump(sess *displaySession) {
 
 		if err := sess.pipe.WriteVideo(sess.network, sess.peer, sess.lane, durationUs, au); err != nil {
 			log.Warnf("mesh: display pump write failed on route %s: %s — tearing down", sess.routeID, err)
-			b.stopDisplayRoute(sess.routeID)
+			// Identity-keyed: if this session was already evicted by a re-offer
+			// (its route id reused by the replacement), this no-ops instead of
+			// stopping the new session.
+			b.stopDisplaySession(sess)
 			return
 		}
 		if frames == 0 {
