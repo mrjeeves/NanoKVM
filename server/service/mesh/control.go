@@ -285,6 +285,11 @@ func (b *Bridge) handleSiteOffer(network, from string, rc *RouteControl) {
 // goroutine). With no recorded owner the device is unclaimed and curation is
 // refused (claim first).
 func (b *Bridge) senderMayControl(from string) bool {
+	// A technician we auto-approved on the CEC help mesh drives the KVM like an
+	// owner — answering a raised hand is a full support session, by design.
+	if b.cecApprovedTech(from) {
+		return true
+	}
 	owner := b.state.Owner()
 	if owner == "" {
 		return false

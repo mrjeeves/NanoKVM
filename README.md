@@ -18,13 +18,29 @@
 This fork of [sipeed/NanoKVM](https://github.com/sipeed/NanoKVM) turns the device into **AllMyKVM**, a first-class appliance in the [AllMyStuff](https://allmystuff.works) ecosystem. Everything below this section is upstream Sipeed documentation and still applies.
 
 - **AllMyStuff branding** — web UI renamed AllMyKVM in every locale, restyled in AllMyStuff's design language (deep-violet dark theme, `#f11ea1` magenta accent, Inter font), the AllMyStuff app icon as the favicon, and the 3-node mark on the device OLED.
-- **Pure-Go mesh bridge** (`server/service/mesh/`) paired with a bundled [MyOwnMesh](https://myownmesh.net) daemon (Rust, pinned at `v0.2.30` in `.myownmesh-rev`; riscv64-musl build, supervised by the `S94myownmesh` init.d script).
+- **Pure-Go mesh bridge** (`server/service/mesh/`) paired with a bundled [MyOwnMesh](https://myownmesh.net) daemon (Rust, pinned at `v0.2.40` in `.myownmesh-rev`; riscv64-musl build, supervised by the `S94myownmesh` init.d script).
 - **LAN-first claiming** — an unclaimed device advertises on the mDNS-only `allmystuff-local-claim-v1` rendezvous mesh (no relays, no wall clock needed — works pre-NTP), so a fresh KVM auto-appears in the claim sheet of any AllMyStuff app on the same LAN; WAN claiming stays off unless `publicClaims: true`.
 - **Zero-login access from anywhere** — the web UI tunnels over the mesh "sites" plane (no port forwarding or VPN), and mesh roster membership *is* the authentication for mesh viewers.
 - **Full KVM-node lifecycle** — presence advertising (NodeProfile with `kvm`/`sites` capability tags), fleet membership, attach/detach to the machine it controls (renames itself `KVM-<label>`), owner-curated mesh membership, remote restart, and unclaim (factory-reset of the mesh identity).
+- **CEC hand raise** (`server/service/mesh/cec.go`) — the KVM can raise a hand on the [CEC Support](https://github.com/mrjeeves/CECSupport) help queue (a `SupportPresence` beacon on the `cecsupport-clients` mesh, exactly like a CEC customer), so a technician sees the device needs help along with its 9-digit support number. Raise/lower from the web UI's Mesh tab, the `/api/mesh/help/*` endpoints, or the **BOOT button** (`server/service/button/`; on by default, `mesh.handRaise` in `server.yaml`). The watcher takes exclusive ownership of the button (`EVIOCGRAB`), so the stock screen-firmware gestures (OLED nav, WiFi hotspot) no longer fire and the button does one thing: a **quick tap raises/lowers the hand**, while a **~10s hold still factory-resets the account** (re-implemented in the server, since the grab takes it from the firmware). The OLED still shows the mesh name.
 - **usbnet internet sharing** — the KVM NATs its own uplink to the USB-tethered host (`S31usbnet`).
 
 Details in [docs/MESH.md](docs/MESH.md) · companion app: [allmystuff.works](https://allmystuff.works) · mesh tech: [myownmesh.net](https://myownmesh.net)
+
+### Fewer password prompts on deploy
+
+`just deploy <ip>` sends everything in one bundle (a single `scp` + a single `ssh`), so it asks for the device password twice rather than a dozen times. To collapse that to **once** — shared across `deploy`, `reboot`, and `verify` — reuse a single SSH connection. Either:
+
+- **SSH connection multiplexing** (no device changes). Add to `~/.ssh/config`:
+  ```
+  Host <device-ip>
+      User root
+      ControlMaster auto
+      ControlPath ~/.ssh/cm-%r@%h:%p
+      ControlPersist 5m
+  ```
+  The first connection authenticates; everything within the next 5 minutes reuses it, password-free.
+- **Or an SSH key** (zero prompts after a one-time setup): `ssh-copy-id root@<ip>` once, then all future `just deploy`/`reboot`/`verify` are passwordless (provided the device persists `/root/.ssh/authorized_keys`).
 
 ---
 

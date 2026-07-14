@@ -27,7 +27,7 @@
 # serve` you already have and point the bridge at its control socket (set
 # mesh.home / MYOWNMESH_HOME) — see docs/MESH.md.
 
-set shell := ["bash", "-uc"]
+set shell := ["bash", "-cu"]
 
 image := "nanokvm-builder"
 web_image := "nanokvm-web-builder"
@@ -37,14 +37,60 @@ oled_logo := "tools/logo_generator/allmystuff/logo.bin"
 mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
 nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 
+# The Go packages this fork owns and that build & test without the on-device C
+# libs (libkvm): the mesh bridge, the hand-raise button watcher, and config. The
+# rest of the server is upstream device glue that only links in the builder
+# image, so the quality recipes below scope to these — they run on any dev
+# machine (no Docker, no cross toolchain, no device libs). `go_pure_dirs` is the
+# same set as plain paths for gofmt (which takes dirs, not `./...` patterns).
+go_pure_pkgs := "./config/... ./service/mesh/... ./service/button/..."
+go_pure_dirs := "config service/mesh service/button"
+
 default: help
 
 help:
     @just --list
 
+# ── Development: format, vet, and test the Go server ───────────────────────────
+# The app-repo dev loop (fmt / fmt-check / lint / test / check), scoped to the
+# CGO-free Go packages (config, service/mesh, service/button) so it runs on any
+# dev machine — no Docker, no cross toolchain, no device libs. Mirrors the
+# AllMyStuff / CEC Support Justfiles.
+
+# Format this fork's Go packages in place.
+fmt:
+    @cd server && gofmt -w {{go_pure_dirs}}
+
+# Fail if any of this fork's Go files isn't gofmt-clean (the formatting gate).
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd server
+    unformatted="$(gofmt -l {{go_pure_dirs}})"
+    if [ -n "$unformatted" ]; then
+      echo "❌ gofmt needs to run on:" >&2
+      echo "$unformatted" >&2
+      exit 1
+    fi
+    echo "OK — gofmt clean"
+
+# Vet the CGO-free packages (Go's `go vet` — the analog of the app repos' clippy lint).
+lint:
+    @cd server && go vet {{go_pure_pkgs}}
+
+# Unit-test the CGO-free packages (the mesh bridge + hand-raise button).
+test:
+    @cd server && go test {{go_pure_pkgs}}
+
+# Everything the local dev gate runs: gofmt check + go vet + go test on the
+# CGO-free packages. Mirrors the app repos' `just check`.
+[doc("Run the full local dev gate: gofmt check + go vet + go test (CGO-free pkgs).")]
+check: fmt-check lint test
+
 # One-time: get a Docker-compatible runtime going (installs + starts Colima on a
 # Mac if you don't already have one — no Docker Desktop needed), then build the
 # builder image (Go + riscv64 musl toolchain). Idempotent: re-run any time.
+[doc("Bootstrap Docker (Colima on a Mac) + build the builder image. Run once.")]
 setup-risc:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -108,6 +154,7 @@ setup-risc:
 # daemon — in one step. The web bundle and the OLED app are part of the payload
 # now: the device serves OUR web (with the Mesh tab), and its screen shows the
 # joining-mesh name via OUR kvm_system, instead of whatever the firmware flashed.
+[doc("Build a complete device image: server + web UI + OLED app + pinned daemon.")]
 build-risc: build-server daemon build-web build-oled
     @echo
     @echo "Device build complete:"
@@ -117,11 +164,20 @@ build-risc: build-server daemon build-web build-oled
     @echo "  {{oled_dst}}"
     @echo "Deploy: just deploy <device-ip>"
 
-# Build just the NanoKVM server (Go, with the mesh bridge).
+# Build just the NanoKVM server (Go, with the mesh bridge) in the builder image.
+[doc("Build just the Go server (mesh bridge) in the builder image.")]
 build-server:
-    @echo "==> building NanoKVM-Server…"
-    @make app
-    @test -f server/NanoKVM-Server && echo "OK -> server/NanoKVM-Server"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Bootstrap Docker like build-web/build-oled do, so `just build-risc` (which
+    # runs this first) starts Colima itself instead of failing when it's down.
+    if ! docker info >/dev/null 2>&1; then
+      echo "==> Docker not running — running setup-risc first (bootstraps Docker + builder image)…"
+      just setup-risc
+    fi
+    echo "==> building NanoKVM-Server…"
+    make app
+    test -f server/NanoKVM-Server && echo "OK -> server/NanoKVM-Server"
 
 # Build the web UI bundle (the React/vite SPA the device serves) into web/dist.
 #
@@ -133,6 +189,7 @@ build-server:
 # still builds it; the output is plain JS, so no amd64 pin (native = same bytes,
 # faster). The web-builder image bakes node-gyp's toolchain — see
 # docker/web.Dockerfile for why an optional `ws` addon forces that.
+[doc("Build the web UI bundle (carries the Mesh tab) into web/dist.")]
 build-web:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -163,6 +220,7 @@ build-web:
 # emulation on a Mac, but it's how the on-device screen gets OUR kvm_system (with
 # the mesh name) instead of the firmware's stock one. `make support` builds it
 # and `add_to_kvmapp` stages the binary at {{oled_dst}}.
+[doc("Build the OLED app (kvm_system) that shows the on-screen mesh name.")]
 build-oled:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -279,46 +337,68 @@ release VERSION:
     echo "  It publishes nanokvm-mesh-riscv64.tar.gz (server + pinned daemon)."
     echo "  Then: just install <device-ip>   (downloads that bundle and deploys)"
 
-# Copy the complete device build (server + daemon + init script) to a device.
+# Copy the complete device build (server + daemon + web + init scripts + OLED +
+# boot logo) to a device as ONE bundle: a single scp + a single ssh, so you type
+# the device password twice, not a dozen times. (Add SSH connection multiplexing
+# — see the "Fewer password prompts" note in the README — to make it just once,
+# shared with reboot/verify too.)
+[doc("Deploy the built server + daemon + web + init scripts to a device (one bundle).")]
 deploy ip:
     #!/usr/bin/env bash
     set -euo pipefail
     test -f server/NanoKVM-Server && test -f "{{daemon_dst}}" && test -d web/dist || { echo "❌ build first: just build-risc"; exit 1; }
-    echo "==> deploying to {{ip}}…"
-    ssh root@{{ip}} 'mkdir -p /kvmapp/system/bin'
-    scp "{{daemon_dst}}"                   root@{{ip}}:/kvmapp/system/bin/myownmesh
-    scp server/NanoKVM-Server              root@{{ip}}:/kvmapp/server/NanoKVM-Server
-    # The init script must land in /etc/init.d — that's the dir Buildroot's rcS
-    # runs at boot (run-parts … start). /kvmapp/system/init.d is only the in-image
-    # source that the firmware build installs into /etc/init.d; on a running device
-    # we have to place it there ourselves or it never autostarts.
-    scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/etc/init.d/S94myownmesh
-    # USB virtual-network internet sharing (usb0 → uplink NAT), invoked by the
-    # web UI's Virtual Network toggle and re-applied at boot by rcS. Same /etc/init.d
-    # placement rationale as S94myownmesh above.
-    scp kvmapp/system/init.d/S31usbnet     root@{{ip}}:/etc/init.d/S31usbnet
-    # Web UI: the server serves /tmp/server/web (S95nanokvm copies /kvmapp→/tmp at
-    # boot), so replacing /kvmapp/server/web is safe — the reboot below re-copies
-    # and serves OUR web (with the Mesh tab). Stage web.new and rename over web so
-    # a partial scp never leaves a broken tree; same fs, so the rename is atomic.
-    ssh root@{{ip}} 'rm -rf /kvmapp/server/web.new /kvmapp/server/web.old'
-    scp -r web/dist                        root@{{ip}}:/kvmapp/server/web.new
-    ssh root@{{ip}} 'set -e; [ -d /kvmapp/server/web ] && mv /kvmapp/server/web /kvmapp/server/web.old; mv /kvmapp/server/web.new /kvmapp/server/web; rm -rf /kvmapp/server/web.old; chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /kvmapp/server/NanoKVM-Server'
-    # OLED app: same /tmp-copy story. Optional — only the local `build-risc` build
-    # produces it (the MaixCDK build is too heavy for the release CI), so the
-    # download/`install` path won't have it; ship it when it's present.
+    echo "==> bundling the device payload…"
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    p="$tmp/payload"; mkdir -p "$p/web"
+    cp "{{daemon_dst}}"                  "$p/myownmesh"
+    cp server/NanoKVM-Server             "$p/NanoKVM-Server"
+    cp kvmapp/system/init.d/S94myownmesh "$p/S94myownmesh"
+    cp kvmapp/system/init.d/S31usbnet    "$p/S31usbnet"
+    cp "{{oled_logo}}"                   "$p/logo.bin"
+    cp -a web/dist/.                     "$p/web/"
+    # OLED app is optional — only the local build-risc build produces it (too
+    # heavy for release CI); bundle it when present, install it if it arrives.
     if [ -f "{{oled_dst}}" ]; then
-      ssh root@{{ip}} 'mkdir -p /kvmapp/kvm_system'
-      scp "{{oled_dst}}"                   root@{{ip}}:/kvmapp/kvm_system/kvm_system
-      ssh root@{{ip}} 'chmod +x /kvmapp/kvm_system/kvm_system'
+      cp "{{oled_dst}}" "$p/kvm_system"
       echo "   + OLED app (kvm_system): joining-mesh name on screen"
     else
       echo "   (no {{oled_dst}} — skipping OLED; run 'just build-oled' to include it)"
     fi
-    # AllMyStuff OLED boot logo: kvm_system reads /boot/logo.bin (32 bytes, 16x16
-    # mono) and shows it instead of the built-in Sipeed logo. (The web logo is
-    # embedded in the build as web/public/sipeed.ico — no /boot/logo.ico needed.)
-    scp "{{oled_logo}}"                    root@{{ip}}:/boot/logo.bin
+    tar -czf "$tmp/deploy.tar.gz" -C "$p" .
+    echo "==> deploying to {{ip}} (one scp + one ssh)…"
+    scp "$tmp/deploy.tar.gz" root@{{ip}}:/kvmapp/nanokvm-deploy.tar.gz
+    # Remote install: unpack and place each file. The running server + daemon run
+    # from /tmp (S95nanokvm copies /kvmapp→/tmp at boot), so replacing the /kvmapp
+    # copies is safe and the reboot re-copies them. Init scripts must land in
+    # /etc/init.d (Buildroot rcS runs them at boot). Web is staged into web.new
+    # then renamed over web (same fs = atomic). The boot logo (/boot/logo.bin,
+    # 16x16 mono) replaces the stock Sipeed one. No single quotes in this block —
+    # it is single-quoted for ssh.
+    ssh root@{{ip}} '
+      set -e
+      d="$(mktemp -d -p /kvmapp)"
+      tar -xzf /kvmapp/nanokvm-deploy.tar.gz -C "$d"
+      mkdir -p /kvmapp/system/bin /kvmapp/server
+      cp -f "$d/myownmesh"      /kvmapp/system/bin/myownmesh
+      cp -f "$d/NanoKVM-Server" /kvmapp/server/NanoKVM-Server
+      cp -f "$d/S94myownmesh"   /etc/init.d/S94myownmesh
+      cp -f "$d/S31usbnet"      /etc/init.d/S31usbnet
+      rm -rf /kvmapp/server/web.new /kvmapp/server/web.old
+      mkdir -p /kvmapp/server/web.new
+      cp -a "$d/web/." /kvmapp/server/web.new/
+      [ -d /kvmapp/server/web ] && mv /kvmapp/server/web /kvmapp/server/web.old
+      mv /kvmapp/server/web.new /kvmapp/server/web
+      rm -rf /kvmapp/server/web.old
+      cp -f "$d/logo.bin" /boot/logo.bin
+      if [ -f "$d/kvm_system" ]; then
+        mkdir -p /kvmapp/kvm_system
+        cp -f "$d/kvm_system" /kvmapp/kvm_system/kvm_system
+        chmod +x /kvmapp/kvm_system/kvm_system
+      fi
+      chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /kvmapp/server/NanoKVM-Server
+      rm -rf "$d" /kvmapp/nanokvm-deploy.tar.gz
+      echo "device: files staged"
+    '
     echo "OK — just reboot {{ip}} && just verify {{ip}}"
 
 reboot ip:

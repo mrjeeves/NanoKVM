@@ -442,7 +442,15 @@ const en = {
         memberships: 'Mesh Memberships',
         noMemberships: 'Not joined to any mesh yet',
         fleet: 'fleet',
-        joining: 'joining'
+        joining: 'joining',
+        handRaise: 'Hand Raise',
+        handRaiseDesc:
+          'Raise a hand on the CEC support queue so a technician knows this device needs help. A quick press of the BOOT button raises or lowers the hand too (hold it ~10s to reset the account).',
+        supportNumber: 'Support Number',
+        raiseHand: 'Raise hand',
+        lowerHand: 'Lower hand',
+        handRaised: 'Hand raised — help is on the way',
+        handDown: 'Hand down'
       },
       tailscale: {
         title: 'Tailscale',

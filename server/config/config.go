@@ -55,6 +55,18 @@ func initialize() {
 		instance.Mesh.Enabled = true
 	}
 
+	// Same story for the BOOT-button hand raise: a server.yaml written before
+	// this feature has no `mesh.handRaise` block, so Unmarshal leaves it at the
+	// zero value (disabled). An absent key means the operator never opted out —
+	// turn it on and point it at the default input node. An explicit
+	// `mesh: { handRaise: { buttonEnabled: false } }` is still honored.
+	if !viper.IsSet("mesh.handRaise.buttonEnabled") {
+		instance.Mesh.HandRaise.ButtonEnabled = true
+	}
+	if instance.Mesh.HandRaise.InputDevice == "" {
+		instance.Mesh.HandRaise.InputDevice = "/dev/input/event0"
+	}
+
 	if instance.Authentication == "disable" {
 		log.Println("NOTICE: Authentication is disabled! Please ensure your service is secure!")
 	}
