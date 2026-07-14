@@ -27,7 +27,7 @@
 # serve` you already have and point the bridge at its control socket (set
 # mesh.home / MYOWNMESH_HOME) — see docs/MESH.md.
 
-set shell := ["bash", "-uc"]
+set shell := ["bash", "-cu"]
 
 image := "nanokvm-builder"
 web_image := "nanokvm-web-builder"
@@ -37,14 +37,60 @@ oled_logo := "tools/logo_generator/allmystuff/logo.bin"
 mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
 nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 
+# The Go packages this fork owns and that build & test without the on-device C
+# libs (libkvm): the mesh bridge, the hand-raise button watcher, and config. The
+# rest of the server is upstream device glue that only links in the builder
+# image, so the quality recipes below scope to these — they run on any dev
+# machine (no Docker, no cross toolchain, no device libs). `go_pure_dirs` is the
+# same set as plain paths for gofmt (which takes dirs, not `./...` patterns).
+go_pure_pkgs := "./config/... ./service/mesh/... ./service/button/..."
+go_pure_dirs := "config service/mesh service/button"
+
 default: help
 
 help:
     @just --list
 
+# ── Development: format, vet, and test the Go server ───────────────────────────
+# The app-repo dev loop (fmt / fmt-check / lint / test / check), scoped to the
+# CGO-free Go packages (config, service/mesh, service/button) so it runs on any
+# dev machine — no Docker, no cross toolchain, no device libs. Mirrors the
+# AllMyStuff / CEC Support Justfiles.
+
+# Format this fork's Go packages in place.
+fmt:
+    @cd server && gofmt -w {{go_pure_dirs}}
+
+# Fail if any of this fork's Go files isn't gofmt-clean (the formatting gate).
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd server
+    unformatted="$(gofmt -l {{go_pure_dirs}})"
+    if [ -n "$unformatted" ]; then
+      echo "❌ gofmt needs to run on:" >&2
+      echo "$unformatted" >&2
+      exit 1
+    fi
+    echo "OK — gofmt clean"
+
+# Vet the CGO-free packages (Go's `go vet` — the analog of the app repos' clippy lint).
+lint:
+    @cd server && go vet {{go_pure_pkgs}}
+
+# Unit-test the CGO-free packages (the mesh bridge + hand-raise button).
+test:
+    @cd server && go test {{go_pure_pkgs}}
+
+# Everything the local dev gate runs: gofmt check + go vet + go test on the
+# CGO-free packages. Mirrors the app repos' `just check`.
+[doc("Run the full local dev gate: gofmt check + go vet + go test (CGO-free pkgs).")]
+check: fmt-check lint test
+
 # One-time: get a Docker-compatible runtime going (installs + starts Colima on a
 # Mac if you don't already have one — no Docker Desktop needed), then build the
 # builder image (Go + riscv64 musl toolchain). Idempotent: re-run any time.
+[doc("Bootstrap Docker (Colima on a Mac) + build the builder image. Run once.")]
 setup-risc:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -108,6 +154,7 @@ setup-risc:
 # daemon — in one step. The web bundle and the OLED app are part of the payload
 # now: the device serves OUR web (with the Mesh tab), and its screen shows the
 # joining-mesh name via OUR kvm_system, instead of whatever the firmware flashed.
+[doc("Build a complete device image: server + web UI + OLED app + pinned daemon.")]
 build-risc: build-server daemon build-web build-oled
     @echo
     @echo "Device build complete:"
@@ -117,11 +164,20 @@ build-risc: build-server daemon build-web build-oled
     @echo "  {{oled_dst}}"
     @echo "Deploy: just deploy <device-ip>"
 
-# Build just the NanoKVM server (Go, with the mesh bridge).
+# Build just the NanoKVM server (Go, with the mesh bridge) in the builder image.
+[doc("Build just the Go server (mesh bridge) in the builder image.")]
 build-server:
-    @echo "==> building NanoKVM-Server…"
-    @make app
-    @test -f server/NanoKVM-Server && echo "OK -> server/NanoKVM-Server"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Bootstrap Docker like build-web/build-oled do, so `just build-risc` (which
+    # runs this first) starts Colima itself instead of failing when it's down.
+    if ! docker info >/dev/null 2>&1; then
+      echo "==> Docker not running — running setup-risc first (bootstraps Docker + builder image)…"
+      just setup-risc
+    fi
+    echo "==> building NanoKVM-Server…"
+    make app
+    test -f server/NanoKVM-Server && echo "OK -> server/NanoKVM-Server"
 
 # Build the web UI bundle (the React/vite SPA the device serves) into web/dist.
 #
@@ -133,6 +189,7 @@ build-server:
 # still builds it; the output is plain JS, so no amd64 pin (native = same bytes,
 # faster). The web-builder image bakes node-gyp's toolchain — see
 # docker/web.Dockerfile for why an optional `ws` addon forces that.
+[doc("Build the web UI bundle (carries the Mesh tab) into web/dist.")]
 build-web:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -163,6 +220,7 @@ build-web:
 # emulation on a Mac, but it's how the on-device screen gets OUR kvm_system (with
 # the mesh name) instead of the firmware's stock one. `make support` builds it
 # and `add_to_kvmapp` stages the binary at {{oled_dst}}.
+[doc("Build the OLED app (kvm_system) that shows the on-screen mesh name.")]
 build-oled:
     #!/usr/bin/env bash
     set -euo pipefail
