@@ -13,6 +13,7 @@ import (
 	"NanoKVM-Server/logger"
 	"NanoKVM-Server/middleware"
 	"NanoKVM-Server/router"
+	"NanoKVM-Server/service/button"
 	"NanoKVM-Server/service/mesh"
 	"NanoKVM-Server/service/mesh/glue"
 	"NanoKVM-Server/service/vm/jiggler"
@@ -94,6 +95,14 @@ func run() {
 		bridge.SetInputSink(glue.NewInputSink())
 		go bridge.Start(make(chan struct{}))
 		log.Println("AllMyStuff mesh bridge started")
+
+		// Wire the physical user (BOOT) button to the CEC hand-raise. Non-fatal
+		// and self-disabling if the input node isn't present.
+		button.Watch(button.Config{
+			Enabled: conf.Mesh.HandRaise.ButtonEnabled,
+			Device:  conf.Mesh.HandRaise.InputDevice,
+			KeyCode: conf.Mesh.HandRaise.KeyCode,
+		}, bridge)
 	}
 	mesh.RegisterRoutes(r, bridge)
 

@@ -434,7 +434,15 @@ const zh = {
         memberships: '已加入的网络',
         noMemberships: '尚未加入任何网络',
         fleet: '设备组',
-        joining: '配对'
+        joining: '配对',
+        handRaise: '举手求助',
+        handRaiseDesc:
+          '在 CEC 支持队列中举手，让技术人员知道此设备需要帮助。也可以连续按两次 BOOT 按键来举手或放下。',
+        supportNumber: '支持编号',
+        raiseHand: '举手',
+        lowerHand: '放下',
+        handRaised: '已举手 — 支持马上就来',
+        handDown: '已放下'
       },
       tailscale: {
         title: 'Tailscale',

@@ -3,12 +3,18 @@ import { Button, Divider, Tag, Typography } from 'antd';
 import { LoaderCircleIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { getMeshStatus, rotateClaimCode } from '@/api/mesh.ts';
+import { getHelpStatus, getMeshStatus, rotateClaimCode, toggleHand } from '@/api/mesh.ts';
 
 type MeshMembership = {
   networkId: string;
   fleet: boolean;
   joining: boolean;
+};
+
+type HelpStatus = {
+  enabled: boolean;
+  asking: boolean;
+  supportId: string;
 };
 
 type MeshStatus = {
@@ -31,8 +37,28 @@ export const Mesh = () => {
   const { t } = useTranslation();
 
   const [status, setStatus] = useState<MeshStatus>();
+  const [help, setHelp] = useState<HelpStatus>();
   const [errMsg, setErrMsg] = useState('');
   const [rotating, setRotating] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  function toggleHelp() {
+    if (toggling) return;
+    setToggling(true);
+    toggleHand()
+      .then((rsp) => {
+        if (rsp.code !== 0) {
+          setErrMsg(rsp.msg);
+          return;
+        }
+        setErrMsg('');
+        setHelp(rsp.data);
+      })
+      .catch((err) => {
+        setErrMsg(err?.message || t('settings.mesh.queryFailed'));
+      })
+      .finally(() => setToggling(false));
+  }
 
   function rotateCode() {
     if (rotating) return;
@@ -69,9 +95,23 @@ export const Mesh = () => {
         });
     }
 
-    getStatus();
+    function getHelp() {
+      getHelpStatus()
+        .then((rsp) => {
+          if (rsp.code === 0) setHelp(rsp.data);
+        })
+        .catch(() => {
+          /* non-fatal: the hand-raise section just stays hidden */
+        });
+    }
 
-    const interval = setInterval(getStatus, 5000);
+    getStatus();
+    getHelp();
+
+    const interval = setInterval(() => {
+      getStatus();
+      getHelp();
+    }, 5000);
     return () => clearInterval(interval);
   }, [t]);
 
@@ -111,6 +151,40 @@ export const Mesh = () => {
             )}
           </div>
           <Divider className="opacity-50" />
+
+          {/* CEC hand raise (Ask for help) */}
+          {help?.enabled && (
+            <>
+              <div className="text-neutral-400">{t('settings.mesh.handRaise')}</div>
+              <div className="mt-5 flex w-full flex-col items-center space-y-3 rounded-lg bg-neutral-800/50 px-5 py-6">
+                {help.supportId && (
+                  <div className="flex w-full items-center justify-between">
+                    <span className="text-neutral-400">{t('settings.mesh.supportNumber')}</span>
+                    <Typography.Text className="font-mono text-lg" copyable>
+                      {help.supportId}
+                    </Typography.Text>
+                  </div>
+                )}
+                <span
+                  className={`text-center text-sm ${help.asking ? 'text-green-500' : 'text-neutral-400'}`}
+                >
+                  {help.asking ? t('settings.mesh.handRaised') : t('settings.mesh.handDown')}
+                </span>
+                <Button
+                  type={help.asking ? 'default' : 'primary'}
+                  danger={help.asking}
+                  loading={toggling}
+                  onClick={toggleHelp}
+                >
+                  {help.asking ? t('settings.mesh.lowerHand') : t('settings.mesh.raiseHand')}
+                </Button>
+                <span className="text-center text-xs text-neutral-500">
+                  {t('settings.mesh.handRaiseDesc')}
+                </span>
+              </div>
+              <Divider className="opacity-50" />
+            </>
+          )}
 
           {/* remote claiming (claim code) — shown only while the device is
               claimable with publicClaims enabled in server.yaml. The policy

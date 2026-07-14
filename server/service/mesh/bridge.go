@@ -100,6 +100,11 @@ type Bridge struct {
 	// authorization checks on the event-stream goroutine stay non-blocking.
 	fleetRoster map[string]struct{}
 
+	// help owns the CEC "hand raise" state (see cec.go): whether this device
+	// currently has its hand up on the cecsupport-clients mesh, and the
+	// re-beacon goroutine. Self-guarded, independent of b.mu.
+	help helpState
+
 	// ---- native screen/HID streaming (Slice 1), all guarded by b.mu --------
 
 	// videoSource / inputSink are injected by the on-device glue at
