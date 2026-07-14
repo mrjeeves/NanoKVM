@@ -1242,6 +1242,9 @@ func (b *Bridge) advertiseCapabilities(networkID string) error {
 // own roster), control is handled, media carries site frames.
 func (b *Bridge) onChannelInbound(ci ChannelInbound) {
 	switch ci.Channel {
+	case CecChannelControl:
+		// The CEC connect handshake (a technician answering our raised hand).
+		b.handleCecControl(ci.Network, ci.From, ci.Payload)
 	case ChannelControl:
 		msg, err := DecodeControlMessage(ci.Payload)
 		if err != nil {

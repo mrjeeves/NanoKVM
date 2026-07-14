@@ -19,6 +19,7 @@ package mesh
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -37,6 +38,10 @@ const (
 	// CecChannelPresence carries SupportPresence beacons
 	// (allmystuff-cec-protocol::CHANNEL_PRESENCE).
 	CecChannelPresence = "cec.presence"
+	// CecChannelControl carries the point-to-point connect handshake
+	// (allmystuff-cec-protocol::CHANNEL_CONTROL) — a technician's connect
+	// Request and our Approve reply.
+	CecChannelControl = "cec.control"
 	// CecRoleClient marks this node as a help-seeker (customer), not a
 	// technician (Role::Client in the wire enum).
 	CecRoleClient = "client"
@@ -86,9 +91,14 @@ type SupportPresence struct {
 type helpState struct {
 	mu     sync.Mutex
 	asking bool
-	joined bool          // whether we've added the help network this run (idempotent join)
+	joined bool          // whether we've joined the help network this run (idempotent join)
 	cancel chan struct{} // closed to stop the beacon loop
 	done   chan struct{} // closed when the beacon loop has exited
+	// techs is the set of canonical technician pubkeys we've auto-approved on
+	// the CEC control channel. A member passes senderMayControl, so an approved
+	// technician's screen/input routes are accepted — the whole point of
+	// answering a raised hand. Populated when we approve a connect-request.
+	techs map[string]struct{}
 }
 
 // RaiseHand puts this device's hand up on the CEC help mesh: it joins the help
@@ -104,6 +114,17 @@ func (b *Bridge) RaiseHand() error {
 	if !b.help.joined {
 		if err := b.networkAdd(cecHelpNetworkConfig()); err != nil {
 			return fmt.Errorf("join help mesh: %w", err)
+		}
+		// Become a full participant so a technician who answers can actually
+		// reach us. joinPlanes subscribes the AllMyStuff control/media planes —
+		// CEC screen+input ride those, not cec.media — and advertises our
+		// capabilities; then we also subscribe the CEC control channel so the
+		// connect-request itself arrives.
+		if err := b.joinPlanes(CecHelpNetworkID); err != nil {
+			return fmt.Errorf("join help planes: %w", err)
+		}
+		if err := b.subscribeCecControl(); err != nil {
+			return fmt.Errorf("subscribe cec control: %w", err)
 		}
 		b.help.joined = true
 	}
@@ -253,6 +274,114 @@ func (b *Bridge) channelSendAll(network, channel string, payload interface{}) er
 		return fmt.Errorf("channel_send_all: bridge not connected")
 	}
 	return ctl.ChannelSendAll(network, channel, payload)
+}
+
+// channelSendTo sends a typed-channel frame point-to-point to one peer.
+func (b *Bridge) channelSendTo(network, channel, peer string, payload interface{}) error {
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if ctl == nil {
+		return fmt.Errorf("channel_send_to: bridge not connected")
+	}
+	return ctl.ChannelSendTo(network, channel, peer, payload)
+}
+
+// subscribeCecControl subscribes our event stream to the CEC control channel on
+// the help mesh, so a technician's connect Request is delivered to us.
+func (b *Bridge) subscribeCecControl() error {
+	b.mu.Lock()
+	ctl, events := b.ctl, b.events
+	b.mu.Unlock()
+	if ctl == nil || events == nil {
+		return fmt.Errorf("cec: subscribe before connect")
+	}
+	return ctl.ChannelSubscribe(events.ClientID(), CecHelpNetworkID, CecChannelControl)
+}
+
+// cecConnect is the flat view of a ControlMessage::Connect(ConnectControl) frame
+// on cec.control. The Rust enums are internally tagged (outer "t", inner
+// "kind"), so both tags plus the union of fields land in one flat struct.
+type cecConnect struct {
+	T         string `json:"t"`
+	Kind      string `json:"kind"`
+	SessionID string `json:"session_id"`
+}
+
+// handleCecControl processes an inbound cec.control frame. A KVM is an
+// unattended help-seeker: when a technician answers our raised hand with a
+// connect Request, we auto-approve (there's no human here to tap "approve") and
+// remember the technician so their screen/input routes are accepted.
+func (b *Bridge) handleCecControl(network, from string, payload []byte) {
+	var m cecConnect
+	if err := json.Unmarshal(payload, &m); err != nil {
+		log.Debugf("mesh: bad CEC control from %s: %s", pubkeyPart(from), err)
+		return
+	}
+	if m.T != "connect" {
+		return
+	}
+	switch m.Kind {
+	case "request":
+		// Authorize the technician and reply Approve. The technician retransmits
+		// its Request until it sees an answer and ignores the scope (it only
+		// moves the session to active), so re-approving a repeat Request is a
+		// harmless idempotent ack.
+		b.approveTech(from)
+		if err := b.channelSendTo(network, CecChannelControl, from, cecApprovePayload(m.SessionID)); err != nil {
+			log.Warnf("mesh: CEC auto-approve to %s failed: %s", pubkeyPart(from), err)
+			return
+		}
+		log.Infof("mesh: CEC auto-approved technician %s (session %s)", pubkeyPart(from), m.SessionID)
+		// Help has arrived — drop out of the queue (available:false), matching
+		// the CEC customer flow. Only when we're actually still asking, so a
+		// Request retransmit doesn't spawn no-op lowers.
+		if b.HelpAsking() {
+			go func() { _ = b.LowerHand() }()
+		}
+	case "end":
+		b.unapproveTech(from)
+		log.Infof("mesh: CEC session ended by technician %s", pubkeyPart(from))
+	}
+}
+
+// cecApprovePayload builds a ConnectControl::Approve frame for session_id. The
+// shape mirrors the internally-tagged Rust wire form exactly:
+// {"t":"connect","kind":"approve","session_id":...,"scope":{"kind":"forever"}}.
+// The technician ignores the scope (it only flips the session to active), so
+// Forever is a safe constant for an unattended appliance.
+func cecApprovePayload(sessionID string) map[string]interface{} {
+	return map[string]interface{}{
+		"t":          "connect",
+		"kind":       "approve",
+		"session_id": sessionID,
+		"scope":      map[string]interface{}{"kind": "forever"},
+	}
+}
+
+// approveTech records a technician's canonical pubkey as authorized.
+func (b *Bridge) approveTech(from string) {
+	b.help.mu.Lock()
+	defer b.help.mu.Unlock()
+	if b.help.techs == nil {
+		b.help.techs = map[string]struct{}{}
+	}
+	b.help.techs[pubkeyPart(from)] = struct{}{}
+}
+
+// unapproveTech forgets a technician when their session ends.
+func (b *Bridge) unapproveTech(from string) {
+	b.help.mu.Lock()
+	defer b.help.mu.Unlock()
+	delete(b.help.techs, pubkeyPart(from))
+}
+
+// cecApprovedTech reports whether `from` is a technician we auto-approved.
+func (b *Bridge) cecApprovedTech(from string) bool {
+	b.help.mu.Lock()
+	defer b.help.mu.Unlock()
+	_, ok := b.help.techs[pubkeyPart(from)]
+	return ok
 }
 
 // cecHelpNetworkConfig builds the daemon network config for the CEC help area.
