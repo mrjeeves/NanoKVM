@@ -41,13 +41,25 @@ func TestCecApprovePayloadShape(t *testing.T) {
 // lets an answered technician drive — tolerant of the display-suffix form.
 func TestApprovedTechMayControl(t *testing.T) {
 	b := &Bridge{}
-	// Before approval this sender isn't a tech. (We don't call senderMayControl
-	// on an unapproved sender here: that path reads b.state, which a bare Bridge
-	// doesn't have — the approved path we care about returns before touching it.)
-	if b.cecApprovedTech("tech-pub") {
-		t.Fatal("unapproved sender must not be an approved tech")
+	// A new technician is refused while we're not asking for help, and stays
+	// unauthorized. (We don't call senderMayControl on an unapproved sender:
+	// that path reads b.state, which a bare Bridge doesn't have — the approved
+	// path we care about returns before touching it.)
+	if admit, _ := b.cecAdmit("tech-pub-AB12C"); admit {
+		t.Fatal("must not admit a technician when not asking for help")
 	}
-	b.approveTech("tech-pub-AB12C") // display-suffixed form
+	if b.cecApprovedTech("tech-pub") {
+		t.Fatal("refused technician must not be authorized")
+	}
+	// While asking, the technician is admitted and we're told to drop the hand.
+	b.help.asking = true
+	if admit, lower := b.cecAdmit("tech-pub-AB12C"); !admit || !lower { // display-suffixed form
+		t.Fatalf("asking: admit=%v lower=%v, want true/true", admit, lower)
+	}
+	// A retransmit (already approved) re-acks without asking to lower again.
+	if admit, lower := b.cecAdmit("tech-pub"); !admit || lower {
+		t.Fatalf("retransmit: admit=%v lower=%v, want true/false", admit, lower)
+	}
 	if !b.cecApprovedTech("tech-pub") {
 		t.Fatal("canonical lookup should match the suffixed grant")
 	}

@@ -323,20 +323,25 @@ func (b *Bridge) handleCecControl(network, from string, payload []byte) {
 	}
 	switch m.Kind {
 	case "request":
-		// Authorize the technician and reply Approve. The technician retransmits
-		// its Request until it sees an answer and ignores the scope (it only
-		// moves the session to active), so re-approving a repeat Request is a
-		// harmless idempotent ack.
-		b.approveTech(from)
+		// Auto-approve — there's no human here to tap "approve". A NEW technician
+		// is admitted only while we're actually asking for help, so a KVM that
+		// isn't requesting help can't be driven off the open support mesh. An
+		// already-approved technician is always re-acked: its Request retransmits
+		// until the data channel is up, and each beat is our cue to re-send the
+		// (possibly dropped) Approve. The technician ignores the scope.
+		admit, lower := b.cecAdmit(from)
+		if !admit {
+			log.Infof("mesh: CEC connect-request from %s ignored (not asking for help)", pubkeyPart(from))
+			return
+		}
 		if err := b.channelSendTo(network, CecChannelControl, from, cecApprovePayload(m.SessionID)); err != nil {
 			log.Warnf("mesh: CEC auto-approve to %s failed: %s", pubkeyPart(from), err)
 			return
 		}
 		log.Infof("mesh: CEC auto-approved technician %s (session %s)", pubkeyPart(from), m.SessionID)
-		// Help has arrived — drop out of the queue (available:false), matching
-		// the CEC customer flow. Only when we're actually still asking, so a
-		// Request retransmit doesn't spawn no-op lowers.
-		if b.HelpAsking() {
+		if lower {
+			// Help has arrived — drop out of the queue (available:false),
+			// matching the CEC customer flow.
 			go func() { _ = b.LowerHand() }()
 		}
 	case "end":
@@ -359,14 +364,27 @@ func cecApprovePayload(sessionID string) map[string]interface{} {
 	}
 }
 
-// approveTech records a technician's canonical pubkey as authorized.
-func (b *Bridge) approveTech(from string) {
+// cecAdmit decides whether to auto-approve a connect Request from `from`, and
+// records the grant when it does. A technician we've already approved is always
+// re-admitted (a retransmit ack). A new technician is admitted only while we're
+// asking for help; `lower` is true exactly for that first admission — the cue to
+// drop our raised hand. admit=false refuses a new technician when we're not
+// asking, so an idle KVM can't be driven off the open support mesh.
+func (b *Bridge) cecAdmit(from string) (admit, lower bool) {
+	key := pubkeyPart(from)
 	b.help.mu.Lock()
 	defer b.help.mu.Unlock()
 	if b.help.techs == nil {
 		b.help.techs = map[string]struct{}{}
 	}
-	b.help.techs[pubkeyPart(from)] = struct{}{}
+	if _, ok := b.help.techs[key]; ok {
+		return true, false
+	}
+	if !b.help.asking {
+		return false, false
+	}
+	b.help.techs[key] = struct{}{}
+	return true, true
 }
 
 // unapproveTech forgets a technician when their session ends.
