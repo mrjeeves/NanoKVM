@@ -5,85 +5,54 @@ import (
 	"time"
 )
 
-// press feeds a down+up pair separated by hold, at wall-clock base+offset for
-// the down. Returns whether the up completed the gesture (toggle).
-func press(d *detector, downAt time.Time, hold time.Duration) bool {
+func newDetector() *detector {
+	return &detector{tapMax: tapMax, resetHold: resetHold}
+}
+
+// press feeds a down then an up separated by hold, and returns the gesture the
+// release produced.
+func press(d *detector, downAt time.Time, hold time.Duration) gesture {
 	d.feed(valueDown, downAt)
 	return d.feed(valueUp, downAt.Add(hold))
 }
 
-func newDetector() *detector {
-	return &detector{shortMax: shortPressMax, doubleWindow: doubleWindow}
-}
-
-func TestDoubleShortPressToggles(t *testing.T) {
+func TestTapRaisesHand(t *testing.T) {
 	d := newDetector()
 	t0 := time.Unix(1_000_000, 0)
-
-	// First short tap: no toggle yet.
-	if press(d, t0, 100*time.Millisecond) {
-		t.Fatal("single tap should not toggle")
-	}
-	// Second short tap within the window: toggle.
-	if !press(d, t0.Add(300*time.Millisecond), 100*time.Millisecond) {
-		t.Fatal("double tap within window should toggle")
-	}
-	// A third tap must start a fresh gesture, not toggle off a stale one.
-	if press(d, t0.Add(600*time.Millisecond), 100*time.Millisecond) {
-		t.Fatal("third tap should be a fresh first-of-pair, not a toggle")
-	}
-}
-
-func TestSingleTapNeverToggles(t *testing.T) {
-	d := newDetector()
-	t0 := time.Unix(1_000_000, 0)
-	// Taps spaced beyond the double-window are all lone first-taps.
-	for i := 0; i < 5; i++ {
-		at := t0.Add(time.Duration(i) * 2 * time.Second)
-		if press(d, at, 120*time.Millisecond) {
-			t.Fatalf("isolated tap %d should not toggle", i)
+	for i, hold := range []time.Duration{10 * time.Millisecond, 200 * time.Millisecond, tapMax} {
+		if g := press(d, t0.Add(time.Duration(i)*time.Second), hold); g != gestureTap {
+			t.Errorf("hold %s: got %v, want gestureTap", hold, g)
 		}
 	}
 }
 
-func TestLongPressIgnoredAndBreaksPair(t *testing.T) {
+func TestLongHoldResets(t *testing.T) {
 	d := newDetector()
 	t0 := time.Unix(1_000_000, 0)
-
-	// A long press (>= shortMax) is the screen firmware's gesture, not ours.
-	if press(d, t0, shortPressMax+200*time.Millisecond) {
-		t.Fatal("long press should not toggle")
+	if g := press(d, t0, resetHold); g != gestureReset {
+		t.Fatalf("hold == resetHold: got %v, want gestureReset", g)
 	}
-	// One short tap...
-	if press(d, t0.Add(2*time.Second), 100*time.Millisecond) {
-		t.Fatal("first short after long should not toggle")
-	}
-	// ...then a long press must cancel the in-progress pair...
-	if press(d, t0.Add(2*time.Second+300*time.Millisecond), shortPressMax+100*time.Millisecond) {
-		t.Fatal("long press should not toggle")
-	}
-	// ...so the next short tap is again a lone first-tap.
-	if press(d, t0.Add(2*time.Second+600*time.Millisecond), 100*time.Millisecond) {
-		t.Fatal("short after long-cancelled pair should not toggle")
+	if g := press(d, t0.Add(30*time.Second), resetHold+3*time.Second); g != gestureReset {
+		t.Fatalf("hold > resetHold: got %v, want gestureReset", g)
 	}
 }
 
-func TestSecondTapTooLateStartsNewPair(t *testing.T) {
+func TestMediumHoldIgnored(t *testing.T) {
 	d := newDetector()
 	t0 := time.Unix(1_000_000, 0)
+	// Between tapMax and resetHold — formerly the firmware's WiFi gesture, now
+	// deliberately nothing.
+	for i, hold := range []time.Duration{tapMax + time.Millisecond, 3 * time.Second, resetHold - time.Millisecond} {
+		if g := press(d, t0.Add(time.Duration(i)*time.Minute), hold); g != gestureNone {
+			t.Errorf("hold %s: got %v, want gestureNone", hold, g)
+		}
+	}
+}
 
-	if press(d, t0, 100*time.Millisecond) {
-		t.Fatal("first tap should not toggle")
-	}
-	// Second tap after the double-window elapses: not a double, becomes the
-	// new first tap.
-	late := t0.Add(100*time.Millisecond + doubleWindow + 200*time.Millisecond)
-	if press(d, late, 100*time.Millisecond) {
-		t.Fatal("second tap past the window should not toggle")
-	}
-	// A prompt follow-up now completes a double.
-	if !press(d, late.Add(200*time.Millisecond), 100*time.Millisecond) {
-		t.Fatal("tap within window of the new first-tap should toggle")
+func TestUpWithoutDownIgnored(t *testing.T) {
+	d := newDetector()
+	if g := d.feed(valueUp, time.Unix(1_000_000, 0)); g != gestureNone {
+		t.Fatalf("stray release: got %v, want gestureNone", g)
 	}
 }
 
@@ -91,14 +60,13 @@ func TestAutorepeatIgnored(t *testing.T) {
 	d := newDetector()
 	t0 := time.Unix(1_000_000, 0)
 	d.feed(valueDown, t0)
-	// Autorepeat events while held must not be treated as taps.
 	for i := 0; i < 3; i++ {
-		if d.feed(valueRepeat, t0.Add(time.Duration(i+1)*100*time.Millisecond)) {
-			t.Fatal("autorepeat should never toggle")
+		if g := d.feed(valueRepeat, t0.Add(time.Duration(i+1)*time.Second)); g != gestureNone {
+			t.Fatal("autorepeat should never produce a gesture")
 		}
 	}
-	// Release completes a single short press (no toggle on its own).
-	if d.feed(valueUp, t0.Add(400*time.Millisecond)) {
-		t.Fatal("release of a single held press should not toggle")
+	// A tap-length total hold still resolves to a tap on release.
+	if g := d.feed(valueUp, t0.Add(300*time.Millisecond)); g != gestureTap {
+		t.Fatalf("release after autorepeat: got %v, want gestureTap", g)
 	}
 }

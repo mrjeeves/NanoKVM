@@ -3,8 +3,10 @@ package main
 import (
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,12 +98,18 @@ func run() {
 		go bridge.Start(make(chan struct{}))
 		log.Println("AllMyStuff mesh bridge started")
 
-		// Wire the physical user (BOOT) button to the CEC hand-raise. Non-fatal
+		// Wire the physical BOOT button to the CEC hand-raise. We grab the input
+		// node so the screen firmware's own gestures (OLED nav, WiFi hotspot)
+		// stop firing and the button does one thing — a tap raises/lowers the
+		// hand. The firmware's hold-to-reset is the one gesture worth keeping, so
+		// we re-implement it here (the grab took it from the firmware). Non-fatal
 		// and self-disabling if the input node isn't present.
 		button.Watch(button.Config{
-			Enabled: conf.Mesh.HandRaise.ButtonEnabled,
-			Device:  conf.Mesh.HandRaise.InputDevice,
-			KeyCode: conf.Mesh.HandRaise.KeyCode,
+			Enabled:        conf.Mesh.HandRaise.ButtonEnabled,
+			Device:         conf.Mesh.HandRaise.InputDevice,
+			KeyCode:        conf.Mesh.HandRaise.KeyCode,
+			Grab:           true,
+			OnFactoryReset: resetKvmAccount,
 		}, bridge)
 	}
 	mesh.RegisterRoutes(r, bridge)
@@ -158,4 +166,22 @@ func run() {
 
 func dispose() {
 	common.GetKvmVision().Close()
+}
+
+// resetKvmAccount reproduces the on-device firmware's hold-to-reset
+// (kvm_system's kvm_reset_password): it sets root's password back to "root" and
+// removes the web UI account file, then syncs. Because the button watcher grabs
+// the input node, the firmware no longer runs this itself — so a long hold of
+// the BOOT button lands here instead. The command sequence is fed to a shell
+// exactly like the firmware's popen(bash) so `passwd` reads its two
+// confirmations from the same stdin.
+func resetKvmAccount() {
+	const script = "passwd root\nroot\nroot\nrm -f /etc/kvm/pwd\nsync\n"
+	cmd := exec.Command("bash")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("button: factory reset failed: %v (%s)", err, strings.TrimSpace(string(out)))
+		return
+	}
+	log.Println("button: factory reset done — root password reset to 'root', /etc/kvm/pwd removed")
 }

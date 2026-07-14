@@ -445,7 +445,7 @@ const en = {
         joining: 'joining',
         handRaise: 'Hand Raise',
         handRaiseDesc:
-          'Raise a hand on the CEC support queue so a technician knows this device needs help. You can also raise or lower the hand by pressing the BOOT button twice.',
+          'Raise a hand on the CEC support queue so a technician knows this device needs help. A quick press of the BOOT button raises or lowers the hand too (hold it ~10s to reset the account).',
         supportNumber: 'Support Number',
         raiseHand: 'Raise hand',
         lowerHand: 'Lower hand',
