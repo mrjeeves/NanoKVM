@@ -337,46 +337,68 @@ release VERSION:
     echo "  It publishes nanokvm-mesh-riscv64.tar.gz (server + pinned daemon)."
     echo "  Then: just install <device-ip>   (downloads that bundle and deploys)"
 
-# Copy the complete device build (server + daemon + init script) to a device.
+# Copy the complete device build (server + daemon + web + init scripts + OLED +
+# boot logo) to a device as ONE bundle: a single scp + a single ssh, so you type
+# the device password twice, not a dozen times. (Add SSH connection multiplexing
+# — see the "Fewer password prompts" note in the README — to make it just once,
+# shared with reboot/verify too.)
+[doc("Deploy the built server + daemon + web + init scripts to a device (one bundle).")]
 deploy ip:
     #!/usr/bin/env bash
     set -euo pipefail
     test -f server/NanoKVM-Server && test -f "{{daemon_dst}}" && test -d web/dist || { echo "❌ build first: just build-risc"; exit 1; }
-    echo "==> deploying to {{ip}}…"
-    ssh root@{{ip}} 'mkdir -p /kvmapp/system/bin'
-    scp "{{daemon_dst}}"                   root@{{ip}}:/kvmapp/system/bin/myownmesh
-    scp server/NanoKVM-Server              root@{{ip}}:/kvmapp/server/NanoKVM-Server
-    # The init script must land in /etc/init.d — that's the dir Buildroot's rcS
-    # runs at boot (run-parts … start). /kvmapp/system/init.d is only the in-image
-    # source that the firmware build installs into /etc/init.d; on a running device
-    # we have to place it there ourselves or it never autostarts.
-    scp kvmapp/system/init.d/S94myownmesh  root@{{ip}}:/etc/init.d/S94myownmesh
-    # USB virtual-network internet sharing (usb0 → uplink NAT), invoked by the
-    # web UI's Virtual Network toggle and re-applied at boot by rcS. Same /etc/init.d
-    # placement rationale as S94myownmesh above.
-    scp kvmapp/system/init.d/S31usbnet     root@{{ip}}:/etc/init.d/S31usbnet
-    # Web UI: the server serves /tmp/server/web (S95nanokvm copies /kvmapp→/tmp at
-    # boot), so replacing /kvmapp/server/web is safe — the reboot below re-copies
-    # and serves OUR web (with the Mesh tab). Stage web.new and rename over web so
-    # a partial scp never leaves a broken tree; same fs, so the rename is atomic.
-    ssh root@{{ip}} 'rm -rf /kvmapp/server/web.new /kvmapp/server/web.old'
-    scp -r web/dist                        root@{{ip}}:/kvmapp/server/web.new
-    ssh root@{{ip}} 'set -e; [ -d /kvmapp/server/web ] && mv /kvmapp/server/web /kvmapp/server/web.old; mv /kvmapp/server/web.new /kvmapp/server/web; rm -rf /kvmapp/server/web.old; chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /kvmapp/server/NanoKVM-Server'
-    # OLED app: same /tmp-copy story. Optional — only the local `build-risc` build
-    # produces it (the MaixCDK build is too heavy for the release CI), so the
-    # download/`install` path won't have it; ship it when it's present.
+    echo "==> bundling the device payload…"
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    p="$tmp/payload"; mkdir -p "$p/web"
+    cp "{{daemon_dst}}"                  "$p/myownmesh"
+    cp server/NanoKVM-Server             "$p/NanoKVM-Server"
+    cp kvmapp/system/init.d/S94myownmesh "$p/S94myownmesh"
+    cp kvmapp/system/init.d/S31usbnet    "$p/S31usbnet"
+    cp "{{oled_logo}}"                   "$p/logo.bin"
+    cp -a web/dist/.                     "$p/web/"
+    # OLED app is optional — only the local build-risc build produces it (too
+    # heavy for release CI); bundle it when present, install it if it arrives.
     if [ -f "{{oled_dst}}" ]; then
-      ssh root@{{ip}} 'mkdir -p /kvmapp/kvm_system'
-      scp "{{oled_dst}}"                   root@{{ip}}:/kvmapp/kvm_system/kvm_system
-      ssh root@{{ip}} 'chmod +x /kvmapp/kvm_system/kvm_system'
+      cp "{{oled_dst}}" "$p/kvm_system"
       echo "   + OLED app (kvm_system): joining-mesh name on screen"
     else
       echo "   (no {{oled_dst}} — skipping OLED; run 'just build-oled' to include it)"
     fi
-    # AllMyStuff OLED boot logo: kvm_system reads /boot/logo.bin (32 bytes, 16x16
-    # mono) and shows it instead of the built-in Sipeed logo. (The web logo is
-    # embedded in the build as web/public/sipeed.ico — no /boot/logo.ico needed.)
-    scp "{{oled_logo}}"                    root@{{ip}}:/boot/logo.bin
+    tar -czf "$tmp/deploy.tar.gz" -C "$p" .
+    echo "==> deploying to {{ip}} (one scp + one ssh)…"
+    scp "$tmp/deploy.tar.gz" root@{{ip}}:/kvmapp/nanokvm-deploy.tar.gz
+    # Remote install: unpack and place each file. The running server + daemon run
+    # from /tmp (S95nanokvm copies /kvmapp→/tmp at boot), so replacing the /kvmapp
+    # copies is safe and the reboot re-copies them. Init scripts must land in
+    # /etc/init.d (Buildroot rcS runs them at boot). Web is staged into web.new
+    # then renamed over web (same fs = atomic). The boot logo (/boot/logo.bin,
+    # 16x16 mono) replaces the stock Sipeed one. No single quotes in this block —
+    # it is single-quoted for ssh.
+    ssh root@{{ip}} '
+      set -e
+      d="$(mktemp -d -p /kvmapp)"
+      tar -xzf /kvmapp/nanokvm-deploy.tar.gz -C "$d"
+      mkdir -p /kvmapp/system/bin /kvmapp/server
+      cp -f "$d/myownmesh"      /kvmapp/system/bin/myownmesh
+      cp -f "$d/NanoKVM-Server" /kvmapp/server/NanoKVM-Server
+      cp -f "$d/S94myownmesh"   /etc/init.d/S94myownmesh
+      cp -f "$d/S31usbnet"      /etc/init.d/S31usbnet
+      rm -rf /kvmapp/server/web.new /kvmapp/server/web.old
+      mkdir -p /kvmapp/server/web.new
+      cp -a "$d/web/." /kvmapp/server/web.new/
+      [ -d /kvmapp/server/web ] && mv /kvmapp/server/web /kvmapp/server/web.old
+      mv /kvmapp/server/web.new /kvmapp/server/web
+      rm -rf /kvmapp/server/web.old
+      cp -f "$d/logo.bin" /boot/logo.bin
+      if [ -f "$d/kvm_system" ]; then
+        mkdir -p /kvmapp/kvm_system
+        cp -f "$d/kvm_system" /kvmapp/kvm_system/kvm_system
+        chmod +x /kvmapp/kvm_system/kvm_system
+      fi
+      chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /kvmapp/server/NanoKVM-Server
+      rm -rf "$d" /kvmapp/nanokvm-deploy.tar.gz
+      echo "device: files staged"
+    '
     echo "OK — just reboot {{ip}} && just verify {{ip}}"
 
 reboot ip:

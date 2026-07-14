@@ -27,6 +27,21 @@ This fork of [sipeed/NanoKVM](https://github.com/sipeed/NanoKVM) turns the devic
 
 Details in [docs/MESH.md](docs/MESH.md) · companion app: [allmystuff.works](https://allmystuff.works) · mesh tech: [myownmesh.net](https://myownmesh.net)
 
+### Fewer password prompts on deploy
+
+`just deploy <ip>` sends everything in one bundle (a single `scp` + a single `ssh`), so it asks for the device password twice rather than a dozen times. To collapse that to **once** — shared across `deploy`, `reboot`, and `verify` — reuse a single SSH connection. Either:
+
+- **SSH connection multiplexing** (no device changes). Add to `~/.ssh/config`:
+  ```
+  Host <device-ip>
+      User root
+      ControlMaster auto
+      ControlPath ~/.ssh/cm-%r@%h:%p
+      ControlPersist 5m
+  ```
+  The first connection authenticates; everything within the next 5 minutes reuses it, password-free.
+- **Or an SSH key** (zero prompts after a one-time setup): `ssh-copy-id root@<ip>` once, then all future `just deploy`/`reboot`/`verify` are passwordless (provided the device persists `/root/.ssh/authorized_keys`).
+
 ---
 
 ## 🌟 What is NanoKVM?
