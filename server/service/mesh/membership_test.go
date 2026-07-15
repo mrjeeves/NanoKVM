@@ -254,6 +254,21 @@ func TestReleaseUnclaimsAndReturnsToJoiningMesh(t *testing.T) {
 		}
 		return false
 	})
+	// Leaving the fleet is bilateral: the owner is told (fleet_departed) on the
+	// fleet mesh so it evicts us from its signed roster, rather than waiting out
+	// the heartbeat timeout.
+	waitFor(t, "fleet owner told of departure", func() bool {
+		for _, req := range f.requests("channel_send_to") {
+			if req["peer"] != "owner-node" || req["network"] != fleetNet || req["channel"] != ChannelControl {
+				continue
+			}
+			p, _ := req["payload"].(map[string]interface{})
+			if p != nil && p["t"] == "ownership" && p["kind"] == "fleet_departed" {
+				return true
+			}
+		}
+		return false
+	})
 	// The reset device sits on BOTH claim rendezvous meshes again: its own
 	// joining mesh and the well-known LAN claim mesh.
 	waitFor(t, "membership = claim rendezvous meshes", func() bool {
