@@ -716,6 +716,12 @@ func (b *Bridge) applyMeshRemove(networkID string) {
 // governance eviction already cleaned their side) and reappears claimable on
 // its joining mesh — exactly where its screen says it will be.
 func (b *Bridge) unclaim(from string) {
+	// The fleet mesh id derives from the fleet key, which Unclaim() is about to
+	// clear — capture it first so we can leave that mesh explicitly below.
+	fleetNet := ""
+	if key := b.state.FleetKey(); key != "" {
+		fleetNet = DeriveFleetNetworkID(key)
+	}
 	if !b.state.Unclaim() {
 		return
 	}
@@ -726,6 +732,21 @@ func (b *Bridge) unclaim(from string) {
 
 	b.membershipMu.Lock()
 	defer b.membershipMu.Unlock()
+
+	// Leave the governed fleet mesh up front, BEFORE the joining-mesh rejoin
+	// below — that rejoin early-returns on a hiccup (keeping current meshes
+	// rather than stranding the device), and the general shed only runs at the
+	// very end, so a reset on a device whose rejoin stumbles used to stay on the
+	// fleet. A reset must drop the fleet regardless, so do it here where nothing
+	// can skip it.
+	if fleetNet != "" {
+		if err := b.networkRemove(fleetNet); err != nil {
+			log.Warnf("mesh: unclaim leave fleet mesh %s: %s", fleetNet, err)
+		} else {
+			b.dropNetwork(fleetNet)
+			log.Infof("mesh: left fleet mesh %s", fleetNet)
+		}
+	}
 
 	joining := b.joiningMeshID()
 	nets, err := b.ctlNetworksList()
