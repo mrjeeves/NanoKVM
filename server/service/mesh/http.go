@@ -77,6 +77,26 @@ func RegisterRoutes(r *gin.Engine, bridge *Bridge) {
 		rsp.OkRspWithData(c, bridge.StatusSnapshot())
 	})
 
+	// Reset the device's mesh ownership back to claim mode — the recovery path
+	// for a device still showing claimed when the owner-side unclaim in
+	// AllMyStuff never reached it. LOCAL ONLY: rejected over the mesh "sites"
+	// tunnel, mirroring the device-local claim policy (a mesh viewer must not be
+	// able to reset the box out from under its owner). Runs the same teardown as
+	// an owner Release, then reports the now-claimable snapshot.
+	api.POST("/unclaim", func(c *gin.Context) {
+		var rsp proto.Response
+		if bridge == nil {
+			rsp.ErrRsp(c, -1, "mesh disabled")
+			return
+		}
+		if middleware.IsMeshAuthed(c.Request) {
+			rsp.ErrRsp(c, -1, "reset is only allowed from the local network, not over the mesh")
+			return
+		}
+		bridge.Unclaim()
+		rsp.OkRspWithData(c, bridge.StatusSnapshot())
+	})
+
 	// CEC "hand raise" (Ask for help). GET reports current state; the three
 	// POSTs raise / lower / toggle the hand on the cecsupport-clients mesh
 	// (see cec.go). The physical user button drives the same bridge.ToggleHand

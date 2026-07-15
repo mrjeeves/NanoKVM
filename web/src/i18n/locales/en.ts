@@ -450,7 +450,14 @@ const en = {
         raiseHand: 'Raise hand',
         lowerHand: 'Lower hand',
         handRaised: 'Hand raised — help is on the way',
-        handDown: 'Hand down'
+        handDown: 'Hand down',
+        reset: 'Reset to claim mode',
+        resetDesc:
+          "Forget the current owner and return this device to claim mode. Use this if it's stuck showing claimed after an unclaim in AllMyStuff didn't take. Only works from the local network, not over the mesh.",
+        resetConfirmTitle: 'Reset this device?',
+        resetConfirmDesc: 'It will forget its owner and fleet and become claimable again.',
+        resetConfirmOk: 'Reset',
+        resetConfirmCancel: 'Cancel'
       },
       tailscale: {
         title: 'Tailscale',

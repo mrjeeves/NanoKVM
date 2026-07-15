@@ -442,7 +442,14 @@ const zh = {
         raiseHand: '举手',
         lowerHand: '放下',
         handRaised: '已举手 — 支持马上就来',
-        handDown: '已放下'
+        handDown: '已放下',
+        reset: '重置为待认领',
+        resetDesc:
+          '忘记当前所有者并将此设备恢复为待认领模式。如果在 AllMyStuff 中取消认领未生效、设备仍显示已认领，可使用此功能。仅可在本地网络中使用，无法通过 mesh 远程操作。',
+        resetConfirmTitle: '重置此设备？',
+        resetConfirmDesc: '设备将忘记其所有者和设备组，并重新变为可认领。',
+        resetConfirmOk: '重置',
+        resetConfirmCancel: '取消'
       },
       tailscale: {
         title: 'Tailscale',

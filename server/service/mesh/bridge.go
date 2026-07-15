@@ -797,6 +797,15 @@ func (b *Bridge) unclaim(from string) {
 	log.Infof("mesh: reset complete — claimable on %s", joining)
 }
 
+// Unclaim resets this device's mesh ownership from the device itself — the same
+// teardown an owner Release runs (forget owner/attachment/fleet, shed the fleet
+// mesh, return to the joining + LAN claim meshes, claimable again). It's the
+// recovery path for a device whose owner-side unclaim in AllMyStuff never
+// reached it. Exposed for the local-only web reset button (see http.go).
+func (b *Bridge) Unclaim() {
+	b.unclaim("web reset")
+}
+
 // leaveJoiningMeshAfterAdoption leaves the joining mesh once the fleet mesh is
 // really carrying us — the fleet roster has CONVERGED — so the device is never
 // left dark. If the fleet mesh never converges within the bounded wait we
