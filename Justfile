@@ -374,10 +374,15 @@ deploy ip:
     # then renamed over web (same fs = atomic). The boot logo (/boot/logo.bin,
     # 16x16 mono) replaces the stock Sipeed one. No single quotes in this block —
     # it is single-quoted for ssh.
+    #
+    # Decompress with gzip piped into tar, NOT `tar -xzf`: the device's tar is
+    # BusyBox, whose applet has no `-z` ("tar: unrecognized option: z"). gzip is
+    # always present on the Buildroot rootfs, and this form is identical on GNU
+    # tar, so the recipe stays portable regardless of the device userland.
     ssh root@{{ip}} '
       set -e
       d="$(mktemp -d -p /kvmapp)"
-      tar -xzf /kvmapp/nanokvm-deploy.tar.gz -C "$d"
+      gzip -dc /kvmapp/nanokvm-deploy.tar.gz | tar -xf - -C "$d"
       mkdir -p /kvmapp/system/bin /kvmapp/server
       cp -f "$d/myownmesh"      /kvmapp/system/bin/myownmesh
       cp -f "$d/NanoKVM-Server" /kvmapp/server/NanoKVM-Server
