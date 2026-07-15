@@ -45,7 +45,7 @@ func (h *meshLogHook) Fire(e *log.Entry) error {
 // appVersion is the NanoKVM application version advertised in presence. The KVM
 // build doesn't expose a single canonical version constant to this package, so
 // we read /kvmapp/version best-effort at start; this constant is the fallback.
-const appVersion = "1.0.0"
+const appVersion = "0.1.0"
 
 // presenceInterval is how often we re-broadcast the NodeProfile. AllMyStuff's
 // gossip is event-driven, but a slow heartbeat covers a peer that missed our
