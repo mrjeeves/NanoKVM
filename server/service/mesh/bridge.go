@@ -716,6 +716,14 @@ func (b *Bridge) applyMeshRemove(networkID string) {
 // governance eviction already cleaned their side) and reappears claimable on
 // its joining mesh — exactly where its screen says it will be.
 func (b *Bridge) unclaim(from string) {
+	// The fleet mesh id derives from the fleet key, and the owner id — both of
+	// which Unclaim() is about to clear — so capture them first: the fleet id to
+	// leave that mesh explicitly below, the owner to tell it we're leaving.
+	fleetNet := ""
+	if key := b.state.FleetKey(); key != "" {
+		fleetNet = DeriveFleetNetworkID(key)
+	}
+	owner := b.state.Owner()
 	if !b.state.Unclaim() {
 		return
 	}
@@ -726,6 +734,37 @@ func (b *Bridge) unclaim(from string) {
 
 	b.membershipMu.Lock()
 	defer b.membershipMu.Unlock()
+
+	// Leave the governed fleet mesh up front, BEFORE the joining-mesh rejoin
+	// below — that rejoin early-returns on a hiccup (keeping current meshes
+	// rather than stranding the device), and the general shed only runs at the
+	// very end, so a reset on a device whose rejoin stumbles used to stay on the
+	// fleet. A reset must drop the fleet regardless, so do it here where nothing
+	// can skip it.
+	if fleetNet != "" {
+		// Tell the fleet owner we're leaving BEFORE we drop the mesh — while a
+		// control frame can still route on it. AllMyStuff's fleet owner evicts
+		// us (our identity proven by the mesh) from its signed roster on this
+		// notice, so the departure is bilateral: the owner's view converges now
+		// instead of timing us out. Best-effort — if the owner is offline the
+		// re-advertised claimable presence Unclaim() just sent is the backstop
+		// that eventually clears us. Skipped when there was no owner (an
+		// unclaimed device has no fleet owner to notify). This mirrors
+		// AllMyStuff's own fleet_leave: notify, then network_remove.
+		if owner != "" {
+			if err := b.sendControlTo(fleetNet, owner, NewFleetDeparted()); err != nil {
+				log.Warnf("mesh: couldn't tell fleet owner %s we left (%s); relying on unowned re-advert to clear us", owner, err)
+			} else {
+				log.Infof("mesh: told fleet owner %s we're leaving the fleet", owner)
+			}
+		}
+		if err := b.networkRemove(fleetNet); err != nil {
+			log.Warnf("mesh: unclaim leave fleet mesh %s: %s", fleetNet, err)
+		} else {
+			b.dropNetwork(fleetNet)
+			log.Infof("mesh: left fleet mesh %s", fleetNet)
+		}
+	}
 
 	joining := b.joiningMeshID()
 	nets, err := b.ctlNetworksList()
@@ -795,6 +834,15 @@ func (b *Bridge) unclaim(from string) {
 	b.syncIdentityLabel()
 	b.reAdvertise()
 	log.Infof("mesh: reset complete — claimable on %s", joining)
+}
+
+// Unclaim resets this device's mesh ownership from the device itself — the same
+// teardown an owner Release runs (forget owner/attachment/fleet, shed the fleet
+// mesh, return to the joining + LAN claim meshes, claimable again). It's the
+// recovery path for a device whose owner-side unclaim in AllMyStuff never
+// reached it. Exposed for the local-only web reset button (see http.go).
+func (b *Bridge) Unclaim() {
+	b.unclaim("web reset")
 }
 
 // leaveJoiningMeshAfterAdoption leaves the joining mesh once the fleet mesh is
@@ -1329,6 +1377,9 @@ func (b *Bridge) sendControlTo(network, peer string, msg ControlMessage) error {
 	b.mu.Lock()
 	ctl := b.ctl
 	b.mu.Unlock()
+	if ctl == nil {
+		return fmt.Errorf("send control: bridge not connected")
+	}
 	return ctl.ChannelSendTo(network, ChannelControl, peer, msg.Payload())
 }
 

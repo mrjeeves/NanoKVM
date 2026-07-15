@@ -20,3 +20,9 @@ export function getHelpStatus() {
 export function toggleHand() {
   return http.post('/api/mesh/help/toggle');
 }
+
+// reset this device's mesh ownership back to claim mode (forget owner + fleet).
+// Local-network only — the server rejects it over the mesh tunnel.
+export function unclaimDevice() {
+  return http.post('/api/mesh/unclaim');
+}

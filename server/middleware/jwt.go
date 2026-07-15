@@ -43,6 +43,13 @@ func isMeshAuthed(r *http.Request) bool {
 	return ok && v
 }
 
+// IsMeshAuthed reports whether the request arrived over the mesh "sites" tunnel
+// rather than as a direct LAN request. Handlers use it to keep device-local
+// actions — resetting the claim, enabling public claims — off the mesh.
+func IsMeshAuthed(r *http.Request) bool {
+	return isMeshAuthed(r)
+}
+
 // MeshSessionCookie hands a mesh-tunneled request a session cookie so the web
 // UI treats a mesh-authorized viewer as already logged in — no KVM password.
 //

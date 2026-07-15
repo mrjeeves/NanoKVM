@@ -322,6 +322,18 @@ func NewDeclined(reason string) ControlMessage {
 	})
 }
 
+// NewFleetDeparted builds the Ownership FleetDeparted notice a fleet member
+// sends its owner as it leaves — the leave-side mirror of the owner's Release
+// (AllMyStuff's own fleet_leave sends the same). The owner evicts the sender
+// (its identity proven by the mesh) from the signed fleet roster, so our
+// departure is bilateral instead of "vanish and let the roster time us out".
+// It carries no fields: the authenticated sender id IS the member to drop.
+func NewFleetDeparted() ControlMessage {
+	return wrapControl(ControlKindOwnership, OwnershipControl{
+		Kind: OwnershipKindFleetDeparted,
+	})
+}
+
 // ---- KvmControl (tagged "kind") ---------------------------------------------
 
 // KvmControlKind discriminates a KvmControl message.

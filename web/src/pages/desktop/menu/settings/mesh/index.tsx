@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Button, Divider, Tag, Typography } from 'antd';
+import { Button, Divider, Popconfirm, Tag, Typography } from 'antd';
 import { LoaderCircleIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { getHelpStatus, getMeshStatus, rotateClaimCode, toggleHand } from '@/api/mesh.ts';
+import {
+  getHelpStatus,
+  getMeshStatus,
+  rotateClaimCode,
+  toggleHand,
+  unclaimDevice
+} from '@/api/mesh.ts';
 
 type MeshMembership = {
   networkId: string;
@@ -41,6 +47,25 @@ export const Mesh = () => {
   const [errMsg, setErrMsg] = useState('');
   const [rotating, setRotating] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  function resetDevice() {
+    if (resetting) return;
+    setResetting(true);
+    unclaimDevice()
+      .then((rsp) => {
+        if (rsp.code !== 0) {
+          setErrMsg(rsp.msg);
+          return;
+        }
+        setErrMsg('');
+        setStatus(rsp.data);
+      })
+      .catch((err) => {
+        setErrMsg(err?.message || t('settings.mesh.queryFailed'));
+      })
+      .finally(() => setResetting(false));
+  }
 
   function toggleHelp() {
     if (toggling) return;
@@ -280,6 +305,33 @@ export const Mesh = () => {
               <span className="text-neutral-500">{t('settings.mesh.noMemberships')}</span>
             )}
           </div>
+
+          {/* reset to claim mode — recovery for a device stuck claimed (an
+              owner-side unclaim in AllMyStuff that never reached it). The server
+              accepts this only from the local network, never over the mesh. */}
+          {!status.claimable && (
+            <>
+              <Divider className="opacity-50" />
+              <div className="text-neutral-400">{t('settings.mesh.reset')}</div>
+              <div className="mt-5 flex w-full flex-col items-center space-y-3 rounded-lg bg-neutral-800/50 px-5 py-6">
+                <span className="text-center text-sm text-neutral-400">
+                  {t('settings.mesh.resetDesc')}
+                </span>
+                <Popconfirm
+                  title={t('settings.mesh.resetConfirmTitle')}
+                  description={t('settings.mesh.resetConfirmDesc')}
+                  okText={t('settings.mesh.resetConfirmOk')}
+                  cancelText={t('settings.mesh.resetConfirmCancel')}
+                  okButtonProps={{ danger: true }}
+                  onConfirm={resetDevice}
+                >
+                  <Button danger loading={resetting}>
+                    {t('settings.mesh.reset')}
+                  </Button>
+                </Popconfirm>
+              </div>
+            </>
+          )}
         </>
       )}
 
