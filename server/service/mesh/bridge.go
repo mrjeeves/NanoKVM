@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"NanoKVM-Server/buildinfo"
 	"NanoKVM-Server/config"
 
 	"github.com/gin-gonic/gin"
@@ -42,10 +43,10 @@ func (h *meshLogHook) Fire(e *log.Entry) error {
 	return err
 }
 
-// appVersion is the NanoKVM application version advertised in presence. The KVM
-// build doesn't expose a single canonical version constant to this package, so
-// we read /kvmapp/version best-effort at start; this constant is the fallback.
-const appVersion = "0.1.0"
+// appVersion is our fork's version, advertised in presence — the single source
+// in buildinfo, NOT the Sipeed base image's /kvmapp/version (that file is
+// upstream's and reads as an unrelated 2.x). Bumped by scripts/bump-version.sh.
+const appVersion = buildinfo.Version
 
 // presenceInterval is how often we re-broadcast the NodeProfile. AllMyStuff's
 // gossip is event-driven, but a slow heartbeat covers a peer that missed our
@@ -1478,10 +1479,10 @@ func (b *Bridge) currentProfile() NodeProfile {
 		joining, b.networksSnapshot(), b.attachmentLabel())
 }
 
-// versionString returns the NanoKVM app version (best-effort file read).
+// versionString returns our fork's app version for the presence advert. It is
+// our own version (buildinfo), never the Sipeed base image's /kvmapp/version —
+// AllMyStuff should see the KVM as the fork build it's running, not the
+// upstream firmware underneath it.
 func (b *Bridge) versionString() string {
-	if raw, err := readFileTrim("/kvmapp/version"); err == nil && raw != "" {
-		return raw
-	}
 	return appVersion
 }

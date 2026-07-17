@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"NanoKVM-Server/buildinfo"
 	"NanoKVM-Server/proto"
 
 	"github.com/gin-gonic/gin"
@@ -22,17 +22,15 @@ const githubLatestAPI = "https://api.github.com/repos/mrjeeves/NanoKVM/releases/
 
 // GetVersion reports the running firmware version and, best-effort, the latest
 // version on our release channel (so the Update tab can show "up to date" vs
-// "update available"). A failed latest-lookup (no internet, rate limit) just
-// omits `latest` — the tab then treats the device as current rather than
-// nagging.
+// "update available"). The current version is OUR fork's version (buildinfo) —
+// NOT the Sipeed base image's /kvmapp/version, which is an unrelated upstream
+// 2.x and would make every comparison read "up to date". A failed
+// latest-lookup (no internet, rate limit) just omits `latest`, so the tab
+// treats the device as current rather than nagging.
 func (s *Service) GetVersion(c *gin.Context) {
 	var rsp proto.Response
 
-	currentVersion := "1.0.0"
-	versionFile := fmt.Sprintf("%s/version", AppDir)
-	if version, err := os.ReadFile(versionFile); err == nil {
-		currentVersion = strings.TrimSpace(string(version))
-	}
+	currentVersion := buildinfo.Version
 	log.Debugf("current version: %s", currentVersion)
 
 	latestVersion := ""
