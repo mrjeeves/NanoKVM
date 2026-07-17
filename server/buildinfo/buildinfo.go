@@ -10,4 +10,4 @@ package buildinfo
 
 // Version is the fork's release version, e.g. "0.1.0". Kept in sync with the
 // vX.Y.Z release tags.
-const Version = "0.1.0"
+const Version = "0.1.1"
