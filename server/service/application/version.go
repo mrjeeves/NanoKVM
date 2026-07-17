@@ -15,32 +15,29 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-type Latest struct {
-	Version string `json:"version"`
-	Name    string `json:"name"`
-	Sha512  string `json:"sha512"`
-	Size    uint   `json:"size"`
-	Url     string `json:"url"`
-}
+// githubLatestAPI is our release channel's "latest release" endpoint. We read
+// the tag name to tell the Update tab whether a newer build is out — the same
+// channel the Update handler installs from, never cdn.sipeed.com.
+const githubLatestAPI = "https://api.github.com/repos/mrjeeves/NanoKVM/releases/latest"
 
+// GetVersion reports the running firmware version and, best-effort, the latest
+// version on our release channel (so the Update tab can show "up to date" vs
+// "update available"). A failed latest-lookup (no internet, rate limit) just
+// omits `latest` — the tab then treats the device as current rather than
+// nagging.
 func (s *Service) GetVersion(c *gin.Context) {
 	var rsp proto.Response
 
-	// current version
 	currentVersion := "1.0.0"
-
 	versionFile := fmt.Sprintf("%s/version", AppDir)
 	if version, err := os.ReadFile(versionFile); err == nil {
-		currentVersion = strings.ReplaceAll(string(version), "\n", "")
+		currentVersion = strings.TrimSpace(string(version))
 	}
-
 	log.Debugf("current version: %s", currentVersion)
 
-	// latest version
 	latestVersion := ""
-	latest, err := getLatest()
-	if err == nil && latest != nil {
-		latestVersion = latest.Version
+	if latest, err := latestChannelVersion(); err == nil {
+		latestVersion = latest
 	}
 
 	rsp.OkRspWithData(c, &proto.GetVersionRsp{
@@ -49,42 +46,37 @@ func (s *Service) GetVersion(c *gin.Context) {
 	})
 }
 
-func getLatest() (*Latest, error) {
-	baseURL := StableURL
-	if isPreviewEnabled() {
-		baseURL = PreviewURL
-	}
-
-	url := fmt.Sprintf("%s/latest.json?now=%d", baseURL, time.Now().Unix())
-
-	resp, err := http.Get(url)
+// latestChannelVersion asks GitHub for our newest release's tag and returns it
+// without the leading "v", so it compares cleanly against the current version
+// read from /kvmapp/version.
+func latestChannelVersion() (string, error) {
+	req, err := http.NewRequest("GET", githubLatestAPI, nil)
 	if err != nil {
-		log.Debugf("failed to request version: %v", err)
-		return nil, err
+		return "", err
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	req.Header.Set("Accept", "application/vnd.github+json")
 
-	body, err := io.ReadAll(resp.Body)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		log.Errorf("failed to read response: %v", err)
-		return nil, err
+		return "", err
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Errorf("server responded with status code: %d", resp.StatusCode)
-		return nil, fmt.Errorf("status code %d", resp.StatusCode)
+		return "", fmt.Errorf("status code %d", resp.StatusCode)
 	}
 
-	var latest Latest
-	if err := json.Unmarshal(body, &latest); err != nil {
-		log.Errorf("failed to unmarshal response: %s", err)
-		return nil, err
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
 	}
 
-	latest.Url = fmt.Sprintf("%s/%s", baseURL, latest.Name)
-
-	log.Debugf("get application latest version: %s", latest.Version)
-	return &latest, nil
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.Unmarshal(body, &release); err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(strings.TrimSpace(release.TagName), "v"), nil
 }

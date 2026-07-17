@@ -259,7 +259,7 @@ func newNativeTestBridge(t *testing.T, f *fakeDaemon, owner string) *Bridge {
 		running: true,
 		lanes:   make(map[uint8]bool),
 	}
-	b.sites = newSiteHost(gin.New(), 80, nil, func(string, SiteFrame) error { return nil })
+	b.sites = newSiteHost(gin.New(), 80, func(string, SiteFrame) error { return nil })
 	return b
 }
 

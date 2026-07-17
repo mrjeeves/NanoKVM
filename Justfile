@@ -312,9 +312,8 @@ fetch VERSION="latest":
     echo "Now: just deploy <device-ip>   (or use 'just install <device-ip>')"
 
 # Fetch the prebuilt device bundle (server + daemon) and deploy to a device.
-# `port` rides through to deploy for the mesh SSH-site path.
-install ip VERSION="latest" port="22": (fetch VERSION)
-    @just deploy {{ip}} {{port}}
+install ip VERSION="latest": (fetch VERSION)
+    @just deploy {{ip}}
 
 # Bump the advertised version, commit, push, then push the `vX.Y.Z` tag to
 # trigger the release workflow — which builds the server, bundles the
@@ -343,12 +342,8 @@ release VERSION:
 # the device password twice, not a dozen times. (Add SSH connection multiplexing
 # — see the "Fewer password prompts" note in the README — to make it just once,
 # shared with reboot/verify too.)
-# `port` defaults to plain LAN SSH. To update a device you can't reach
-# directly, map its advertised SSH site in AllMyStuff (Sites tab → Map on the
-# KVM's "SSH" entry), then run against the tunnel:
-#   just deploy localhost <mapped-port>
 [doc("Deploy the built server + daemon + web + init scripts to a device (one bundle).")]
-deploy ip port="22":
+deploy ip:
     #!/usr/bin/env bash
     set -euo pipefail
     test -f server/NanoKVM-Server && test -f "{{daemon_dst}}" && test -d web/dist || { echo "❌ build first: just build-risc"; exit 1; }
@@ -370,8 +365,8 @@ deploy ip port="22":
       echo "   (no {{oled_dst}} — skipping OLED; run 'just build-oled' to include it)"
     fi
     tar -czf "$tmp/deploy.tar.gz" -C "$p" .
-    echo "==> deploying to {{ip}}:{{port}} (one scp + one ssh)…"
-    scp -P {{port}} "$tmp/deploy.tar.gz" root@{{ip}}:/kvmapp/nanokvm-deploy.tar.gz
+    echo "==> deploying to {{ip}} (one scp + one ssh)…"
+    scp "$tmp/deploy.tar.gz" root@{{ip}}:/kvmapp/nanokvm-deploy.tar.gz
     # Remote install: unpack and place each file. The running server + daemon run
     # from /tmp (S95nanokvm copies /kvmapp→/tmp at boot), so replacing the /kvmapp
     # copies is safe and the reboot re-copies them. Init scripts must land in
@@ -384,7 +379,7 @@ deploy ip port="22":
     # BusyBox, whose applet has no `-z` ("tar: unrecognized option: z"). gzip is
     # always present on the Buildroot rootfs, and this form is identical on GNU
     # tar, so the recipe stays portable regardless of the device userland.
-    ssh -p {{port}} root@{{ip}} '
+    ssh root@{{ip}} '
       set -e
       d="$(mktemp -d -p /kvmapp)"
       gzip -dc /kvmapp/nanokvm-deploy.tar.gz | tar -xf - -C "$d"
@@ -409,18 +404,18 @@ deploy ip port="22":
       rm -rf "$d" /kvmapp/nanokvm-deploy.tar.gz
       echo "device: files staged"
     '
-    echo "OK — just reboot {{ip}} {{port}} && just verify {{ip}} {{port}}"
+    echo "OK — just reboot {{ip}} && just verify {{ip}}"
 
-reboot ip port="22":
-    @ssh -p {{port}} root@{{ip}} reboot || true
+reboot ip:
+    @ssh root@{{ip}} reboot || true
 
 # Daemon + bridge: processes, persisted state, and both logs on a device.
-verify ip port="22":
-    @ssh -p {{port}} root@{{ip}} 'echo "--- daemon proc ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- server proc ---"; ps | grep -i nanokvm-server | grep -v grep || echo "(no server)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- daemon log ---"; tail -n 30 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"; echo "--- bridge log ---"; tail -n 30 /var/log/nanokvm-mesh.log 2>/dev/null || echo "(none yet)"'
+verify ip:
+    @ssh root@{{ip}} 'echo "--- daemon proc ---"; ps | grep -i myownmesh | grep -v grep || echo "(no daemon serving)"; echo "--- server proc ---"; ps | grep -i nanokvm-server | grep -v grep || echo "(no server)"; echo "--- state (/data/myownmesh) ---"; ls -la /data/myownmesh 2>/dev/null || echo "(none yet)"; echo "--- daemon log ---"; tail -n 30 /var/log/myownmesh.log 2>/dev/null || echo "(none yet)"; echo "--- bridge log ---"; tail -n 30 /var/log/nanokvm-mesh.log 2>/dev/null || echo "(none yet)"'
 
 # Reversible undo on a device: stop the daemon, remove the init script + reboot.
-undeploy ip port="22":
-    @ssh -p {{port}} root@{{ip}} '/etc/init.d/S94myownmesh stop 2>/dev/null; rm -f /etc/init.d/S94myownmesh && reboot' || true
+undeploy ip:
+    @ssh root@{{ip}} '/etc/init.d/S94myownmesh stop 2>/dev/null; rm -f /etc/init.d/S94myownmesh && reboot' || true
 
 clean-risc:
     @rm -rf server/NanoKVM-Server {{daemon_dst}} web/dist {{oled_dst}}

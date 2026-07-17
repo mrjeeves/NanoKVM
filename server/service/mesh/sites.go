@@ -1,7 +1,6 @@
 package mesh
 
 import (
-	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -13,23 +12,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// siteHost is the host side of the AllMyStuff "sites" plane. It demultiplexes
-// inbound SiteFrames by (route, conn) and serves each tunneled connection —
-// mapped to a meshConn — according to the port it was opened for:
-//
-//   - the advertised web port is served as in-process HTTP through the gin
-//     engine with the login bypassed (mesh roster membership is the auth);
-//   - any port in tcpSites (the SSH site) is proxied to the local TCP service
-//     it names. No auth bypass rides this path — the service (sshd) still runs
-//     its own authentication on top of the roster gate.
-//
-// The advertised set IS the allow-list: any other port is refused.
+// siteHost is the host side of the AllMyStuff "sites" plane. It accepts a single
+// advertised web port, demultiplexes inbound SiteFrames by (route, conn), and
+// serves each tunneled browser connection — mapped to a meshConn — as in-process
+// HTTP through the gin engine with the login bypassed (mesh roster membership is
+// the auth).
 type siteHost struct {
 	engine      *gin.Engine
 	allowedPort uint16
-	// tcpSites maps each additional advertised port to the local TCP address
-	// its tunnel dials ("127.0.0.1:22" for the SSH site). Nil-able.
-	tcpSites map[uint16]string
 
 	// send emits one outbound SiteFrame on CHANNEL_MEDIA to a specific peer.
 	send func(peer string, frame SiteFrame) error
@@ -41,13 +31,10 @@ type siteHost struct {
 	// sending frames into the void until the user gives up. Nil-able (tests).
 	nack func(peer, route, reason string)
 
-	// serveConn drives one tunneled connection on the web port. Defaults to
-	// serveHTTP (the gin engine over the meshConn); overridable in tests that
-	// exercise only the demux without driving HTTP.
+	// serveConn drives one tunneled connection. Defaults to serveHTTP (the gin
+	// engine over the meshConn); overridable in tests that exercise only the
+	// demux without driving HTTP.
 	serveConn func(*meshConn)
-	// serveTCP drives one tunneled connection on a tcpSites port. Defaults to
-	// serveTCPProxy (dial + bidirectional copy); overridable in tests.
-	serveTCP func(c *meshConn, addr string)
 
 	mu sync.Mutex
 	// conns is keyed by route then conn id.
@@ -64,18 +51,16 @@ type siteHost struct {
 	lastNack map[string]time.Time
 }
 
-func newSiteHost(engine *gin.Engine, allowedPort uint16, tcpSites map[uint16]string, send func(peer string, frame SiteFrame) error) *siteHost {
+func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(peer string, frame SiteFrame) error) *siteHost {
 	h := &siteHost{
 		engine:       engine,
 		allowedPort:  allowedPort,
-		tcpSites:     tcpSites,
 		send:         send,
 		conns:        make(map[string]map[uint64]*meshConn),
 		activeRoutes: make(map[string]string),
 		lastNack:     make(map[string]time.Time),
 	}
 	h.serveConn = h.serveHTTP
-	h.serveTCP = h.serveTCPProxy
 	return h
 }
 
@@ -181,29 +166,17 @@ func (h *siteHost) handleFrame(peer string, f SiteFrame) {
 	}
 }
 
-// handleOpen validates the requested port against our allow-list (the
-// advertised set) and, if it matches, spins up a meshConn served by the
-// port's handler: the gin engine for the web port, a local TCP proxy for a
-// tcpSites port (SSH).
+// handleOpen validates the requested port against our allow-list and, if it
+// matches, spins up a meshConn served by the gin engine.
 func (h *siteHost) handleOpen(peer string, f SiteFrame) {
-	if f.Port == h.allowedPort {
-		go h.serveConn(h.register(peer, f))
+	if f.Port != h.allowedPort {
+		// The advert is the allow-list: refuse anything else by immediately
+		// closing the connection.
+		log.Warnf("mesh: site open for unadvertised port %d (allow %d); refusing", f.Port, h.allowedPort)
+		_ = h.send(peer, NewSiteClose(f.Route, 0, f.Conn))
 		return
 	}
-	if addr, ok := h.tcpSites[f.Port]; ok {
-		c := h.register(peer, f)
-		go h.serveTCP(c, addr)
-		return
-	}
-	// The advert is the allow-list: refuse anything else by immediately
-	// closing the connection.
-	log.Warnf("mesh: site open for unadvertised port %d; refusing", f.Port)
-	_ = h.send(peer, NewSiteClose(f.Route, 0, f.Conn))
-}
 
-// register creates the meshConn for an accepted Open and files it in the conn
-// table (closing any stale conn that reused the id).
-func (h *siteHost) register(peer string, f SiteFrame) *meshConn {
 	send := func(frame SiteFrame) error { return h.send(peer, frame) }
 	c := newMeshConn(f.Route, f.Conn, send)
 
@@ -217,7 +190,8 @@ func (h *siteHost) register(peer string, f SiteFrame) *meshConn {
 	}
 	h.conns[f.Route][f.Conn] = c
 	h.mu.Unlock()
-	return c
+
+	go h.serveConn(c)
 }
 
 // lookup returns the meshConn for (route, conn), or nil.
@@ -240,40 +214,6 @@ func (h *siteHost) drop(route string, conn uint64) {
 		}
 	}
 	h.mu.Unlock()
-}
-
-// serveTCPProxy pipes one tunneled connection to a local TCP service — the
-// SSH site's path. Unlike the web port there is no in-process handler to hand
-// the bytes to (the service speaks its own protocol), so this is a plain dial
-// plus a copy in each direction. The mesh roster gates who can open the
-// tunnel at all; the service (sshd) still runs its own authentication on top,
-// so this path is *stricter* than the login-bypassed web tunnel. If the
-// service isn't listening (SSH disabled on the device), the dial fails and
-// the tunnel just closes — enable SSH from the web UI first.
-func (h *siteHost) serveTCPProxy(c *meshConn, addr string) {
-	defer h.drop(c.route, c.conn)
-	defer c.Close()
-
-	d := net.Dialer{Timeout: 5 * time.Second}
-	tc, err := d.Dial("tcp", addr)
-	if err != nil {
-		log.Warnf("mesh: site tunnel to %s failed: %s", addr, err)
-		return
-	}
-	defer tc.Close()
-
-	// Viewer → service. When the viewer side ends, pass the half-close on so
-	// the service sees a clean EOF rather than a stall.
-	go func() {
-		_, _ = io.Copy(tc, c)
-		if t, ok := tc.(*net.TCPConn); ok {
-			_ = t.CloseWrite()
-		}
-	}()
-	// Service → viewer. When this returns (service EOF/error, or the viewer
-	// tore the route down), the deferred closes end both sides; the goroutine
-	// above then unblocks and exits.
-	_, _ = io.Copy(c, tc)
 }
 
 // serveHTTP runs http.Serve over a one-shot listener that yields c exactly once,

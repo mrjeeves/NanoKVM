@@ -123,31 +123,29 @@ tunnel wraps every request with it, so mesh-tunneled requests are authenticated
 **without a token** while normal LAN/direct requests are unaffected. Mesh roster
 membership replaces the KVM login.
 
-## The SSH site (remote shell + remote update)
+## Firmware update (our channel, password-free over the mesh)
 
-Alongside the web UI, presence advertises a second site: **SSH** (`tcp:22`,
-scheme `ssh`). The site host proxies that tunnel straight to the device's own
-`sshd` as raw TCP — **no auth bypass rides this path**; sshd still runs its
-own authentication on top of the mesh roster gate, so it is *stricter* than
-the web tunnel. The advertised set stays the allow-list: any other port is
-refused.
+Firmware updates come from **our** GitHub release channel — never Sipeed's CDN,
+and never SSH. The Sipeed stock update service (its online + offline install
+and preview channel) is removed, both the routes and the web UI, so nothing can
+install a stock build over `/kvmapp` and clobber our mesh server. In its place,
+`GET /api/application/version` and `POST /api/application/update` point at our
+channel, and the KVM's **Settings → Update** tab drives them.
 
-To reach a KVM's shell from anywhere on the fleet:
+Both routes sit behind the normal `CheckToken` gate, which is the whole point
+of the mesh auth-bypass above: reached over the AllMyStuff mesh tunnel they need
+**no device password** (mesh-roster membership is the authorization), while a
+direct LAN caller still uses the KVM login. So an operator opens the KVM console
+over the mesh and clicks Update with no password; the update pulls our release
+bundle (`nanokvm-mesh-riscv64.tar.gz`) for the newest release, verifies its
+`.sha256`, installs the server + web with the same atomic placement `just
+deploy` uses, and restarts.
 
-1. In AllMyStuff, open the **Sites** tab, find the KVM, and **Map** its
-   `SSH` entry. **Copy** gives you the local address (`localhost:<port>`).
-2. `ssh root@localhost -p <port>` — or update the device in place:
-
-   ```sh
-   just deploy localhost <port>     # full mesh build re-deploy over the tunnel
-   just verify localhost <port>
-   ```
-
-Every device-touching recipe (`deploy`, `install`, `reboot`, `verify`,
-`undeploy`) takes the port as an optional trailing argument, defaulting to
-plain LAN `22`. If SSH is disabled on the device (the web UI toggle /
-`/etc/kvm/ssh_stop`), the tunnel dial fails and the connection just closes —
-enable SSH first.
+> The update endpoint lives in the mesh server, so it can install a new build
+> but cannot resurrect a server that was already replaced by a non-mesh build.
+> Removing the stock updater is what keeps that from ever happening. A daemon
+> bump still rides a full on-site `just deploy` — a routine update ships only
+> the server + web, so it never restarts the daemon out from under the tunnel.
 
 ## Configuration
 

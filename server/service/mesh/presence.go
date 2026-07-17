@@ -109,18 +109,6 @@ func siteID(port uint16) string {
 	return "tcp:" + strconv.Itoa(int(port))
 }
 
-// The SSH site: the device's own sshd, advertised over the sites plane so the
-// fleet can reach a shell (and re-deploy the mesh build) with no port
-// forwarding. The tunnel is a raw TCP proxy — sshd still runs its own
-// authentication on top of the mesh roster gate, making this path stricter
-// than the login-bypassed web tunnel. OpenSSH listens on the stock port on
-// this device (S50sshd starts sshd with no port override); if SSH is disabled
-// in the web UI the dial simply fails and the tunnel closes.
-const (
-	sshSitePort uint16 = 22
-	sshSiteAddr        = "127.0.0.1:22"
-)
-
 // attachmentLabel is the display label an attached KVM takes: KVM-<target's
 // label>, or "" when unattached (callers then use their own default). The
 // target's label is resolved LIVE, preferring the attached node's current
@@ -197,26 +185,13 @@ func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State,
 		Claimable:    snap.Claimable,
 		Boot:         boot,
 		Features:     []string{FeatureKVM, FeatureSites},
-		Sites: []SiteAdvert{
-			{
-				ID:       id,
-				Label:    "KVM Web UI",
-				Port:     port,
-				Scheme:   webScheme(conf),
-				Loopback: false,
-			},
-			// The SSH site (see the const block): a non-web scheme, so no
-			// UI mistakes it for the KVM console — AllMyStuff's Sites tab
-			// offers Map + Copy, and `ssh root@localhost -p <mapped port>`
-			// does the rest.
-			{
-				ID:       siteID(sshSitePort),
-				Label:    "SSH",
-				Port:     sshSitePort,
-				Scheme:   "ssh",
-				Loopback: false,
-			},
-		},
+		Sites: []SiteAdvert{{
+			ID:       id,
+			Label:    "KVM Web UI",
+			Port:     port,
+			Scheme:   webScheme(conf),
+			Loopback: false,
+		}},
 		Version:    version,
 		FleetName:  snap.FleetName,
 		FleetOwner: snap.FleetName, // a fleet is named for its owner; track it
