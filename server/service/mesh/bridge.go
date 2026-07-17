@@ -143,8 +143,12 @@ func NewBridge(engine *gin.Engine, conf *config.Config) *Bridge {
 		boot:   newBootID(),
 		lanes:  make(map[uint8]bool),
 	}
-	// The site host serves only our advertised web port.
-	b.sites = newSiteHost(engine, port, b.sendSiteFrame)
+	// The site host serves exactly what presence advertises: the web port
+	// (in-process gin, login bypassed for roster members) and the SSH site
+	// (a raw TCP proxy to the local sshd — which still does its own auth).
+	// SSH over the mesh is what lets the fleet re-deploy a KVM remotely
+	// (`just deploy` against a mapped site; see docs/MESH.md).
+	b.sites = newSiteHost(engine, port, map[uint16]string{sshSitePort: sshSiteAddr}, b.sendSiteFrame)
 	// A frame on a dead route gets a Reject back: after a bridge restart only
 	// we can tell a viewer its accepted tunnel no longer exists (AllMyStuff
 	// deliberately never NACKs the site plane itself).

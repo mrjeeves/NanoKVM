@@ -123,6 +123,32 @@ tunnel wraps every request with it, so mesh-tunneled requests are authenticated
 **without a token** while normal LAN/direct requests are unaffected. Mesh roster
 membership replaces the KVM login.
 
+## The SSH site (remote shell + remote update)
+
+Alongside the web UI, presence advertises a second site: **SSH** (`tcp:22`,
+scheme `ssh`). The site host proxies that tunnel straight to the device's own
+`sshd` as raw TCP — **no auth bypass rides this path**; sshd still runs its
+own authentication on top of the mesh roster gate, so it is *stricter* than
+the web tunnel. The advertised set stays the allow-list: any other port is
+refused.
+
+To reach a KVM's shell from anywhere on the fleet:
+
+1. In AllMyStuff, open the **Sites** tab, find the KVM, and **Map** its
+   `SSH` entry. **Copy** gives you the local address (`localhost:<port>`).
+2. `ssh root@localhost -p <port>` — or update the device in place:
+
+   ```sh
+   just deploy localhost <port>     # full mesh build re-deploy over the tunnel
+   just verify localhost <port>
+   ```
+
+Every device-touching recipe (`deploy`, `install`, `reboot`, `verify`,
+`undeploy`) takes the port as an optional trailing argument, defaulting to
+plain LAN `22`. If SSH is disabled on the device (the web UI toggle /
+`/etc/kvm/ssh_stop`), the tunnel dial fails and the connection just closes —
+enable SSH first.
+
 ## Configuration
 
 Add a `mesh` block to `/etc/kvm/server.yaml` (defaults shown):

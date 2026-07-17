@@ -3,6 +3,7 @@ package mesh
 import (
 	"bytes"
 	"io"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -169,7 +170,7 @@ func TestSiteHostOpenAllowListAndDataRoundTrip(t *testing.T) {
 	}
 
 	const allowed = uint16(80)
-	h := newSiteHost(nil, allowed, send) // nil engine: we only test demux/conn wiring here
+	h := newSiteHost(nil, allowed, nil, send) // nil engine: we only test demux/conn wiring here
 	// Don't drive HTTP — this test reads from the conn directly to verify the
 	// demux feeds it, so override the serve hook to a no-op.
 	h.serveConn = func(*meshConn) {}
@@ -224,6 +225,81 @@ func TestSiteHostOpenAllowListAndDataRoundTrip(t *testing.T) {
 	if _, active := h.routePeer(route); active {
 		t.Fatalf("route should be inactive after teardown")
 	}
+}
+
+func TestSiteHostTCPProxyRoundTrip(t *testing.T) {
+	// The SSH-site path: an Open on a tcpSites port must dial the local TCP
+	// service and pipe bytes both ways (a tiny echo server stands in for
+	// sshd), while a port advertised nowhere is still refused.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 64)
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+		_, _ = conn.Write(append([]byte("echo:"), buf[:n]...))
+	}()
+
+	var outMu sync.Mutex
+	var out []SiteFrame
+	send := func(peer string, f SiteFrame) error {
+		outMu.Lock()
+		out = append(out, f)
+		outMu.Unlock()
+		return nil
+	}
+
+	const sshLike = uint16(2222)
+	h := newSiteHost(nil, 80, map[uint16]string{sshLike: ln.Addr().String()}, send)
+	// The web hook must never fire on the TCP path; make that loud.
+	h.serveConn = func(*meshConn) { t.Error("web serve hook fired for a TCP site open") }
+	const route = "route:peer:site->kvm:site-view:1"
+	const peer = "peer-AB12C"
+	h.markRouteActive(route, peer)
+
+	// A port in neither the web slot nor tcpSites → refused with a Close.
+	h.handleFrame(peer, NewSiteOpen(route, 0, 1, 8080))
+	outMu.Lock()
+	refused := len(out) == 1 && out[0].Kind == SiteEventKindClose && out[0].Conn == 1
+	outMu.Unlock()
+	if !refused {
+		t.Fatalf("unadvertised port should be refused with a Close frame, got %+v", out)
+	}
+
+	// The TCP site port → dial + pipe. Feed one Data frame in; the echo comes
+	// back as an outbound Data frame carrying the reply.
+	h.handleFrame(peer, NewSiteOpen(route, 0, 2, sshLike))
+	waitForConn(t, h, route, 2)
+	h.handleFrame(peer, NewSiteData(route, 1, 2, []byte("PING")))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		outMu.Lock()
+		var got []byte
+		for _, f := range out {
+			if f.Kind == SiteEventKindData && f.Conn == 2 {
+				got = append(got, f.Data...)
+			}
+		}
+		outMu.Unlock()
+		if string(got) == "echo:PING" {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	outMu.Lock()
+	defer outMu.Unlock()
+	t.Fatalf("echo reply never arrived over the tunnel; frames: %+v", out)
 }
 
 // waitForConn polls for the host to register a conn (handleOpen creates it
