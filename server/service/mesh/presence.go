@@ -241,12 +241,3 @@ func newBootID() uint64 {
 	}
 	return b
 }
-
-// readFileTrim reads a file and trims surrounding whitespace/newlines.
-func readFileTrim(path string) (string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(raw)), nil
-}

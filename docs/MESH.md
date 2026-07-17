@@ -123,6 +123,30 @@ tunnel wraps every request with it, so mesh-tunneled requests are authenticated
 **without a token** while normal LAN/direct requests are unaffected. Mesh roster
 membership replaces the KVM login.
 
+## Firmware update (our channel, password-free over the mesh)
+
+Firmware updates come from **our** GitHub release channel — never Sipeed's CDN,
+and never SSH. The Sipeed stock update service (its online + offline install
+and preview channel) is removed, both the routes and the web UI, so nothing can
+install a stock build over `/kvmapp` and clobber our mesh server. In its place,
+`GET /api/application/version` and `POST /api/application/update` point at our
+channel, and the KVM's **Settings → Update** tab drives them.
+
+Both routes sit behind the normal `CheckToken` gate, which is the whole point
+of the mesh auth-bypass above: reached over the AllMyStuff mesh tunnel they need
+**no device password** (mesh-roster membership is the authorization), while a
+direct LAN caller still uses the KVM login. So an operator opens the KVM console
+over the mesh and clicks Update with no password; the update pulls our release
+bundle (`nanokvm-mesh-riscv64.tar.gz`) for the newest release, verifies its
+`.sha256`, installs the server + web with the same atomic placement `just
+deploy` uses, and restarts.
+
+> The update endpoint lives in the mesh server, so it can install a new build
+> but cannot resurrect a server that was already replaced by a non-mesh build.
+> Removing the stock updater is what keeps that from ever happening. A daemon
+> bump still rides a full on-site `just deploy` — a routine update ships only
+> the server + web, so it never restarts the daemon out from under the tunnel.
+
 ## Configuration
 
 Add a `mesh` block to `/etc/kvm/server.yaml` (defaults shown):

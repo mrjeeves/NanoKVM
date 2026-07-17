@@ -325,8 +325,8 @@ release VERSION:
     #!/usr/bin/env bash
     set -euo pipefail
     ./scripts/bump-version.sh "{{VERSION}}"
-    if ! git diff --quiet server/service/mesh/bridge.go web/package.json; then
-      git add server/service/mesh/bridge.go web/package.json
+    if ! git diff --quiet server/buildinfo/buildinfo.go web/package.json; then
+      git add server/buildinfo/buildinfo.go web/package.json
       git commit -m "chore(release): {{VERSION}}"
     fi
     git push

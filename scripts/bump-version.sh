@@ -3,9 +3,10 @@
 # `./scripts/bump-version.sh 1.1.0`.
 #
 # Edits:
-#   - server/service/mesh/bridge.go   const appVersion = "X.Y.Z"
-#       (the version the KVM advertises on the AllMyStuff mesh; this is the
-#        fallback when /kvmapp/version isn't readable)
+#   - server/buildinfo/buildinfo.go   const Version = "X.Y.Z"
+#       (the single fork-version source: both the mesh presence advert and the
+#        firmware updater read it, so we advertise/compare OUR version, never
+#        the Sipeed base image's /kvmapp/version)
 #   - web/package.json                "version": "X.Y.Z"
 #
 # After this script: stage + commit + tag — the Justfile's `release` recipe does
@@ -27,17 +28,17 @@ if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; th
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BRIDGE="$ROOT/server/service/mesh/bridge.go"
+BUILDINFO="$ROOT/server/buildinfo/buildinfo.go"
 PKG="$ROOT/web/package.json"
 
-# server/service/mesh/bridge.go — the `const appVersion = "..."` line.
-python3 - "$BRIDGE" "$VERSION" <<'PY'
+# server/buildinfo/buildinfo.go — the `const Version = "..."` line.
+python3 - "$BUILDINFO" "$VERSION" <<'PY'
 import re, sys
 path, version = sys.argv[1], sys.argv[2]
 s = open(path, encoding="utf-8").read()
-new, n = re.subn(r'(const appVersion = ")[^"]*(")', rf'\g<1>{version}\g<2>', s, count=1)
+new, n = re.subn(r'(const Version = ")[^"]*(")', rf'\g<1>{version}\g<2>', s, count=1)
 if n != 1:
-    print(f"error: could not find `const appVersion` in {path}", file=sys.stderr)
+    print(f"error: could not find `const Version` in {path}", file=sys.stderr)
     sys.exit(1)
 open(path, "w", encoding="utf-8").write(new)
 print(f"bumped {path} -> {version}")

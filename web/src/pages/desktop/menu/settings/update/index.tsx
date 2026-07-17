@@ -6,13 +6,16 @@ import semver from 'semver';
 
 import * as api from '@/api/application.ts';
 
-import { Offline } from './offline.tsx';
-import { Preview } from './preview.tsx';
-
 type UpdateProps = {
   setIsLocked: (isClosable: boolean) => void;
 };
 
+// Firmware update, pointed at OUR release channel (the server's
+// /api/application/update installs our GitHub-released bundle, never
+// cdn.sipeed.com). Reached over the AllMyStuff mesh it needs no device
+// password; on the LAN the normal KVM login applies. Sipeed's preview channel
+// and offline-upload update are intentionally gone — our channel is the one
+// update path.
 export const Update = ({ setIsLocked }: UpdateProps) => {
   const { t } = useTranslation();
 
@@ -83,15 +86,6 @@ export const Update = ({ setIsLocked }: UpdateProps) => {
       <div className="text-base">{t('settings.update.title')}</div>
       <Divider className="opacity-50" />
 
-      <Preview checkForUpdates={checkForUpdates} />
-      <Offline
-        status={status}
-        setStatus={setStatus}
-        setIsLocked={setIsLocked}
-        setErrMsg={setErrMsg}
-      />
-      <Divider className="opacity-50" />
-
       <div className="flex min-h-[320px] flex-col justify-between">
         {status === 'loading' && (
           <div className="flex justify-center pt-24">
@@ -140,7 +134,7 @@ export const Update = ({ setIsLocked }: UpdateProps) => {
           <Button
             type="link"
             size="small"
-            href="https://github.com/sipeed/NanoKVM/blob/main/CHANGELOG.md"
+            href="https://github.com/mrjeeves/NanoKVM/blob/main/CHANGELOG.md"
             target="_blank"
           >
             CHANGELOG
