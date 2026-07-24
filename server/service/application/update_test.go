@@ -141,8 +141,12 @@ func TestInstallBundleReplacesServerAndWeb(t *testing.T) {
 	}
 
 	bundle := makeBundle(t, root, "new-server", "new-web")
-	if err := installBundle(bundle, appDir); err != nil {
+	changed, err := installBundle(bundle, appDir)
+	if err != nil {
 		t.Fatalf("installBundle: %v", err)
+	}
+	if changed {
+		t.Errorf("daemonChanged = true for a bundle carrying no daemon")
 	}
 
 	if got := read(t, filepath.Join(appDir, "server", "NanoKVM-Server")); got != "new-server" {
@@ -171,7 +175,7 @@ func TestInstallBundleFreshInstall(t *testing.T) {
 	appDir := filepath.Join(root, "kvmapp") // nothing seeded
 
 	bundle := makeBundle(t, root, "srv", "web")
-	if err := installBundle(bundle, appDir); err != nil {
+	if _, err := installBundle(bundle, appDir); err != nil {
 		t.Fatalf("installBundle on a fresh dir: %v", err)
 	}
 	if got := read(t, filepath.Join(appDir, "server", "NanoKVM-Server")); got != "srv" {
@@ -201,11 +205,100 @@ func TestInstallBundleRejectsIncompleteBundleWithoutTouchingCurrent(t *testing.T
 		t.Fatal(err)
 	}
 
-	if err := installBundle(badBundle, appDir); err == nil {
+	if _, err := installBundle(badBundle, appDir); err == nil {
 		t.Fatal("installBundle accepted a bundle with no web/")
 	}
 	// The running server must be untouched.
 	if got := read(t, filepath.Join(appDir, "server", "NanoKVM-Server")); got != "current-server" {
 		t.Errorf("server was modified on a rejected bundle: %q", got)
+	}
+}
+
+// seedDaemon writes an installed daemon binary at appDir/system/bin/myownmesh.
+func seedDaemon(t *testing.T, appDir, content string) string {
+	t.Helper()
+	p := filepath.Join(appDir, "system", "bin", "myownmesh")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// addDaemon writes a myownmesh binary into an already-built extracted bundle.
+func addDaemon(t *testing.T, bundleDir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(bundleDir, "myownmesh"), []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInstallBundleReplacesChangedDaemon(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "kvmapp")
+	daemonPath := seedDaemon(t, appDir, "old-daemon")
+
+	bundle := makeBundle(t, root, "srv", "web")
+	addDaemon(t, bundle, "new-daemon")
+
+	changed, err := installBundle(bundle, appDir)
+	if err != nil {
+		t.Fatalf("installBundle: %v", err)
+	}
+	if !changed {
+		t.Fatal("daemonChanged = false, want true for a changed daemon")
+	}
+	if got := read(t, daemonPath); got != "new-daemon" {
+		t.Errorf("daemon = %q, want new-daemon", got)
+	}
+	// No leftover staging/backup beside the daemon.
+	for _, leftover := range []string{"myownmesh.new", "myownmesh.old"} {
+		if _, err := os.Stat(filepath.Join(appDir, "system", "bin", leftover)); !os.IsNotExist(err) {
+			t.Errorf("leftover %s not cleaned up", leftover)
+		}
+	}
+}
+
+func TestInstallBundleInstallsDaemonOnFreshDevice(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "kvmapp") // no daemon seeded
+
+	bundle := makeBundle(t, root, "srv", "web")
+	addDaemon(t, bundle, "the-daemon")
+
+	changed, err := installBundle(bundle, appDir)
+	if err != nil {
+		t.Fatalf("installBundle: %v", err)
+	}
+	if !changed {
+		t.Fatal("daemonChanged = false, want true when no daemon was installed yet")
+	}
+	if got := read(t, filepath.Join(appDir, "system", "bin", "myownmesh")); got != "the-daemon" {
+		t.Errorf("daemon = %q, want the-daemon", got)
+	}
+}
+
+func TestInstallBundleLeavesUnchangedDaemon(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "kvmapp")
+	daemonPath := seedDaemon(t, appDir, "same-daemon")
+
+	bundle := makeBundle(t, root, "srv", "web")
+	addDaemon(t, bundle, "same-daemon") // byte-identical to the installed one
+
+	changed, err := installBundle(bundle, appDir)
+	if err != nil {
+		t.Fatalf("installBundle: %v", err)
+	}
+	if changed {
+		t.Error("daemonChanged = true, want false when the daemon is byte-identical")
+	}
+	if got := read(t, daemonPath); got != "same-daemon" {
+		t.Errorf("daemon = %q, want same-daemon", got)
+	}
+	if _, err := os.Stat(daemonPath + ".old"); !os.IsNotExist(err) {
+		t.Errorf("an unchanged daemon should not create a backup")
 	}
 }
