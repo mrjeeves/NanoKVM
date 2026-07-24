@@ -20,7 +20,8 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
   verified by sha256, and it's password-free over the AllMyStuff mesh. The
   version the updater compares is our fork's number (`server/buildinfo`), so a
   device no longer reads as the unrelated upstream `2.x` from `/kvmapp/version`.
-- **MyOwnMesh daemon pinned to v0.3.1** (`.myownmesh-rev`).
+- **MyOwnMesh daemon pinned to v0.3.2** (`.myownmesh-rev`) — picks up the
+  0.3.2 mesh-connectivity fixes.
 
 ## 0.1.0
 
