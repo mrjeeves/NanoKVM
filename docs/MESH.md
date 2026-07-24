@@ -138,14 +138,33 @@ of the mesh auth-bypass above: reached over the AllMyStuff mesh tunnel they need
 direct LAN caller still uses the KVM login. So an operator opens the KVM console
 over the mesh and clicks Update with no password; the update pulls our release
 bundle (`nanokvm-mesh-riscv64.tar.gz`) for the newest release, verifies its
-`.sha256`, installs the server + web with the same atomic placement `just
-deploy` uses, and restarts.
+`.sha256`, installs the server + web (and the bundled myownmesh daemon, when it
+differs from the installed one) with the same atomic placement `just deploy`
+uses, and restarts.
 
 > The update endpoint lives in the mesh server, so it can install a new build
 > but cannot resurrect a server that was already replaced by a non-mesh build.
-> Removing the stock updater is what keeps that from ever happening. A daemon
-> bump still rides a full on-site `just deploy` — a routine update ships only
-> the server + web, so it never restarts the daemon out from under the tunnel.
+> Removing the stock updater is what keeps that from ever happening. The daemon
+> rides along now: an update swaps in the bundled myownmesh and restarts it, but
+> **only when the pinned binary actually changed** (a sha256 compare) — so a
+> daemon-side fix (e.g. a mesh-connectivity fix) ships over the air, while an
+> ordinary server-only update never touches the daemon or the tunnel it serves.
+> When it does change, the daemon is bounced after the OK response has flushed
+> and just before the server restart (which ends this process), so the tunnel
+> drops only once the caller already has its answer. A full on-site `just
+> deploy` still works for out-of-band pushes.
+
+The one gap this leaves is a device updating *from* an older server: that
+server's updater installs this build but not the daemon (it predates the
+daemon-aware installer), so the device boots the new server still on the old
+daemon. The new server closes it on startup — it **reconciles its daemon once
+per version**. If the binary at `/kvmapp/system/bin/myownmesh` doesn't match the
+one this release pins, it fetches our release bundle for its own version, swaps
+the daemon in, and restarts it (the running bridge just reconnects — no server
+bounce). A marker under `$MYOWNMESH_HOME` records the version it reconciled, so
+ordinary boots do no work and touch no network. It's best-effort with backoff,
+so a device whose network (or clock, for GitHub's TLS) isn't up at boot
+converges once it is, or on the next boot.
 
 ## Configuration
 

@@ -31,6 +31,18 @@ const (
 	maxTries = 3
 )
 
+// Device service controls. The update handler restarts both; the startup
+// daemon reconcile (reconcile.go) restarts only the daemon.
+const (
+	serverRestartCmd = "/etc/init.d/S95nanokvm restart"
+	daemonRestartCmd = "/etc/init.d/S94myownmesh restart"
+
+	// daemonSyncMarker records, under the mesh home dir, the fork version whose
+	// daemon the startup reconcile has already ensured — so it runs once per
+	// version, not on every boot.
+	daemonSyncMarker = ".daemon-sync"
+)
+
 // tagPattern bounds an operator-supplied version to a release-tag shape
 // (`v0.1.0`) so it can only ever name a release under our own repo — never
 // smuggle a path segment or a different host into the download URL.
@@ -51,7 +63,8 @@ type updateRequest struct {
 // the auth — the whole point of reaching a KVM over the mesh), while a direct
 // LAN caller still needs the KVM login. Either way it pulls our release bundle
 // for `version` (default: latest), verifies its sha256, installs the server +
-// web over /kvmapp, and restarts.
+// web over /kvmapp (and the pinned myownmesh daemon when the bundle carries a
+// changed one), and restarts.
 func (s *Service) Update(c *gin.Context) {
 	var rsp proto.Response
 
@@ -70,7 +83,8 @@ func (s *Service) Update(c *gin.Context) {
 	}
 	defer releaseUpdateLock()
 
-	if err := runChannelUpdate(version); err != nil {
+	daemonChanged, err := runChannelUpdate(version)
+	if err != nil {
 		rsp.ErrRsp(c, -1, fmt.Sprintf("update failed: %s", err))
 		return
 	}
@@ -82,7 +96,20 @@ func (s *Service) Update(c *gin.Context) {
 	// before the server (and its bridge) bounce. The caller's connection drops
 	// and re-establishes on the new build.
 	time.Sleep(1 * time.Second)
-	_ = exec.Command("sh", "-c", "/etc/init.d/S95nanokvm restart").Run()
+
+	// A daemon bump is the one case a routine update restarts the daemon, and it
+	// MUST go before the server restart below: `S95nanokvm restart` kills this
+	// very process (killall NanoKVM-Server), so anything after it never runs.
+	// Restarting the daemon drops the mesh tunnel the update rode in on — fine
+	// now that the OK is flushed — and it's the only way a daemon-side fix (e.g.
+	// a mesh-connectivity fix) reaches the device, which the server + web swap
+	// alone can't deliver. Skipped when the daemon didn't change, so an ordinary
+	// update leaves the daemon and its tunnel untouched.
+	if daemonChanged {
+		log.Infof("bundled myownmesh daemon changed; restarting daemon")
+		_ = exec.Command("sh", "-c", daemonRestartCmd).Run()
+	}
+	_ = exec.Command("sh", "-c", serverRestartCmd).Run()
 }
 
 func versionLabel(version string) string {
@@ -102,10 +129,13 @@ func bundleURL(version, asset string) string {
 	return fmt.Sprintf("%s/download/%s/%s", releaseBaseURL, version, asset)
 }
 
-func runChannelUpdate(version string) error {
+// runChannelUpdate downloads, verifies, and installs the release bundle, and
+// reports whether the bundled myownmesh daemon was replaced (so the caller can
+// restart it).
+func runChannelUpdate(version string) (bool, error) {
 	_ = os.RemoveAll(CacheDir)
 	if err := os.MkdirAll(CacheDir, 0o755); err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = os.RemoveAll(CacheDir) }()
 
@@ -113,28 +143,30 @@ func runChannelUpdate(version string) error {
 	url := bundleURL(version, bundleAsset)
 	bundlePath := filepath.Join(CacheDir, bundleAsset)
 	if err := downloadWithRetry(url, bundlePath); err != nil {
-		return fmt.Errorf("download bundle: %w", err)
+		return false, fmt.Errorf("download bundle: %w", err)
 	}
 	shaPath := bundlePath + ".sha256"
 	if err := downloadWithRetry(url+".sha256", shaPath); err != nil {
-		return fmt.Errorf("download checksum: %w", err)
+		return false, fmt.Errorf("download checksum: %w", err)
 	}
 
 	// A firmware install MUST verify integrity — no soft-fail on a bad or
 	// missing checksum.
 	if err := verifySha256(bundlePath, shaPath); err != nil {
-		return fmt.Errorf("checksum: %w", err)
+		return false, fmt.Errorf("checksum: %w", err)
 	}
 
-	// Extract and install the server + web over /kvmapp.
+	// Extract and install the server + web over /kvmapp (and the daemon if it
+	// changed).
 	extractDir := filepath.Join(CacheDir, "bundle")
 	if _, err := utils.UnTarGz(bundlePath, extractDir); err != nil {
-		return fmt.Errorf("extract: %w", err)
+		return false, fmt.Errorf("extract: %w", err)
 	}
-	if err := installBundle(extractDir, AppDir); err != nil {
-		return fmt.Errorf("install: %w", err)
+	daemonChanged, err := installBundle(extractDir, AppDir)
+	if err != nil {
+		return false, fmt.Errorf("install: %w", err)
 	}
-	return nil
+	return daemonChanged, nil
 }
 
 // downloadWithRetry fetches url to target, retrying a few times (a release
@@ -194,34 +226,112 @@ func expectedSha256(shaFilePath string) (string, error) {
 	return fields[0], nil
 }
 
+// filesDiffer reports whether the file at b differs from the file at a by
+// sha256 content. A missing b counts as "differs" (a first install must place
+// it); any other error opening/reading either file is surfaced.
+func filesDiffer(a, b string) (bool, error) {
+	sumB, err := sha256File(b)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	sumA, err := sha256File(a)
+	if err != nil {
+		return false, err
+	}
+	return !strings.EqualFold(sumA, sumB), nil
+}
+
+// sha256File returns the hex-encoded sha256 of the file at path.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // installBundle places our build's server binary and web tree from the
 // extracted bundle into appDir (/kvmapp on device), atomically and with a
-// scoped backup so a mid-swap failure rolls both halves back together.
+// scoped backup so a mid-swap failure rolls all parts back together.
 //
-// It deliberately does NOT touch the myownmesh daemon binary the bundle also
-// carries: the daemon is pinned per release and a new server runs against the
-// existing daemon's stable control socket, so a routine update ships only the
-// server + web (what a stock OTA clobbers, and what carries our features). A
-// daemon bump rides a full on-site `just deploy`, never this endpoint —
-// restarting the daemon here would drop the mesh tunnel mid-update.
-func installBundle(bundleDir, appDir string) error {
+// It also swaps in the pinned myownmesh daemon the bundle carries, but ONLY
+// when that binary differs from the one already installed — the common
+// server-only update leaves the daemon (and the mesh tunnel it serves)
+// completely alone. It returns whether the daemon was replaced so the caller
+// can restart it: a daemon-side fix (e.g. a mesh-connectivity fix) rides
+// exactly this path, since the server + web swap alone can't deliver one. A
+// bundle with no daemon (older layout) simply skips it.
+func installBundle(bundleDir, appDir string) (bool, error) {
 	serverSrc := filepath.Join(bundleDir, "NanoKVM-Server")
 	webSrc := filepath.Join(bundleDir, "web")
 	if !isFile(serverSrc) {
-		return fmt.Errorf("bundle is missing NanoKVM-Server")
+		return false, fmt.Errorf("bundle is missing NanoKVM-Server")
 	}
 	if !isDir(webSrc) {
-		return fmt.Errorf("bundle is missing web/")
+		return false, fmt.Errorf("bundle is missing web/")
 	}
 
 	serverDir := filepath.Join(appDir, "server")
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
-		return err
+		return false, err
 	}
 	serverDst := filepath.Join(serverDir, "NanoKVM-Server")
 	webDst := filepath.Join(serverDir, "web")
 	serverBackup := serverDst + ".old"
 	webBackup := webDst + ".old"
+
+	// Decide the daemon up front (a read-only sha256 compare, no mutation): swap
+	// the bundled myownmesh in only when it differs from the installed binary,
+	// so an unchanged daemon is never rewritten and the caller never restarts
+	// it. A bundle without the daemon just skips it rather than failing.
+	daemonDst := filepath.Join(appDir, "system", "bin", "myownmesh")
+	daemonSrc := filepath.Join(bundleDir, "myownmesh")
+	daemonBackup := daemonDst + ".old"
+	swapDaemon := false
+	if isFile(daemonSrc) {
+		differs, err := filesDiffer(daemonSrc, daemonDst)
+		if err != nil {
+			return false, fmt.Errorf("compare daemon: %w", err)
+		}
+		swapDaemon = differs
+	}
+
+	// --- daemon binary (only when changed): stage, back up, swap in ---
+	// Done first so a failure here leaves the server + web untouched. Renaming
+	// over the live daemon is safe: on the Pro it keeps the old inode until
+	// systemd restarts it, and on the NanoKVM the running daemon is a tmpfs copy
+	// re-staged from this path on restart — so neither hits ETXTBSY the way an
+	// in-place copy of a running binary would.
+	if swapDaemon {
+		if err := os.MkdirAll(filepath.Dir(daemonDst), 0o755); err != nil {
+			return false, err
+		}
+		daemonStage := daemonDst + ".new"
+		if err := copyFileMode(daemonSrc, daemonStage, 0o755); err != nil {
+			return false, err
+		}
+		_ = os.Remove(daemonBackup)
+		if isFile(daemonDst) {
+			if err := os.Rename(daemonDst, daemonBackup); err != nil {
+				_ = os.Remove(daemonStage)
+				return false, err
+			}
+		}
+		if err := os.Rename(daemonStage, daemonDst); err != nil {
+			_ = os.Remove(daemonStage)
+			restore(daemonBackup, daemonDst)
+			return false, err
+		}
+	}
 
 	// --- server binary: stage beside, back up the current, swap in ---
 	// Rename replaces a running executable fine (the live process keeps the old
@@ -229,18 +339,27 @@ func installBundle(bundleDir, appDir string) error {
 	// place.
 	serverStage := serverDst + ".new"
 	if err := copyFileMode(serverSrc, serverStage, 0o755); err != nil {
-		return err
+		if swapDaemon {
+			restore(daemonBackup, daemonDst)
+		}
+		return false, err
 	}
 	_ = os.Remove(serverBackup)
 	if isFile(serverDst) {
 		if err := os.Rename(serverDst, serverBackup); err != nil {
 			_ = os.Remove(serverStage)
-			return err
+			if swapDaemon {
+				restore(daemonBackup, daemonDst)
+			}
+			return false, err
 		}
 	}
 	if err := os.Rename(serverStage, serverDst); err != nil {
 		restore(serverBackup, serverDst)
-		return err
+		if swapDaemon {
+			restore(daemonBackup, daemonDst)
+		}
+		return false, err
 	}
 
 	// --- web tree: stage web.new, swap over web, keep web.old until done ---
@@ -252,16 +371,22 @@ func installBundle(bundleDir, appDir string) error {
 	_ = os.RemoveAll(webBackup)
 	if err := utils.MoveFilesRecursively(webSrc, webStage); err != nil {
 		_ = os.RemoveAll(webStage)
-		// Both halves move together: undo the server swap so we never leave a
-		// new server with an old web.
+		// All parts move together: undo the server (and daemon) swap so we never
+		// leave a new server with an old web.
 		restore(serverBackup, serverDst)
-		return err
+		if swapDaemon {
+			restore(daemonBackup, daemonDst)
+		}
+		return false, err
 	}
 	if isDir(webDst) {
 		if err := os.Rename(webDst, webBackup); err != nil {
 			_ = os.RemoveAll(webStage)
 			restore(serverBackup, serverDst)
-			return err
+			if swapDaemon {
+				restore(daemonBackup, daemonDst)
+			}
+			return false, err
 		}
 	}
 	if err := os.Rename(webStage, webDst); err != nil {
@@ -270,16 +395,22 @@ func installBundle(bundleDir, appDir string) error {
 		}
 		_ = os.RemoveAll(webStage)
 		restore(serverBackup, serverDst)
-		return err
+		if swapDaemon {
+			restore(daemonBackup, daemonDst)
+		}
+		return false, err
 	}
 
 	// Success — drop the backups and normalize modes.
 	_ = os.Remove(serverBackup)
 	_ = os.RemoveAll(webBackup)
-	if err := chmodTree(webDst, 0o755); err != nil {
-		return err
+	if swapDaemon {
+		_ = os.Remove(daemonBackup)
 	}
-	return nil
+	if err := chmodTree(webDst, 0o755); err != nil {
+		return false, err
+	}
+	return swapDaemon, nil
 }
 
 // chmodTree sets mode on root and everything under it — the served web tree,
