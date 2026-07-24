@@ -31,6 +31,18 @@ const (
 	maxTries = 3
 )
 
+// Device service controls. The update handler restarts both; the startup
+// daemon reconcile (reconcile.go) restarts only the daemon.
+const (
+	serverRestartCmd = "/etc/init.d/S95nanokvm restart"
+	daemonRestartCmd = "/etc/init.d/S94myownmesh restart"
+
+	// daemonSyncMarker records, under the mesh home dir, the fork version whose
+	// daemon the startup reconcile has already ensured — so it runs once per
+	// version, not on every boot.
+	daemonSyncMarker = ".daemon-sync"
+)
+
 // tagPattern bounds an operator-supplied version to a release-tag shape
 // (`v0.1.0`) so it can only ever name a release under our own repo — never
 // smuggle a path segment or a different host into the download URL.
@@ -95,9 +107,9 @@ func (s *Service) Update(c *gin.Context) {
 	// update leaves the daemon and its tunnel untouched.
 	if daemonChanged {
 		log.Infof("bundled myownmesh daemon changed; restarting daemon")
-		_ = exec.Command("sh", "-c", "/etc/init.d/S94myownmesh restart").Run()
+		_ = exec.Command("sh", "-c", daemonRestartCmd).Run()
 	}
-	_ = exec.Command("sh", "-c", "/etc/init.d/S95nanokvm restart").Run()
+	_ = exec.Command("sh", "-c", serverRestartCmd).Run()
 }
 
 func versionLabel(version string) string {

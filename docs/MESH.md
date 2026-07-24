@@ -154,6 +154,18 @@ uses, and restarts.
 > drops only once the caller already has its answer. A full on-site `just
 > deploy` still works for out-of-band pushes.
 
+The one gap this leaves is a device updating *from* an older server: that
+server's updater installs this build but not the daemon (it predates the
+daemon-aware installer), so the device boots the new server still on the old
+daemon. The new server closes it on startup — it **reconciles its daemon once
+per version**. If the binary at `/kvmapp/system/bin/myownmesh` doesn't match the
+one this release pins, it fetches our release bundle for its own version, swaps
+the daemon in, and restarts it (the running bridge just reconnects — no server
+bounce). A marker under `$MYOWNMESH_HOME` records the version it reconciled, so
+ordinary boots do no work and touch no network. It's best-effort with backoff,
+so a device whose network (or clock, for GitHub's TLS) isn't up at boot
+converges once it is, or on the next boot.
+
 ## Configuration
 
 Add a `mesh` block to `/etc/kvm/server.yaml` (defaults shown):

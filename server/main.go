@@ -10,11 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"NanoKVM-Server/buildinfo"
 	"NanoKVM-Server/common"
 	"NanoKVM-Server/config"
 	"NanoKVM-Server/logger"
 	"NanoKVM-Server/middleware"
 	"NanoKVM-Server/router"
+	"NanoKVM-Server/service/application"
 	"NanoKVM-Server/service/button"
 	"NanoKVM-Server/service/mesh"
 	"NanoKVM-Server/service/mesh/glue"
@@ -97,6 +99,13 @@ func run() {
 		bridge.SetInputSink(glue.NewInputSink())
 		go bridge.Start(make(chan struct{}))
 		log.Println("AllMyStuff mesh bridge started")
+
+		// Converge onto the daemon this release pins. A device updated from an
+		// older server (whose updater installed only the server + web) boots
+		// here still running the previous daemon; this heals that once per
+		// version, out of band, without a manual deploy. A no-op on an ordinary
+		// boot once the marker is set.
+		go application.ReconcileDaemon(buildinfo.Version, conf.Mesh.DaemonBin, conf.Mesh.Home)
 
 		// Wire the physical BOOT button to the CEC hand-raise. We grab the input
 		// node so the screen firmware's own gestures (OLED nav, WiFi hotspot)
