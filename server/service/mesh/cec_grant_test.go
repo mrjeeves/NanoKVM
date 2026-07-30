@@ -63,11 +63,17 @@ func TestCecReadmitDoesNotExtendTheWindow(t *testing.T) {
 func TestCecExpiredGrantIsRefused(t *testing.T) {
 	home := t.TempDir()
 	// A grant that ran out while the device was off. Written by hand because
-	// GrantCecTech deliberately refuses to record a dead deadline.
+	// GrantCecTech deliberately refuses to record a dead deadline. Minted on a
+	// clock that was already set, so its deadline means what it says — a grant
+	// minted before the clock was set is a different case (see the re-anchor
+	// tests below), and using a zero mint time here would exercise that instead.
 	raw, err := json.Marshal(persistedState{
 		Claimable: false,
 		Owner:     "owner-node",
-		CecGrants: map[string]int64{"tech-pub": time.Now().Add(-time.Minute).Unix()},
+		CecGrants: map[string]cecGrant{"tech-pub": {
+			Granted: time.Now().Add(-4 * time.Hour).Unix(),
+			Expires: time.Now().Add(-time.Minute).Unix(),
+		}},
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -96,8 +102,8 @@ func TestCecExpiredGrantIsRefused(t *testing.T) {
 // lapsed technician still holds open (a running screen share won't stop itself).
 func TestPruneCecGrantsReportsExpired(t *testing.T) {
 	s := LoadState("")
-	s.GrantCecTech("live", time.Now().Add(cecGrantWindow))
-	s.GrantCecTech("short", time.Now().Add(2*time.Second))
+	s.GrantCecTech("live", cecGrantWindow)
+	s.GrantCecTech("short", 2*time.Second)
 
 	dropped := s.PruneCecGrants(time.Now().Add(time.Minute))
 	if len(dropped) != 1 || dropped[0] != "short" {
@@ -159,11 +165,11 @@ func TestCecEvictionFreesTheVideoLane(t *testing.T) {
 	}
 }
 
-// The owner answering their own device's raised hand picks up a CEC grant like
-// any technician. When that grant lapses they still hold standing authority
-// through senderMayControl, so the sweep must leave their session alone —
-// tearing it down would drop the screen share, the input route and the web-UI
-// tunnel of someone entitled to all three.
+// A peer with standing authority — the device's owner or a fleet co-member —
+// keeps its session when a CEC grant lapses. Whatever put a grant in their name,
+// their authority comes from senderMayControl and outlives it, so sweeping them
+// would drop the screen share, the input route and the web-UI tunnel of someone
+// entitled to all three.
 func TestCecEvictionSparesAPeerWithStandingAuthority(t *testing.T) {
 	b := &Bridge{state: LoadState(""), lanes: map[uint8]bool{}}
 	if !b.state.TryClaim("owner-node-ABCDE", "") {

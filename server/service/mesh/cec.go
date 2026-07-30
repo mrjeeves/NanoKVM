@@ -397,7 +397,7 @@ func (b *Bridge) cecAdmit(from string) (admit, lower bool) {
 	if !asking {
 		return false, false
 	}
-	b.state.GrantCecTech(key, time.Now().Add(cecGrantWindow))
+	b.state.GrantCecTech(key, cecGrantWindow)
 	log.Infof("mesh: CEC authorised technician %s for %s", key, cecGrantWindow)
 	return true, true
 }
@@ -445,13 +445,13 @@ func (b *Bridge) cecGrantJanitor(stop <-chan struct{}) {
 // display pump streaming this KVM's screen, the input route injecting its
 // keyboard and mouse, and any tunneled web-UI connections.
 //
-// A peer that still passes senderMayControl on its own account is left alone.
-// The owner answering their own device's raised hand picks up a grant like any
-// technician, but their authority never came from that grant — so its lapsing
-// must not drop a session they hold independently of it. Checked before b.mu is
-// taken, because senderMayControl takes it too. The unclaim path is unaffected:
-// it evicts after Unclaim() has cleared the owner, so nobody passes the check
-// and everybody goes.
+// A peer that still passes senderMayControl on its own account — the device's
+// owner, or a fleet co-member — is left alone. Their authority never came from
+// the CEC grant, so its lapsing says nothing about it, and tearing down a
+// session they hold independently would be a straightforward bug. Checked
+// before b.mu is taken, because senderMayControl takes it too. The unclaim path
+// is unaffected: it evicts after Unclaim() has cleared the owner, so nobody
+// passes the check and everybody goes.
 func (b *Bridge) evictTech(key string) {
 	if b.senderMayControl(key) {
 		return

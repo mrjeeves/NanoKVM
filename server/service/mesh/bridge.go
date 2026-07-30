@@ -1389,7 +1389,7 @@ func (b *Bridge) greetPeer(network, peer string) {
 // carry the first send's clock.
 func (b *Bridge) presencePayload() ([]byte, error) {
 	profile := b.currentProfile()
-	if now := time.Now(); now.Year() >= 2020 {
+	if now := time.Now(); clockSane(now) {
 		profile.SentAt = uint64(now.UnixMilli())
 	}
 	return json.Marshal(profile)

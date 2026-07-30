@@ -123,10 +123,17 @@ type HelpStatus struct {
 	Asking    bool   `json:"asking"`
 	SupportID string `json:"supportId"`
 	// Authorised reports whether a technician currently holds a grant, and
-	// ExpiresAt is the unix second the longest-running one runs out (0 when
-	// none). Together they let a viewer show what access is outstanding and
-	// how much of it is left, rather than presenting "someone may be connected"
-	// as an open-ended state.
+	// ExpiresAt is the unix second the longest-running one runs out. Together
+	// they let a viewer show what access is outstanding and how much of it is
+	// left, rather than presenting "someone may be connected" as an open-ended
+	// state.
+	//
+	// ExpiresAt is 0 when no grant is held — and ALSO when one is held that the
+	// device can't yet put a time on, which happens on a no-RTC box whose clock
+	// hasn't been set (see state.go). So read Authorised for whether access is
+	// live and ExpiresAt only for how long is left: authorised with a 0 expiry
+	// means "live, deadline not yet knowable", which a viewer should show as
+	// authorised without a countdown rather than as no access at all.
 	Authorised bool  `json:"authorised"`
 	ExpiresAt  int64 `json:"expiresAt,omitempty"`
 	// GrantSeconds is the length of the window an answered hand-raise grants,
@@ -136,12 +143,12 @@ type HelpStatus struct {
 
 // HelpStatus assembles the current hand-raise snapshot.
 func (b *Bridge) HelpStatus() HelpStatus {
-	expires := b.state.LatestCecGrant(time.Now())
+	expires, authorised := b.state.LatestCecGrant(time.Now())
 	return HelpStatus{
 		Enabled:      true,
 		Asking:       b.HelpAsking(),
 		SupportID:    b.SupportID(),
-		Authorised:   !expires.IsZero(),
+		Authorised:   authorised,
 		ExpiresAt:    unixOrZero(expires),
 		GrantSeconds: int64(cecGrantWindow / time.Second),
 	}
