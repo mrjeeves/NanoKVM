@@ -34,6 +34,11 @@ var (
 		"touch /boot/usb.rndis0",
 		"/etc/init.d/S03usbdev stop",
 		"/etc/init.d/S03usbdev start",
+		// Hand the tethered host an address. Without this the gadget comes up
+		// and the host's USB adapter sits unaddressed, so the KVM's own usb0
+		// address is unreachable from the one machine that should always be
+		// able to see it.
+		"/etc/init.d/S32usbdhcp start",
 		// Share the KVM's uplink internet with the tethered host, so the
 		// virtual network extends the host's connectivity instead of
 		// black-holing its default route. Best-effort (the script always
@@ -47,6 +52,7 @@ var (
 	// flag isn't an error: normally only one of the two is present.
 	unmountNetworkCommands = []string{
 		"/etc/init.d/S31usbnet stop",
+		"/etc/init.d/S32usbdhcp stop",
 		"/etc/init.d/S03usbdev stop",
 		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/rndis.usb0",
 		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/ncm.usb0",

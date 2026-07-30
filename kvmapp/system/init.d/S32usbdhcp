@@ -1,0 +1,126 @@
+#!/bin/sh
+# S32usbdhcp — give the USB-tethered host an address on the virtual network.
+#
+# The gadget (S03usbdev) gives the KVM a usb0 interface, but nothing was ever
+# giving the machine on the other end of the cable an IP. Its USB ethernet
+# adapter came up unaddressed — or self-assigned 169.254/16 — so it had no route
+# to the KVM's usb0 address and could not reach it at all. That made the one
+# path meant to work when the device has NO network the one path that never
+# worked: you could read the KVM's USB address off its own API and still not be
+# able to open it.
+#
+# S31usbnet's header already asserts the host "hands the attached host a DHCP
+# lease"; this is the half that makes that true.
+#
+# Deliberately hands out an address and netmask ONLY — no router, no DNS. The
+# host keeps its own default route and resolver, so plugging a KVM in can never
+# black-hole its internet (the failure S31usbnet exists to undo). Sharing the
+# KVM's uplink stays opt-in, and lives there.
+#
+# Runs at boot (rcS) and from the Virtual Network toggle. Idempotent and
+# best-effort: always exits 0, so nothing chained onto it can fail on a missing
+# udhcpd or an interface that hasn't appeared yet.
+
+IF=usb0
+CONF=/etc/udhcpd.usb0.conf
+PIDFILE=/var/run/udhcpd.usb0.pid
+LEASES=/var/lib/misc/udhcpd.usb0.leases
+UID_SRC=/sys/class/cvi-base/base_uid
+
+network_enabled() {
+    [ -e /boot/usb.ncm ] || [ -e /boot/usb.rndis0 ]
+}
+
+have_udhcpd() {
+    command -v udhcpd >/dev/null 2>&1
+}
+
+# usb_prefix — the /24 usb0 already carries (e.g. "10.55.7"), or empty. Honoured
+# ahead of anything we'd pick ourselves: the base image may address this
+# interface, and two writers fighting over it would be worse than either.
+usb_prefix() {
+    ip -o -4 addr show "$IF" 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1 |
+        awk -F. 'NF==4 { print $1"."$2"."$3 }'
+}
+
+# derived_prefix — a stable per-device 10.x.y, so two KVMs tethered to one host
+# don't land on the same subnet (which would leave the host with two interfaces
+# on one network and neither usable). S30wifi derives the Wi-Fi AP's prefix from
+# the first two bytes of this same hash; we take the next two, so a device
+# serving both can never put them on one subnet.
+derived_prefix() {
+    # cut -c, not head/tail: piping through echo appends a newline, and
+    # `tail -c 2` would then take one hex digit plus that newline — quietly
+    # collapsing the octet's range to 0-15 and making two devices far likelier
+    # to collide than the arithmetic suggests.
+    h=$(sha512sum "$UID_SRC" 2>/dev/null | cut -c5-8)
+    [ -n "$h" ] || h=2a1b
+    a=$(printf "%d" "0x$(echo "$h" | cut -c1-2)" 2>/dev/null) || a=42
+    b=$(printf "%d" "0x$(echo "$h" | cut -c3-4)" 2>/dev/null) || b=17
+    # Keep both octets legal and distinct, mirroring S30wifi's clamping.
+    [ "$a" -ge 255 ] && a=253
+    [ "$b" -ge 255 ] && b=254
+    [ "$a" = "$b" ] && b=$((b + 1))
+    echo "10.$a.$b"
+}
+
+start() {
+    network_enabled || { echo "usb-dhcp: virtual network off; nothing to serve"; return 0; }
+    have_udhcpd || { echo "usb-dhcp: udhcpd not found; skipping"; return 0; }
+
+    # The gadget may still be enumerating on a fresh bring-up.
+    i=0
+    while [ ! -e "/sys/class/net/$IF" ] && [ "$i" -lt 5 ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    [ -e "/sys/class/net/$IF" ] || { echo "usb-dhcp: $IF not present; skipping"; return 0; }
+
+    ip link set "$IF" up 2>/dev/null
+
+    prefix=$(usb_prefix)
+    if [ -z "$prefix" ]; then
+        prefix=$(derived_prefix)
+        echo "usb-dhcp: $IF has no address; assigning $prefix.1/24"
+        ip addr add "$prefix.1/24" dev "$IF" 2>/dev/null
+    fi
+    [ -n "$prefix" ] || { echo "usb-dhcp: no usable prefix; skipping"; return 0; }
+
+    mkdir -p /var/lib/misc
+    [ -e "$LEASES" ] || : > "$LEASES"
+
+    # Address + mask only. No option router / option dns on purpose — see header.
+    {
+        echo "start $prefix.100"
+        echo "end $prefix.200"
+        echo "interface $IF"
+        echo "pidfile $PIDFILE"
+        echo "lease_file $LEASES"
+        echo "option subnet 255.255.255.0"
+        echo "option lease 864000"
+    } > "$CONF"
+
+    stop_quiet
+    udhcpd -S "$CONF" 2>/dev/null
+    echo "usb-dhcp: serving $prefix.100-$prefix.200 on $IF"
+}
+
+stop_quiet() {
+    if [ -e "$PIDFILE" ]; then
+        kill "$(cat "$PIDFILE")" 2>/dev/null
+        rm -f "$PIDFILE"
+    fi
+}
+
+stop() {
+    stop_quiet
+    echo "usb-dhcp: stopped"
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    *)       echo "usage: $0 {start|stop|restart}" ;;
+esac
+exit 0
