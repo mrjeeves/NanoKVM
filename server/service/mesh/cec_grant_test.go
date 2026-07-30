@@ -135,3 +135,50 @@ func TestCecAdmitRefusesWhenNotAsking(t *testing.T) {
 		t.Fatal("a refused technician must not be left holding a grant")
 	}
 }
+
+// An expiring grant must hand its video lane back. Every other teardown path
+// (stopDisplayRoute, stopDisplaySession, tearDownNative) frees the lane under
+// b.mu; if the eviction sweep doesn't, each expiry burns one of maxVideoLanes
+// permanently and the device ends up refusing every display offer with nothing
+// but a reboot to clear it.
+func TestCecEvictionFreesTheVideoLane(t *testing.T) {
+	b := &Bridge{state: LoadState(""), lanes: map[uint8]bool{}}
+	lane, ok := b.allocLaneLocked()
+	if !ok {
+		t.Fatal("lane alloc failed")
+	}
+	b.display = &displaySession{routeID: "r1", peer: "tech-pub-AB12C", lane: lane, cancel: make(chan struct{})}
+
+	b.evictTech("tech-pub")
+
+	if b.display != nil {
+		t.Fatal("evicted technician kept its display session")
+	}
+	if b.lanes[lane] {
+		t.Fatalf("lane %d still held after eviction — every expiry would burn one of %d", lane, maxVideoLanes)
+	}
+}
+
+// The owner answering their own device's raised hand picks up a CEC grant like
+// any technician. When that grant lapses they still hold standing authority
+// through senderMayControl, so the sweep must leave their session alone —
+// tearing it down would drop the screen share, the input route and the web-UI
+// tunnel of someone entitled to all three.
+func TestCecEvictionSparesAPeerWithStandingAuthority(t *testing.T) {
+	b := &Bridge{state: LoadState(""), lanes: map[uint8]bool{}}
+	if !b.state.TryClaim("owner-node-ABCDE", "") {
+		t.Fatal("claim failed")
+	}
+	lane, _ := b.allocLaneLocked()
+	b.display = &displaySession{routeID: "r1", peer: "owner-node", lane: lane, cancel: make(chan struct{})}
+	b.inputRoute, b.inputPeer = "r1", "owner-node"
+
+	b.evictTech("owner-node")
+
+	if b.display == nil {
+		t.Fatal("the owner's display session was torn down by a lapsed CEC grant")
+	}
+	if b.inputPeer != "owner-node" {
+		t.Fatal("the owner's input route was cleared by a lapsed CEC grant")
+	}
+}
