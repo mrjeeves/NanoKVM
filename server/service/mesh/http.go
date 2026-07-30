@@ -7,6 +7,8 @@ package mesh
 // printed on a box.
 
 import (
+	"time"
+
 	"NanoKVM-Server/middleware"
 	"NanoKVM-Server/proto"
 
@@ -114,21 +116,51 @@ func RegisterRoutes(r *gin.Engine, bridge *Bridge) {
 	api.POST("/help/toggle", func(c *gin.Context) { handleHelp(c, bridge, helpToggle) })
 }
 
-// HelpStatus is the /api/mesh/help payload: whether a hand is up and this
-// device's dialable support number.
+// HelpStatus is the /api/mesh/help payload: whether a hand is up, this device's
+// dialable support number, and any live support authorisation.
 type HelpStatus struct {
 	Enabled   bool   `json:"enabled"`
 	Asking    bool   `json:"asking"`
 	SupportID string `json:"supportId"`
+	// Authorised reports whether a technician currently holds a grant, and
+	// ExpiresAt is the unix second the longest-running one runs out. Together
+	// they let a viewer show what access is outstanding and how much of it is
+	// left, rather than presenting "someone may be connected" as an open-ended
+	// state.
+	//
+	// ExpiresAt is 0 when no grant is held — and ALSO when one is held that the
+	// device can't yet put a time on, which happens on a no-RTC box whose clock
+	// hasn't been set (see state.go). So read Authorised for whether access is
+	// live and ExpiresAt only for how long is left: authorised with a 0 expiry
+	// means "live, deadline not yet knowable", which a viewer should show as
+	// authorised without a countdown rather than as no access at all.
+	Authorised bool  `json:"authorised"`
+	ExpiresAt  int64 `json:"expiresAt,omitempty"`
+	// GrantSeconds is the length of the window an answered hand-raise grants,
+	// so a viewer can say "3 hours" without hardcoding it.
+	GrantSeconds int64 `json:"grantSeconds"`
 }
 
 // HelpStatus assembles the current hand-raise snapshot.
 func (b *Bridge) HelpStatus() HelpStatus {
+	expires, authorised := b.state.LatestCecGrant(time.Now())
 	return HelpStatus{
-		Enabled:   true,
-		Asking:    b.HelpAsking(),
-		SupportID: b.SupportID(),
+		Enabled:      true,
+		Asking:       b.HelpAsking(),
+		SupportID:    b.SupportID(),
+		Authorised:   authorised,
+		ExpiresAt:    unixOrZero(expires),
+		GrantSeconds: int64(cecGrantWindow / time.Second),
 	}
+}
+
+// unixOrZero renders a deadline for the wire, using 0 (not the epoch) for "no
+// deadline" so a viewer can test the field directly.
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 type helpAction int

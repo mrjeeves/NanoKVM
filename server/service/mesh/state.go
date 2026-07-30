@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -33,12 +35,54 @@ type persistedState struct {
 	// claims enabled, shown on the web page, rotated after every successful
 	// claim. Persisted so the code an operator wrote down survives a restart.
 	ClaimCode string `json:"claim_code,omitempty"`
+	// CecGrants records the time-boxed CEC support authorisations this device
+	// has handed out: canonical technician pubkey → when it was made and when
+	// it runs out. Persisted for two reasons, both of which matter: a repair
+	// that spans a reboot isn't cut short halfway, and — more importantly — an
+	// expiry that has already been handed out cannot be forgotten by a restart
+	// into an unbounded grant. See cec.go.
+	CecGrants map[string]cecGrant `json:"cec_grants,omitempty"`
 	// JoiningPublic remembers which signaling policy the joining mesh was
 	// LAST JOINED with (nil = never recorded): the daemon persists a
 	// network's config across restarts, so when the operator flips
 	// config.Mesh.PublicClaims the bridge must re-join the mesh to apply the
 	// new signaling — this is how it notices.
 	JoiningPublic *bool `json:"joining_public,omitempty"`
+}
+
+// cecGrant is one time-boxed CEC support authorisation, as persisted. Both
+// stamps are unix seconds on the wall clock; Granted is kept because it's the
+// only way to tell, after a restart, that a deadline was minted before this
+// device's clock was ever set (see cecExpiryLocked).
+type cecGrant struct {
+	Granted int64 `json:"granted"`
+	Expires int64 `json:"expires"`
+}
+
+// UnmarshalJSON accepts the bare expiry a previous build wrote as well as the
+// object this one writes. That compatibility is not cosmetic: persistedState is
+// decoded as a whole, so one grant this build couldn't parse would fail the
+// entire record — and LoadState treats an unparseable record as corrupt,
+// quarantining it and resetting the device to claimable. A firmware update must
+// not be able to make a KVM forget its owner.
+//
+// A bare number carries no mint time, so it decodes with Granted zeroed, which
+// reads as "minted before the clock was set" — the conservative arm, since a
+// build that recorded no mint time is exactly the one that could have written
+// a 1970 deadline.
+func (g *cecGrant) UnmarshalJSON(raw []byte) error {
+	var expires int64
+	if err := json.Unmarshal(raw, &expires); err == nil {
+		g.Granted, g.Expires = 0, expires
+		return nil
+	}
+	type plain cecGrant // no recursion back into this method
+	var p plain
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return err
+	}
+	*g = cecGrant(p)
+	return nil
 }
 
 // State is the live, lock-guarded KVM ownership/attachment state. It persists to
@@ -49,6 +93,14 @@ type State struct {
 
 	mu   sync.Mutex
 	data persistedState
+
+	// cecMono is the monotonic deadline for each grant THIS process minted.
+	// Deliberately not persisted and deliberately preferred over the on-disk
+	// deadline while it exists: a monotonic reading can't be moved by the wall
+	// clock stepping, which is what NTP does on this no-RTC box, so a grant made
+	// before the clock landed still runs its full window instead of expiring the
+	// instant the correction arrives. Guarded by mu with the rest of the state.
+	cecMono map[string]time.Time
 
 	onChange func()
 }
@@ -305,7 +357,9 @@ func (s *State) SetAttachedTo(node, label string) bool {
 func (s *State) Unclaim() bool {
 	s.mu.Lock()
 	fresh := persistedState{Claimable: true}
-	if s.data == fresh {
+	// DeepEqual, not ==: persistedState carries the CEC grant map, and a struct
+	// with a map field isn't comparable.
+	if reflect.DeepEqual(s.data, fresh) {
 		s.mu.Unlock()
 		return false
 	}
@@ -344,4 +398,180 @@ func (s *State) AdoptFleetKey(key, name string, venue *string) bool {
 		s.notify()
 	}
 	return changed
+}
+
+// ---- CEC support grants ------------------------------------------------------
+//
+// A technician who answers this device's raised hand is authorised for a bounded
+// window, not indefinitely (see cec.go). The window lives here so it survives a
+// restart in BOTH directions: a repair spanning a reboot keeps working, and a
+// grant that has already expired can't be forgotten back into an open one.
+//
+// Measuring that window is harder than it looks on this hardware. The KVM has no
+// RTC, so it boots at 1970 and stays there until NTP lands. An absolute deadline
+// minted in that state is fiction, and the moment the clock corrects it lands
+// decades in the past — expiring a repair that is actively under way. So there
+// are two clocks here: a monotonic deadline, which is the authority for as long
+// as this process lives and cannot be moved by the wall clock stepping, and the
+// persisted wall-clock deadline, which exists only to carry a grant across a
+// restart. See cecExpiryLocked for how a grant minted before the clock was set
+// is re-anchored rather than retroactively killed.
+
+// GrantCecTech authorises `key` for `window` from now. A non-positive window is
+// refused, so a caller can never persist a grant that's already dead.
+//
+// The caller passes a duration rather than a deadline deliberately: computing
+// "now + 3h" against an unset clock is how you get a deadline in 1970, and this
+// is the one place that knows the clock might not be trustworthy.
+func (s *State) GrantCecTech(key string, window time.Duration) {
+	if key == "" || window <= 0 {
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	if s.data.CecGrants == nil {
+		s.data.CecGrants = map[string]cecGrant{}
+	}
+	if s.cecMono == nil {
+		s.cecMono = map[string]time.Time{}
+	}
+	s.data.CecGrants[key] = cecGrant{Granted: now.Unix(), Expires: now.Add(window).Unix()}
+	// Retains now's monotonic reading, so this deadline survives NTP landing.
+	s.cecMono[key] = now.Add(window)
+	s.persistLocked()
+	s.mu.Unlock()
+}
+
+// CecTechExpiry returns when `key`'s authorisation runs out and whether one is
+// currently held. An expired grant reports held=false — callers never have to
+// compare the deadline themselves. A held grant whose deadline can't yet be
+// stated (see cecExpiryLocked) reports the zero time with held=true.
+func (s *State) CecTechExpiry(key string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cecExpiryLocked(key, time.Now())
+}
+
+// cecExpiryLocked resolves one grant against `now` (caller holds s.mu), healing
+// a deadline the clock has invalidated.
+//
+// Three cases, in the order they're trusted:
+//
+//  1. This process minted the grant, so it holds a monotonic deadline for it.
+//     That is immune to the wall clock stepping and always wins — it's what
+//     keeps NTP landing mid-repair from ending the session.
+//  2. The grant came off disk (we restarted) and was minted while the clock was
+//     already set. Its absolute deadline means what it says.
+//  3. The grant came off disk and was minted before the clock was ever set, so
+//     its deadline is meaningless. If the clock is sane NOW, re-anchor to a full
+//     window from this moment — the first instant the device could measure one.
+//     If the clock is still unset there is nothing to measure with, and the
+//     grant is held: refusing would end a live repair on the strength of a
+//     deadline we know is fiction, and the window is still bounded by the next
+//     restart.
+func (s *State) cecExpiryLocked(key string, now time.Time) (time.Time, bool) {
+	g, ok := s.data.CecGrants[key]
+	if !ok {
+		return time.Time{}, false
+	}
+	if until, ok := s.cecMono[key]; ok {
+		return until, until.After(now)
+	}
+	if clockSane(time.Unix(g.Granted, 0)) {
+		at := time.Unix(g.Expires, 0)
+		return at, at.After(now)
+	}
+	if !clockSane(now) {
+		return time.Time{}, true
+	}
+	until := now.Add(cecGrantWindow)
+	s.data.CecGrants[key] = cecGrant{Granted: now.Unix(), Expires: until.Unix()}
+	if s.cecMono == nil {
+		s.cecMono = map[string]time.Time{}
+	}
+	s.cecMono[key] = until
+	s.persistLocked()
+	log.Infof("mesh: CEC grant for %s was minted before the clock was set — re-anchored to %s from now", key, cecGrantWindow)
+	return until, true
+}
+
+// RevokeCecTech drops `key`'s authorisation immediately (the technician ended
+// the session, or the device was unclaimed).
+func (s *State) RevokeCecTech(key string) {
+	s.mu.Lock()
+	if _, ok := s.data.CecGrants[key]; ok {
+		delete(s.data.CecGrants, key)
+		delete(s.cecMono, key)
+		s.persistLocked()
+	}
+	s.mu.Unlock()
+}
+
+// PruneCecGrants drops every authorisation that has run out by `now`, returning
+// the keys it dropped so the caller can tear down whatever they still hold open.
+// Resolution goes through cecExpiryLocked, so a grant the clock can't yet judge
+// is carried rather than swept.
+func (s *State) PruneCecGrants(now time.Time) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var dropped []string
+	for key := range s.data.CecGrants {
+		if _, held := s.cecExpiryLocked(key, now); held {
+			continue
+		}
+		delete(s.data.CecGrants, key)
+		delete(s.cecMono, key)
+		dropped = append(dropped, key)
+	}
+	if len(dropped) > 0 {
+		s.persistLocked()
+	}
+	return dropped
+}
+
+// LatestCecGrant reports whether any authorisation is outstanding at `now` and
+// the furthest-out deadline among them. held can be true with a zero deadline —
+// a grant the clock can't yet put a time on is still a grant, and a viewer
+// showing "authorised, no deadline" is honest where "not authorised" would be a
+// lie.
+func (s *State) LatestCecGrant(now time.Time) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest time.Time
+	held := false
+	for key := range s.data.CecGrants {
+		at, ok := s.cecExpiryLocked(key, now)
+		if !ok {
+			continue
+		}
+		held = true
+		if at.After(latest) {
+			latest = at
+		}
+	}
+	return latest, held
+}
+
+// CecGrantKeys returns the technician keys currently holding a grant, expired
+// or not — the eviction sweep a reset performs before clearing them.
+func (s *State) CecGrantKeys() map[string]struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]struct{}, len(s.data.CecGrants))
+	for key := range s.data.CecGrants {
+		out[key] = struct{}{}
+	}
+	return out
+}
+
+// ClearCecGrants drops every authorisation — the unclaim path, where the device
+// is handing itself back and must not stay reachable by a previous technician.
+func (s *State) ClearCecGrants() {
+	s.mu.Lock()
+	if len(s.data.CecGrants) > 0 {
+		s.data.CecGrants = nil
+		s.cecMono = nil
+		s.persistLocked()
+	}
+	s.mu.Unlock()
 }

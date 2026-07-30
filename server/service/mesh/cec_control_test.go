@@ -31,8 +31,10 @@ func TestCecApprovePayloadShape(t *testing.T) {
 	if got["t"] != "connect" || got["kind"] != "approve" || got["session_id"] != "s-123" {
 		t.Fatalf("top-level fields wrong: %v", got)
 	}
+	// ThreeHours, not Forever: the device really does end the grant on that
+	// deadline (cecGrantWindow), so the scope on the wire has to say so.
 	scope, ok := got["scope"].(map[string]any)
-	if !ok || scope["kind"] != "forever" {
+	if !ok || scope["kind"] != cecScopeThreeHours {
 		t.Fatalf("scope wrong: %v", got["scope"])
 	}
 }
@@ -40,11 +42,11 @@ func TestCecApprovePayloadShape(t *testing.T) {
 // approveTech authorizes a technician (by canonical pubkey), so senderMayControl
 // lets an answered technician drive — tolerant of the display-suffix form.
 func TestApprovedTechMayControl(t *testing.T) {
-	b := &Bridge{}
+	// Grants live in State now (persisted, so a window survives a reboot), so
+	// the bridge needs one. An empty home keeps it in memory.
+	b := &Bridge{state: LoadState("")}
 	// A new technician is refused while we're not asking for help, and stays
-	// unauthorized. (We don't call senderMayControl on an unapproved sender:
-	// that path reads b.state, which a bare Bridge doesn't have — the approved
-	// path we care about returns before touching it.)
+	// unauthorized.
 	if admit, _ := b.cecAdmit("tech-pub-AB12C"); admit {
 		t.Fatal("must not admit a technician when not asking for help")
 	}

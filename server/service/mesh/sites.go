@@ -85,6 +85,29 @@ func (h *siteHost) tearDownRoute(route string) {
 	}
 }
 
+// tearDownPeer closes every tunneled connection offered by one peer (matched on
+// its pubkey part) and forgets those routes — the path taken when a technician's
+// CEC authorisation expires while their tunnel is still open, where no Teardown
+// will arrive because the viewer hasn't finished.
+func (h *siteHost) tearDownPeer(pubkey string) {
+	h.mu.Lock()
+	var closing []*meshConn
+	for route, peer := range h.activeRoutes {
+		if pubkeyPart(peer) != pubkey {
+			continue
+		}
+		for _, c := range h.conns[route] {
+			closing = append(closing, c)
+		}
+		delete(h.conns, route)
+		delete(h.activeRoutes, route)
+	}
+	h.mu.Unlock()
+	for _, c := range closing {
+		_ = c.Close()
+	}
+}
+
 // tearDownAll closes every tunneled connection and forgets every route — the
 // daemon-connection-dropped path, where no Teardown/Close frame can ever
 // arrive to do it per-route.
