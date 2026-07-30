@@ -2,7 +2,6 @@ package vm
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -190,19 +189,24 @@ const usbNetAutoMarker = ".usbnet-auto"
 // this a factory-fresh device is only reachable by first getting it onto a
 // network — the thing you often need the KVM to help you do.
 //
+// It writes the flag and stops there — it does NOT recompose the running
+// gadget. See the body: tearing one down isn't something S03usbdev can do, so
+// "enabling" live mutates a composite the attached host is using and can take
+// its keyboard and mouse out. The next boot builds the gadget cleanly from the
+// flags, and a factory-fresh device should carry the flag in its image and
+// never reach this at all.
+//
 // Deliberately once per device, tracked by a marker rather than by the flag
 // file. The flag's absence can't distinguish "never configured" from
 // "deliberately turned off", so keying on it would put the gadget back every
-// boot and overrule an operator who switched it off. The marker is written only
-// after the gadget is actually up, so a failed attempt retries next boot
-// instead of silently giving up. It lives under the mesh home dir, which a
-// reflash wipes — a re-imaged device should get the setup path again.
+// boot and overrule an operator who switched it off. It lives under the mesh
+// home dir, which a reflash wipes — a re-imaged device should get the setup
+// path again.
 //
 // It never turns the gadget OFF. Claiming over the USB link is the whole point,
 // and disabling on claim would cut the very connection the claim arrived on.
 //
-// Best-effort and self-silencing: every failure is logged and returns. Meant to
-// be run in its own goroutine — it shells out and bounces the USB gadget.
+// Best-effort and self-silencing: every failure is logged and returns.
 func EnsureUsbNetworkForClaim(claimed bool, stateDir string) {
 	if claimed || stateDir == "" {
 		return
@@ -219,11 +223,24 @@ func EnsureUsbNetworkForClaim(claimed bool, stateDir string) {
 		on, _ = isDeviceExist(virtualNetworkNcm)
 	}
 	if !on {
-		if err := mountUsbNetwork(); err != nil {
-			log.Warnf("usb network auto-enable failed: %s", err)
+		// Write the flag ONLY. S03usbdev's "stop" is start_usb_host — it
+		// unbinds the UDC and flips the OTG role, and deliberately leaves the
+		// configfs tree standing. So a "stop; start" against a running gadget
+		// doesn't rebuild it: every mkdir fails File exists, every descriptor
+		// write fails Resource busy, and the composite is mutated in place
+		// under a host that is actively using it. Doing that here took the
+		// keyboard and mouse out on a live device — breaking the KVM's whole
+		// reason for existing to enable a convenience.
+		//
+		// The gadget is built cleanly exactly once per boot, from these flags,
+		// before this server starts. So the safe way to add a function is to
+		// write the flag and let the next boot compose it. A factory-fresh
+		// device should have the flag in its image and never reach this at all.
+		if err := os.WriteFile(virtualNetwork, nil, 0o644); err != nil {
+			log.Warnf("usb network auto-enable: write %s: %s", virtualNetwork, err)
 			return
 		}
-		log.Infof("usb network enabled for first claim — this KVM is reachable over its own USB cable")
+		log.Infof("usb network enabled for first claim — takes effect on the next boot (the running gadget is left alone on purpose)")
 	}
 
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -233,26 +250,4 @@ func EnsureUsbNetworkForClaim(claimed bool, stateDir string) {
 	if err := os.WriteFile(marker, []byte("1\n"), 0o644); err != nil {
 		log.Warnf("usb network auto-enable: write %s: %s", marker, err)
 	}
-}
-
-// mountUsbNetwork runs the same command sequence the Virtual Network toggle
-// does, under the same HID guard: recomposing the gadget tears down the HID
-// functions with it, so the keyboard/mouse device must be closed across the
-// restart and reopened after, or the server is left holding descriptors for a
-// gadget that no longer exists.
-func mountUsbNetwork() error {
-	h := hid.GetHid()
-	h.Lock()
-	h.CloseNoLock()
-	defer func() {
-		h.OpenNoLock()
-		h.Unlock()
-	}()
-
-	for _, command := range mountNetworkCommands {
-		if err := exec.Command("sh", "-c", command).Run(); err != nil {
-			return fmt.Errorf("%s: %w", command, err)
-		}
-	}
-	return nil
 }
