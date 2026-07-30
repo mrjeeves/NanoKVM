@@ -20,6 +20,7 @@ import (
 	"NanoKVM-Server/service/button"
 	"NanoKVM-Server/service/mesh"
 	"NanoKVM-Server/service/mesh/glue"
+	"NanoKVM-Server/service/vm"
 	"NanoKVM-Server/service/vm/jiggler"
 	"NanoKVM-Server/utils"
 
@@ -106,6 +107,15 @@ func run() {
 		// version, out of band, without a manual deploy. A no-op on an ordinary
 		// boot once the marker is set.
 		go application.ReconcileDaemon(buildinfo.Version, conf.Mesh.DaemonBin, conf.Mesh.Home)
+
+		// A device nobody has claimed yet needs to be reachable before it has a
+		// network — which is the whole difficulty, since getting it onto one is
+		// often what the KVM is for. Bringing the USB network gadget up makes the
+		// machine it's physically plugged into able to claim it over the cable,
+		// with no LAN, no router and no credentials. Once per device and never
+		// undone; see EnsureUsbNetworkForClaim. Off the startup path because it
+		// shells out and bounces the USB gadget.
+		go vm.EnsureUsbNetworkForClaim(bridge.Claimed(), conf.Mesh.Home)
 
 		// Wire the physical BOOT button to the CEC hand-raise. We grab the input
 		// node so the screen firmware's own gestures (OLED nav, WiFi hotspot)

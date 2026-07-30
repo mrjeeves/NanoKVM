@@ -270,3 +270,11 @@ func (b *Bridge) StatusSnapshot() MeshStatus {
 		ClaimCode:     claimCode,
 	}
 }
+
+// Claimed reports whether this device has a recorded owner. Read at startup to
+// decide whether the USB network should be brought up for a first claim (see
+// service/vm.EnsureUsbNetworkForClaim) — a cheap owner read rather than a whole
+// StatusSnapshot, which builds a profile this caller has no use for.
+func (b *Bridge) Claimed() bool {
+	return b.state.Owner() != ""
+}

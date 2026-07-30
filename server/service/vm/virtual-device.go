@@ -2,8 +2,10 @@ package vm
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -13,8 +15,18 @@ import (
 )
 
 const (
-	virtualNetwork = "/boot/usb.rndis0"
-	virtualDisk    = "/boot/usb.disk0"
+	// virtualNetwork is the flag this toggle WRITES: RNDIS, what this model has
+	// always used. S03usbdev also understands /boot/usb.ncm and prefers it when
+	// both exist (see virtualNetworkNcm) — NCM being the variant macOS speaks,
+	// where RNDIS is Windows-oriented. Switching the default is a deliberate
+	// change for another day; what matters here is that the read and teardown
+	// paths below know about both, so a hand-placed NCM flag (an SD card edited
+	// on a PC, the only way to configure a KVM that has never had a network)
+	// can't leave this toggle reporting "off" for a gadget that is plainly up,
+	// nor surviving a turn-off that only ever removed the RNDIS half.
+	virtualNetwork    = "/boot/usb.rndis0"
+	virtualNetworkNcm = "/boot/usb.ncm"
+	virtualDisk       = "/boot/usb.disk0"
 )
 
 var (
@@ -29,11 +41,17 @@ var (
 		"/etc/init.d/S31usbnet start",
 	}
 
+	// Off means off, whichever variant is up. Removing only the RNDIS half left
+	// an NCM gadget running with the UI reporting it gone — and S03usbdev
+	// prefers NCM, so the next start would rebuild it. `rm -f` so a missing
+	// flag isn't an error: normally only one of the two is present.
 	unmountNetworkCommands = []string{
 		"/etc/init.d/S31usbnet stop",
 		"/etc/init.d/S03usbdev stop",
 		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/rndis.usb0",
-		"rm /boot/usb.rndis0",
+		"rm -rf /sys/kernel/config/usb_gadget/g0/configs/c.1/ncm.usb0",
+		"rm -f /boot/usb.rndis0",
+		"rm -f /boot/usb.ncm",
 		"/etc/init.d/S03usbdev start",
 	}
 
@@ -54,7 +72,13 @@ var (
 func (s *Service) GetVirtualDevice(c *gin.Context) {
 	var rsp proto.Response
 
+	// Either flag means the gadget is up — S03usbdev builds NCM from one and
+	// RNDIS from the other, and reading only RNDIS reported "off" for a live
+	// NCM link the user could see on their machine.
 	network, _ := isDeviceExist(virtualNetwork)
+	if !network {
+		network, _ = isDeviceExist(virtualNetworkNcm)
+	}
 	disk, _ := isDeviceExist(virtualDisk)
 
 	rsp.OkRspWithData(c, &proto.GetVirtualDeviceRsp{
@@ -80,7 +104,13 @@ func (s *Service) UpdateVirtualDevice(c *gin.Context) {
 	case "network":
 		device = virtualNetwork
 
-		exist, _ := isDeviceExist(device)
+		// On means on under either flag. Checking only RNDIS meant a live NCM
+		// gadget read as off, so the toggle tried to MOUNT what was already up
+		// — writing a second flag rather than turning anything off.
+		exist, _ := isDeviceExist(virtualNetwork)
+		if !exist {
+			exist, _ = isDeviceExist(virtualNetworkNcm)
+		}
 		if !exist {
 			commands = mountNetworkCommands
 		} else {
@@ -137,4 +167,86 @@ func isDeviceExist(device string) (bool, error) {
 
 	log.Errorf("check file %s err: %s", device, err)
 	return false, err
+}
+
+// usbNetAutoMarker records, under the mesh home dir, that the USB network was
+// auto-enabled for first claim. Its presence — not the flag file's — is what
+// makes that a one-time act.
+const usbNetAutoMarker = ".usbnet-auto"
+
+// EnsureUsbNetworkForClaim brings the USB network gadget up on a device nobody
+// has claimed yet, so the machine it is physically plugged into can reach it
+// over the cable and claim it there.
+//
+// This is the setup path for an appliance with no network: the USB gadget needs
+// no LAN, no router, no DHCP server and no Wi-Fi credentials, and the KVM's web
+// server already binds every interface, so the full API answers on it. Without
+// this a factory-fresh device is only reachable by first getting it onto a
+// network — the thing you often need the KVM to help you do.
+//
+// Deliberately once per device, tracked by a marker rather than by the flag
+// file. The flag's absence can't distinguish "never configured" from
+// "deliberately turned off", so keying on it would put the gadget back every
+// boot and overrule an operator who switched it off. The marker is written only
+// after the gadget is actually up, so a failed attempt retries next boot
+// instead of silently giving up. It lives under the mesh home dir, which a
+// reflash wipes — a re-imaged device should get the setup path again.
+//
+// It never turns the gadget OFF. Claiming over the USB link is the whole point,
+// and disabling on claim would cut the very connection the claim arrived on.
+//
+// Best-effort and self-silencing: every failure is logged and returns. Meant to
+// be run in its own goroutine — it shells out and bounces the USB gadget.
+func EnsureUsbNetworkForClaim(claimed bool, stateDir string) {
+	if claimed || stateDir == "" {
+		return
+	}
+	marker := filepath.Join(stateDir, usbNetAutoMarker)
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+
+	// Already on (an image that ships it, or a flag placed by hand on the SD
+	// card): nothing to do, but record it so we never reconsider.
+	on, _ := isDeviceExist(virtualNetwork)
+	if !on {
+		on, _ = isDeviceExist(virtualNetworkNcm)
+	}
+	if !on {
+		if err := mountUsbNetwork(); err != nil {
+			log.Warnf("usb network auto-enable failed: %s", err)
+			return
+		}
+		log.Infof("usb network enabled for first claim — this KVM is reachable over its own USB cable")
+	}
+
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		log.Warnf("usb network auto-enable: create %s: %s", stateDir, err)
+		return
+	}
+	if err := os.WriteFile(marker, []byte("1\n"), 0o644); err != nil {
+		log.Warnf("usb network auto-enable: write %s: %s", marker, err)
+	}
+}
+
+// mountUsbNetwork runs the same command sequence the Virtual Network toggle
+// does, under the same HID guard: recomposing the gadget tears down the HID
+// functions with it, so the keyboard/mouse device must be closed across the
+// restart and reopened after, or the server is left holding descriptors for a
+// gadget that no longer exists.
+func mountUsbNetwork() error {
+	h := hid.GetHid()
+	h.Lock()
+	h.CloseNoLock()
+	defer func() {
+		h.OpenNoLock()
+		h.Unlock()
+	}()
+
+	for _, command := range mountNetworkCommands {
+		if err := exec.Command("sh", "-c", command).Run(); err != nil {
+			return fmt.Errorf("%s: %w", command, err)
+		}
+	}
+	return nil
 }
