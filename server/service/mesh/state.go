@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -33,6 +35,13 @@ type persistedState struct {
 	// claims enabled, shown on the web page, rotated after every successful
 	// claim. Persisted so the code an operator wrote down survives a restart.
 	ClaimCode string `json:"claim_code,omitempty"`
+	// CecGrants records the time-boxed CEC support authorisations this device
+	// has handed out: canonical technician pubkey → the unix second the grant
+	// expires. Persisted for two reasons, both of which matter: a repair that
+	// spans a reboot isn't cut short halfway, and — more importantly — an
+	// expiry that has already been handed out cannot be forgotten by a restart
+	// into an unbounded grant. See cec.go.
+	CecGrants map[string]int64 `json:"cec_grants,omitempty"`
 	// JoiningPublic remembers which signaling policy the joining mesh was
 	// LAST JOINED with (nil = never recorded): the daemon persists a
 	// network's config across restarts, so when the operator flips
@@ -305,7 +314,9 @@ func (s *State) SetAttachedTo(node, label string) bool {
 func (s *State) Unclaim() bool {
 	s.mu.Lock()
 	fresh := persistedState{Claimable: true}
-	if s.data == fresh {
+	// DeepEqual, not ==: persistedState carries the CEC grant map, and a struct
+	// with a map field isn't comparable.
+	if reflect.DeepEqual(s.data, fresh) {
 		s.mu.Unlock()
 		return false
 	}
@@ -344,4 +355,108 @@ func (s *State) AdoptFleetKey(key, name string, venue *string) bool {
 		s.notify()
 	}
 	return changed
+}
+
+// ---- CEC support grants ------------------------------------------------------
+//
+// A technician who answers this device's raised hand is authorised for a bounded
+// window, not indefinitely (see cec.go). The window lives here so it survives a
+// restart in BOTH directions: a repair spanning a reboot keeps working, and a
+// grant that has already expired can't be forgotten back into an open one.
+
+// GrantCecTech records (or extends) an authorisation for `key` running to
+// `until`. An expiry that isn't in the future is refused, so a caller can never
+// persist a grant that's already dead.
+func (s *State) GrantCecTech(key string, until time.Time) {
+	if key == "" || !until.After(time.Now()) {
+		return
+	}
+	s.mu.Lock()
+	if s.data.CecGrants == nil {
+		s.data.CecGrants = map[string]int64{}
+	}
+	s.data.CecGrants[key] = until.Unix()
+	s.persistLocked()
+	s.mu.Unlock()
+}
+
+// CecTechExpiry returns when `key`'s authorisation runs out and whether one is
+// currently held. An expired grant reports held=false — callers never have to
+// compare the deadline themselves.
+func (s *State) CecTechExpiry(key string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unix, ok := s.data.CecGrants[key]
+	if !ok {
+		return time.Time{}, false
+	}
+	at := time.Unix(unix, 0)
+	return at, at.After(time.Now())
+}
+
+// RevokeCecTech drops `key`'s authorisation immediately (the technician ended
+// the session, or the device was unclaimed).
+func (s *State) RevokeCecTech(key string) {
+	s.mu.Lock()
+	if _, ok := s.data.CecGrants[key]; ok {
+		delete(s.data.CecGrants, key)
+		s.persistLocked()
+	}
+	s.mu.Unlock()
+}
+
+// PruneCecGrants drops every authorisation that has run out by `now`, returning
+// the keys it dropped so the caller can tear down whatever they still hold open.
+func (s *State) PruneCecGrants(now time.Time) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var dropped []string
+	for key, unix := range s.data.CecGrants {
+		if !time.Unix(unix, 0).After(now) {
+			delete(s.data.CecGrants, key)
+			dropped = append(dropped, key)
+		}
+	}
+	if len(dropped) > 0 {
+		s.persistLocked()
+	}
+	return dropped
+}
+
+// LatestCecGrant returns the furthest-out expiry still live at `now`, or the
+// zero time when no authorisation is outstanding.
+func (s *State) LatestCecGrant(now time.Time) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest time.Time
+	for _, unix := range s.data.CecGrants {
+		at := time.Unix(unix, 0)
+		if at.After(now) && at.After(latest) {
+			latest = at
+		}
+	}
+	return latest
+}
+
+// CecGrantKeys returns the technician keys currently holding a grant, expired
+// or not — the eviction sweep a reset performs before clearing them.
+func (s *State) CecGrantKeys() map[string]struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]struct{}, len(s.data.CecGrants))
+	for key := range s.data.CecGrants {
+		out[key] = struct{}{}
+	}
+	return out
+}
+
+// ClearCecGrants drops every authorisation — the unclaim path, where the device
+// is handing itself back and must not stay reachable by a previous technician.
+func (s *State) ClearCecGrants() {
+	s.mu.Lock()
+	if len(s.data.CecGrants) > 0 {
+		s.data.CecGrants = nil
+		s.persistLocked()
+	}
+	s.mu.Unlock()
 }

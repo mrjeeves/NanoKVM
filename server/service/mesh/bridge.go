@@ -165,6 +165,12 @@ func NewBridge(engine *gin.Engine, conf *config.Config) *Bridge {
 // presence loop. It blocks until stop is closed, so callers run it in a
 // goroutine. Connect failures are non-fatal — the daemon may not be up yet.
 func (b *Bridge) Start(stop <-chan struct{}) {
+	// Expired CEC authorisations are swept for the whole life of the bridge,
+	// not per connection: a grant handed out before a reconnect must still end
+	// on time, and the sweep is what evicts a technician whose window closed
+	// while their screen share was still running (see cec.go).
+	go b.cecGrantJanitor(stop)
+
 	for {
 		select {
 		case <-stop:
@@ -725,6 +731,10 @@ func (b *Bridge) unclaim(from string) {
 		fleetNet = DeriveFleetNetworkID(key)
 	}
 	owner := b.state.Owner()
+	// Capture the CEC grants BEFORE the reset: Unclaim() replaces the whole
+	// persisted record with the fresh-device default, which drops the grant map
+	// with it — so reading them afterwards would find nothing to evict.
+	cecTechs := b.state.CecGrantKeys()
 	if !b.state.Unclaim() {
 		return
 	}
@@ -732,6 +742,18 @@ func (b *Bridge) unclaim(from string) {
 	// still-joined meshes (the old fleet included) — a cooperative goodbye —
 	// and now the memberships are rebuilt around the joining mesh.
 	log.Infof("mesh: released by %s — resetting to joining mesh + claim mode", from)
+
+	// Evict anyone still holding a CEC support authorisation. Unclaim() already
+	// dropped the grants themselves (they live in the record it reset), but the
+	// screen share or tunnel a technician had open survives until it's actually
+	// torn down — and a reset hands the device back, so nobody authorised under
+	// the previous owner keeps reaching it, whatever time was left on the clock.
+	for key := range cecTechs {
+		b.evictTech(key)
+	}
+	if err := b.LowerHand(); err != nil {
+		log.Debugf("mesh: lower hand on reset: %s", err)
+	}
 
 	b.membershipMu.Lock()
 	defer b.membershipMu.Unlock()

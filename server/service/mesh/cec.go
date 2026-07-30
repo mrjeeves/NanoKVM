@@ -53,6 +53,20 @@ const (
 	// (allmystuff-cec-protocol::HELP_BEACON_SECS). Technicians age a silent
 	// beacon out after HELP_TTL_SECS (90s), so this tolerates a missed beat.
 	cecHelpBeaconInterval = 20 * time.Second
+	// cecScopeThreeHours is the ApprovalScope this device grants
+	// (allmystuff-cec-protocol::ApprovalScope::ThreeHours, serialised
+	// internally-tagged as {"kind":"three_hours"}).
+	cecScopeThreeHours = "three_hours"
+	// cecGrantWindow is how long an answered hand-raise authorises a technician
+	// for. An appliance has nobody standing at it to tap "that's enough", so the
+	// authorisation has to end by itself — this is the whole reason the grant is
+	// time-boxed rather than the Forever an unattended device would otherwise be
+	// stuck with.
+	cecGrantWindow = 3 * time.Hour
+	// cecGrantSweep is how often expired grants are swept. Access is refused the
+	// moment a grant lapses (every check is deadline-aware), so this only
+	// governs how quickly an already-open stream is actually torn down.
+	cecGrantSweep = 30 * time.Second
 )
 
 // cecHelpWarmup is the front-loaded beacon schedule after a raise: absolute
@@ -94,11 +108,6 @@ type helpState struct {
 	joined bool          // whether we've joined the help network this run (idempotent join)
 	cancel chan struct{} // closed to stop the beacon loop
 	done   chan struct{} // closed when the beacon loop has exited
-	// techs is the set of canonical technician pubkeys we've auto-approved on
-	// the CEC control channel. A member passes senderMayControl, so an approved
-	// technician's screen/input routes are accepted — the whole point of
-	// answering a raised hand. Populated when we approve a connect-request.
-	techs map[string]struct{}
 }
 
 // RaiseHand puts this device's hand up on the CEC help mesh: it joins the help
@@ -352,54 +361,107 @@ func (b *Bridge) handleCecControl(network, from string, payload []byte) {
 
 // cecApprovePayload builds a ConnectControl::Approve frame for session_id. The
 // shape mirrors the internally-tagged Rust wire form exactly:
-// {"t":"connect","kind":"approve","session_id":...,"scope":{"kind":"forever"}}.
-// The technician ignores the scope (it only flips the session to active), so
-// Forever is a safe constant for an unattended appliance.
+// {"t":"connect","kind":"approve","session_id":…,"scope":{"kind":"three_hours"}}.
+//
+// The scope is what the device actually enforces (see cecAdmit): the technician
+// side treats an Approve as "session active" whatever the scope says, so the
+// deadline is ours to keep, not theirs to honour. Sending ThreeHours rather than
+// Forever keeps the wire honest about the grant we've really made.
 func cecApprovePayload(sessionID string) map[string]interface{} {
 	return map[string]interface{}{
 		"t":          "connect",
 		"kind":       "approve",
 		"session_id": sessionID,
-		"scope":      map[string]interface{}{"kind": "forever"},
+		"scope":      map[string]interface{}{"kind": cecScopeThreeHours},
 	}
 }
 
 // cecAdmit decides whether to auto-approve a connect Request from `from`, and
-// records the grant when it does. A technician we've already approved is always
-// re-admitted (a retransmit ack). A new technician is admitted only while we're
-// asking for help; `lower` is true exactly for that first admission — the cue to
-// drop our raised hand. admit=false refuses a new technician when we're not
-// asking, so an idle KVM can't be driven off the open support mesh.
+// records a cecGrantWindow authorisation when it does.
+//
+// A technician holding a live grant is always re-admitted (their Request
+// retransmits until the data channel is up, and each beat needs an ack) — but
+// re-admission does NOT extend the deadline, or a technician who stayed
+// connected would hold the device forever by simply not disconnecting. A new
+// technician is admitted only while we're actually asking for help, so an idle
+// KVM can't be driven off the open support mesh; `lower` is true exactly for
+// that first admission — the cue to drop our raised hand.
 func (b *Bridge) cecAdmit(from string) (admit, lower bool) {
 	key := pubkeyPart(from)
-	b.help.mu.Lock()
-	defer b.help.mu.Unlock()
-	if b.help.techs == nil {
-		b.help.techs = map[string]struct{}{}
-	}
-	if _, ok := b.help.techs[key]; ok {
+	if _, held := b.state.CecTechExpiry(key); held {
 		return true, false
 	}
-	if !b.help.asking {
+	b.help.mu.Lock()
+	asking := b.help.asking
+	b.help.mu.Unlock()
+	if !asking {
 		return false, false
 	}
-	b.help.techs[key] = struct{}{}
+	b.state.GrantCecTech(key, time.Now().Add(cecGrantWindow))
+	log.Infof("mesh: CEC authorised technician %s for %s", key, cecGrantWindow)
 	return true, true
 }
 
 // unapproveTech forgets a technician when their session ends.
 func (b *Bridge) unapproveTech(from string) {
-	b.help.mu.Lock()
-	defer b.help.mu.Unlock()
-	delete(b.help.techs, pubkeyPart(from))
+	b.state.RevokeCecTech(pubkeyPart(from))
 }
 
-// cecApprovedTech reports whether `from` is a technician we auto-approved.
+// cecApprovedTech reports whether `from` holds a live CEC authorisation. Every
+// caller reaches senderMayControl through this, so a lapsed grant stops being
+// obeyed the instant it lapses — no sweep needed for the refusal, only for
+// tearing down what's already open.
 func (b *Bridge) cecApprovedTech(from string) bool {
-	b.help.mu.Lock()
-	defer b.help.mu.Unlock()
-	_, ok := b.help.techs[pubkeyPart(from)]
-	return ok
+	_, held := b.state.CecTechExpiry(pubkeyPart(from))
+	return held
+}
+
+// cecGrantJanitor sweeps expired authorisations and evicts whatever the lapsed
+// technician still holds open.
+//
+// The refusal itself is already automatic — cecApprovedTech is deadline-aware,
+// so control messages, new route offers and (checked per event) input injection
+// all stop the moment the window closes. What needs doing here is the session
+// already in flight: a display route accepted while the grant was live keeps its
+// pump running, and a site tunnel keeps its connections, until something tears
+// them down. That something is this.
+func (b *Bridge) cecGrantJanitor(stop <-chan struct{}) {
+	ticker := time.NewTicker(cecGrantSweep)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-ticker.C:
+			for _, key := range b.state.PruneCecGrants(now) {
+				log.Infof("mesh: CEC authorisation for %s expired — ending its access", key)
+				b.evictTech(key)
+			}
+		}
+	}
+}
+
+// evictTech tears down everything a no-longer-authorised technician holds: the
+// display pump streaming this KVM's screen, the input route injecting its
+// keyboard and mouse, and any tunneled web-UI connections.
+func (b *Bridge) evictTech(key string) {
+	b.mu.Lock()
+	var stopDisplay *displaySession
+	if b.display != nil && pubkeyPart(b.display.peer) == key {
+		stopDisplay = b.display
+		b.display = nil
+	}
+	if b.inputPeer != "" && pubkeyPart(b.inputPeer) == key {
+		b.inputRoute = ""
+		b.inputPeer = ""
+	}
+	b.mu.Unlock()
+	if stopDisplay != nil {
+		close(stopDisplay.cancel)
+	}
+	if b.sites != nil {
+		b.sites.tearDownPeer(key)
+	}
 }
 
 // cecHelpNetworkConfig builds the daemon network config for the CEC help area.
