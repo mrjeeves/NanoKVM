@@ -11,7 +11,13 @@ import (
 const (
 	Wired    = "Wired"
 	Wireless = "Wireless"
-	Other    = "Other"
+	// USB is the network gadget on the KVM's own USB cable — rndis.usb0 or
+	// ncm.usb0, composed by S03usbdev when /boot/usb.rndis0 or /boot/usb.ncm
+	// exists. It matters because it's the one address that needs no LAN at all:
+	// the machine the appliance is physically plugged into can reach it over
+	// the cable, which is how a KVM gets configured before it has a network.
+	USB   = "USB"
+	Other = "Other"
 )
 
 type InterfaceInfo struct {
@@ -72,6 +78,14 @@ func getInterfaceType(iface net.Interface) string {
 
 	if strings.HasPrefix(iface.Name, "wlan") || strings.HasPrefix(iface.Name, "wl") {
 		return Wireless
+	}
+
+	// Without this the gadget interface falls through to Other, and Other is
+	// dropped by getInterfaceInfo — so the device reported every address it had
+	// EXCEPT the one reachable without a network, and a tethered host had no way
+	// to learn where to find it.
+	if strings.HasPrefix(iface.Name, "usb") {
+		return USB
 	}
 
 	return Other
