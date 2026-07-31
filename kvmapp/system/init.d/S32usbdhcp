@@ -101,8 +101,15 @@ start() {
     } > "$CONF"
 
     stop_quiet
-    udhcpd -S "$CONF" 2>/dev/null
-    echo "usb-dhcp: serving $prefix.100-$prefix.200 on $IF"
+    # Do NOT swallow stderr here. udhcpd rejecting its config is the one thing
+    # that leaves this script claiming to serve while nothing listens, and a
+    # 2>/dev/null on the launch made that indistinguishable from success — the
+    # link comes up, the leases file stays empty, and the log says "serving".
+    if udhcpd -S "$CONF"; then
+        echo "usb-dhcp: serving $prefix.100-$prefix.200 on $IF"
+    else
+        echo "usb-dhcp: udhcpd refused to start with $CONF"
+    fi
 }
 
 stop_quiet() {
