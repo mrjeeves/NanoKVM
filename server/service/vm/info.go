@@ -23,6 +23,26 @@ var imageVersionMap = map[string]string{
 	"2026-01-05-1_4_1.img":        "v1.4.2",
 }
 
+// webScheme and webPort report how to reach THIS device directly: the scheme and
+// port of its own listener, for a browser opening one of the addresses in
+// GetInfo's `ips`. The mesh site advert answers a different question — what the
+// tunnel speaks, always plaintext — and using that one for a direct link points
+// a browser at http:// on a TLS port.
+func webScheme() string {
+	if config.GetInstance().Proto == "https" {
+		return "https"
+	}
+	return "http"
+}
+
+func webPort() int {
+	conf := config.GetInstance()
+	if conf.Proto == "https" {
+		return conf.Port.Https
+	}
+	return conf.Port.Http
+}
+
 func (s *Service) GetInfo(c *gin.Context) {
 	var rsp proto.Response
 
@@ -32,6 +52,8 @@ func (s *Service) GetInfo(c *gin.Context) {
 		Image:       getImageVersion(),
 		Application: getApplicationVersion(),
 		DeviceKey:   getDeviceKey(),
+		WebScheme:   webScheme(),
+		WebPort:     webPort(),
 	}
 
 	rsp.OkRspWithData(c, data)

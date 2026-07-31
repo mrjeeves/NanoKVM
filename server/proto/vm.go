@@ -13,6 +13,17 @@ type GetInfoRsp struct {
 	Image       string `json:"image"`
 	Application string `json:"application"`
 	DeviceKey   string `json:"deviceKey"`
+	// WebScheme and WebPort describe THIS device's own listener — how to reach
+	// it directly at one of the addresses in IPs.
+	//
+	// Deliberately NOT the mesh site advert's scheme, which answers a different
+	// question: what the tunnel speaks, which is always plaintext because the
+	// sites plane serves gin in-process and never terminates TLS. Using that one
+	// for a direct link is what made "Open" build http:// against a Pro's TLS
+	// listener, which answers "Client sent an HTTP request to an HTTPS server".
+	// One field cannot be both.
+	WebScheme string `json:"webScheme"`
+	WebPort   int    `json:"webPort"`
 }
 
 type GetHardwareRsp struct {

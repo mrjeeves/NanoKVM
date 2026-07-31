@@ -95,11 +95,23 @@ func webPort(conf *config.Config) uint16 {
 	return uint16(conf.Port.Http)
 }
 
-// webScheme returns the URL scheme the web UI is reached with.
-func webScheme(conf *config.Config) string {
-	if conf.Proto == "https" {
-		return "https"
-	}
+// webScheme returns the URL scheme AllMyStuff should speak to the TUNNELED web
+// UI. It is ALWAYS "http", independent of the device's own LAN proto.
+//
+// The sites plane is a transparent layer-4 tunnel, and siteHost.serveHTTP serves
+// each tunneled connection as plaintext in-process HTTP through the gin engine —
+// TLS is never terminated on the tunnel. A viewer opens
+// "<scheme>://localhost:<localPort>" against its local end of that tunnel, so
+// this must describe what the TUNNEL speaks, not what the device's direct LAN
+// listener uses. It used to return "https" when proto=https, which would have
+// pointed a browser at TLS against a plaintext proxy; latent here only because
+// this model defaults to http, and the exact failure the Pro hit the other way
+// round.
+//
+// What a caller needs for a DIRECT link — the LAN, Wi-Fi or USB address — is a
+// different fact, and travels separately: GetInfo reports webScheme/webPort,
+// the device's own listener. One field cannot be both.
+func webScheme(_ *config.Config) string {
 	return "http"
 }
 
