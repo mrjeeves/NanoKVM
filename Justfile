@@ -411,8 +411,8 @@ deploy ip:
       #
       # An existing RNDIS flag is therefore MIGRATED, not preserved. Leaving it
       # would be respecting a setting that cannot work on any current host — it
-      # is a dead configuration, not an operator's choice, and a device already
-      # carrying one is precisely the device that needs the fix. The absence of
+      # is a dead configuration rather than a deliberate setting, and a device
+      # already carrying one is precisely the device that needs the fix. Absence of
       # both flags still means "off", and that IS a choice, so it is left alone.
       if [ -e /boot/usb.rndis0 ] && [ ! -e /boot/usb.ncm ]; then
         echo "device: migrating USB virtual network from RNDIS to NCM"
