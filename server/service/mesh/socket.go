@@ -482,6 +482,50 @@ func (s *Socket) RosterList(network string) ([]RosterEntry, error) {
 	return data.Roster, nil
 }
 
+// RosterApprove adds a peer to a network's approved-peers roster. On a CLOSED
+// network — every fleet mesh — the roster is the ONLY thing that admits an
+// authenticating peer, because auto_approve is false there and the daemon's
+// handshake consults exactly `cfg.auto_approve || already-rostered`.
+//
+// The daemon also emits our `approve` frame to the peer as part of this, so
+// calling it on a session that's already up promotes it there and then; a
+// device wedged at PendingApproval doesn't have to wait for a reconnect.
+func (s *Socket) RosterApprove(network, deviceID, label string) error {
+	_, err := s.request(request{
+		"op":        "roster_approve",
+		"network":   network,
+		"device_id": deviceID,
+		"label":     label,
+	})
+	return err
+}
+
+// PeerSummary is the subset of a peers_list entry we use. Status is the
+// daemon's PeerStatus, snake_case on the wire; "active" is the only value that
+// means application frames actually flow — a peer can sit authenticated at
+// "pending_approval" indefinitely with every frame dropped at the admission
+// gate.
+type PeerSummary struct {
+	DeviceID string `json:"device_id"`
+	Status   string `json:"status"`
+	Label    string `json:"label"`
+}
+
+// PeersList returns the daemon's live peer view for a network.
+func (s *Socket) PeersList(network string) ([]PeerSummary, error) {
+	resp, err := s.request(request{"op": "peers_list", "network": network})
+	if err != nil {
+		return nil, err
+	}
+	var data struct {
+		Peers []PeerSummary `json:"peers"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return nil, err
+	}
+	return data.Peers, nil
+}
+
 // Identity is the subset of identity_show we use.
 type Identity struct {
 	DeviceID string `json:"device_id"`
