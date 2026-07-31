@@ -14,23 +14,29 @@ import (
 )
 
 const (
-	// virtualNetwork is the flag this toggle WRITES: RNDIS, what this model has
-	// always used. S03usbdev also understands /boot/usb.ncm and prefers it when
-	// both exist (see virtualNetworkNcm) — NCM being the variant macOS speaks,
-	// where RNDIS is Windows-oriented. Switching the default is a deliberate
-	// change for another day; what matters here is that the read and teardown
-	// paths below know about both, so a hand-placed NCM flag (an SD card edited
-	// on a PC, the only way to configure a KVM that has never had a network)
-	// can't leave this toggle reporting "off" for a gadget that is plainly up,
-	// nor surviving a turn-off that only ever removed the RNDIS half.
-	virtualNetwork    = "/boot/usb.rndis0"
-	virtualNetworkNcm = "/boot/usb.ncm"
-	virtualDisk       = "/boot/usb.disk0"
+	// virtualNetwork is the flag we WRITE: NCM. S03usbdev builds either, and
+	// prefers this one when both exist.
+	//
+	// It used to be RNDIS, which is Windows-oriented and which macOS has no
+	// driver for at all — so on a Mac the gadget's network function simply
+	// never came up, and the USB path was dead before DHCP was even reached.
+	// A Mac is a likely thing to tether to a KVM for setup even where the
+	// machine being CONTROLLED is Windows or Linux, so the transport has to be
+	// the one all three speak. NCM is a standard CDC class: macOS and Linux
+	// take it natively, and Windows 10+ does too — S03usbdev already tags it
+	// with the WINNCM compatible id for exactly that.
+	//
+	// The RNDIS flag stays known to the read and teardown paths below, so a
+	// device that already has one keeps reporting and switching off correctly
+	// rather than stranding a gadget nothing admits to.
+	virtualNetwork      = "/boot/usb.ncm"
+	virtualNetworkRndis = "/boot/usb.rndis0"
+	virtualDisk         = "/boot/usb.disk0"
 )
 
 var (
 	mountNetworkCommands = []string{
-		"touch /boot/usb.rndis0",
+		"touch /boot/usb.ncm",
 		"/etc/init.d/S03usbdev stop",
 		"/etc/init.d/S03usbdev start",
 		// Hand the tethered host an address. Without this the gadget comes up
@@ -82,7 +88,7 @@ func (s *Service) GetVirtualDevice(c *gin.Context) {
 	// NCM link the user could see on their machine.
 	network, _ := isDeviceExist(virtualNetwork)
 	if !network {
-		network, _ = isDeviceExist(virtualNetworkNcm)
+		network, _ = isDeviceExist(virtualNetworkRndis)
 	}
 	disk, _ := isDeviceExist(virtualDisk)
 
@@ -114,7 +120,7 @@ func (s *Service) UpdateVirtualDevice(c *gin.Context) {
 		// — writing a second flag rather than turning anything off.
 		exist, _ := isDeviceExist(virtualNetwork)
 		if !exist {
-			exist, _ = isDeviceExist(virtualNetworkNcm)
+			exist, _ = isDeviceExist(virtualNetworkRndis)
 		}
 		if !exist {
 			commands = mountNetworkCommands
@@ -220,7 +226,7 @@ func EnsureUsbNetworkForClaim(claimed bool, stateDir string) {
 	// card): nothing to do, but record it so we never reconsider.
 	on, _ := isDeviceExist(virtualNetwork)
 	if !on {
-		on, _ = isDeviceExist(virtualNetworkNcm)
+		on, _ = isDeviceExist(virtualNetworkRndis)
 	}
 	if !on {
 		// Write the flag ONLY. S03usbdev's "stop" is start_usb_host — it

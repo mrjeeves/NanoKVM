@@ -397,6 +397,15 @@ deploy ip:
       mv /kvmapp/server/web.new /kvmapp/server/web
       rm -rf /kvmapp/server/web.old
       cp -f "$d/logo.bin" /boot/logo.bin
+      # USB virtual network on by default. The gadget is composed once per boot
+      # from these flags (S03usbdev) and cannot be safely rebuilt on a running
+      # device, so the flag has to be on disk BEFORE the reboot this deploy
+      # ends with — that is what makes a deployed KVM reachable over its own
+      # cable without anyone touching a file. NCM, not RNDIS: macOS has no
+      # RNDIS driver, and a Mac is a likely thing to tether for setup. Only
+      # placed when neither flag exists, so an operator who turned it off stays
+      # turned off across updates.
+      [ -e /boot/usb.ncm ] || [ -e /boot/usb.rndis0 ] || touch /boot/usb.ncm
       if [ -f "$d/kvm_system" ]; then
         mkdir -p /kvmapp/kvm_system
         cp -f "$d/kvm_system" /kvmapp/kvm_system/kvm_system
