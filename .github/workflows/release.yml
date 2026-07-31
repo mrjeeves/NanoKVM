@@ -125,6 +125,7 @@ jobs:
           mkdir -p bundle/init.d
           cp kvmapp/system/init.d/S31usbnet  bundle/init.d/S31usbnet
           cp kvmapp/system/init.d/S32usbdhcp bundle/init.d/S32usbdhcp
+          cp kvmapp/system/init.d/S03usbdev  bundle/init.d/S03usbdev
           chmod +x bundle/init.d/*
           chmod +x bundle/NanoKVM-Server bundle/myownmesh
           file bundle/myownmesh bundle/NanoKVM-Server

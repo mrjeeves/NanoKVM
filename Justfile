@@ -355,6 +355,7 @@ deploy ip:
     cp kvmapp/system/init.d/S94myownmesh "$p/S94myownmesh"
     cp kvmapp/system/init.d/S31usbnet    "$p/S31usbnet"
     cp kvmapp/system/init.d/S32usbdhcp   "$p/S32usbdhcp"
+    cp kvmapp/system/init.d/S03usbdev    "$p/S03usbdev"
     cp "{{oled_logo}}"                   "$p/logo.bin"
     cp -a web/dist/.                     "$p/web/"
     # OLED app is optional — only the local build-risc build produces it (too
@@ -390,6 +391,11 @@ deploy ip:
       cp -f "$d/S94myownmesh"   /etc/init.d/S94myownmesh
       cp -f "$d/S31usbnet"      /etc/init.d/S31usbnet
       cp -f "$d/S32usbdhcp"     /etc/init.d/S32usbdhcp
+      # The gadget composer. Copied like any other init script: it takes
+      # effect at the next boot, which this deploy ends with — the same
+      # discipline as the flags below, and the reason we never rebuild a
+      # live gadget.
+      cp -f "$d/S03usbdev"      /etc/init.d/S03usbdev
       rm -rf /kvmapp/server/web.new /kvmapp/server/web.old
       mkdir -p /kvmapp/server/web.new
       cp -a "$d/web/." /kvmapp/server/web.new/
@@ -424,7 +430,7 @@ deploy ip:
         cp -f "$d/kvm_system" /kvmapp/kvm_system/kvm_system
         chmod +x /kvmapp/kvm_system/kvm_system
       fi
-      chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /etc/init.d/S32usbdhcp /kvmapp/server/NanoKVM-Server
+      chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /etc/init.d/S32usbdhcp /etc/init.d/S03usbdev /kvmapp/server/NanoKVM-Server
       rm -rf "$d" /kvmapp/nanokvm-deploy.tar.gz
       echo "device: files staged"
     '
