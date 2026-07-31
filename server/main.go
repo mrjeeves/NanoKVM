@@ -101,12 +101,23 @@ func run() {
 		go bridge.Start(make(chan struct{}))
 		log.Println("AllMyStuff mesh bridge started")
 
-		// Converge onto the daemon this release pins. A device updated from an
-		// older server (whose updater installed only the server + web) boots
-		// here still running the previous daemon; this heals that once per
-		// version, out of band, without a manual deploy. A no-op on an ordinary
-		// boot once the marker is set.
-		go application.ReconcileDaemon(buildinfo.Version, conf.Mesh.DaemonBin, conf.Mesh.Home)
+		// Converge onto the rest of this release's payload — the pinned daemon
+		// and the boot scripts. A device updated from an older server is updated
+		// by that older server's updater, which installs only the parts it knows
+		// about, so the new server boots with pieces of its own release missing.
+		// This heals that once per version, out of band, without a manual
+		// deploy. A no-op on an ordinary boot once the marker is set.
+		go application.ReconcileRelease(buildinfo.Version, conf.Mesh.DaemonBin, conf.Mesh.Home)
+
+		// Retire an RNDIS USB gadget in favour of NCM. Unconditional and local:
+		// unlike the reconcile above it needs no network, no release tag and no
+		// marker, so it also converges a dev build and a device whose reconcile
+		// has already run. Windows 11 ships no in-box RNDIS driver and macOS
+		// never had one, so an RNDIS flag is a dead configuration rather than a
+		// setting — and a device still carrying one is exactly the device that
+		// needs the fix. A stat-and-return once migrated; absence of both flags
+		// still means "off", which IS a choice, and is left alone.
+		application.MigrateUsbNetworkFlag()
 
 		// A device nobody has claimed yet needs to be reachable before it has a
 		// network — which is the whole difficulty, since getting it onto one is

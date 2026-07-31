@@ -13,28 +13,42 @@ import (
 	"NanoKVM-Server/utils"
 )
 
-// ReconcileDaemon converges a device onto the myownmesh daemon this server
-// release pins, healing the one gap the over-the-air path can't cover itself:
-// a device updated FROM an older server (whose updater swapped only the server
-// + web and ignored the daemon) boots the new server still running the previous
-// daemon. This server can't have installed its own daemon during that update —
-// the old code did the installing — so it does it now, on startup.
+// ReconcileRelease converges a device onto the rest of the payload this server
+// release ships — the pinned myownmesh daemon and the boot scripts — healing the
+// one gap the over-the-air path can't cover itself.
+//
+// The code that performs an update is the code ALREADY ON THE DEVICE. A device
+// updating from an older server is updated by that older server's updater, which
+// installs only the parts it knows about: the server and web, and (before the
+// daemon shipped) not the daemon, and (before init.d shipped) not the boot
+// scripts. So the new server boots with pieces of its own release missing, and
+// nothing on-device fixes that. It can't have installed them during the very
+// update that installed it — so it does it now, on startup.
+//
+// Each new part of the bundle re-opens this hole for one release, which is why
+// this exists rather than being folded into the updater: the updater only ever
+// helps the NEXT upgrade, never the one that delivers it.
 //
 // It runs at most once per server version (a marker under stateDir records the
 // version last reconciled), so an ordinary boot does no work and never touches
 // the network. When the marker is stale it fetches our release bundle for this
-// exact version and swaps in the pinned daemon only if the installed binary
-// differs, then restarts the daemon (not the server — the running bridge simply
-// reconnects to it). Best-effort with backoff so a device whose network or
-// clock isn't up at boot still converges without waiting for a reboot; if it
-// never succeeds, the next boot retries.
+// exact version and installs what's missing: the pinned daemon if the installed
+// binary differs, and any boot script that differs. A changed daemon is
+// restarted (not the server — the running bridge simply reconnects to it).
+// Changed boot scripts are NOT run: their effects belong to a boot, and one of
+// them composes the USB gadget, which is how a KVM loses its keyboard
+// mid-session. They take effect at the device's next restart.
+//
+// Best-effort with backoff so a device whose network or clock isn't up at boot
+// still converges without waiting for a reboot; if it never succeeds, the next
+// boot retries.
 //
 // Meant to be called in its own goroutine — it sleeps and does network I/O, and
 // must never take down the server, so it recovers from panics and only logs.
-func ReconcileDaemon(version, daemonBin, stateDir string) {
+func ReconcileRelease(version, daemonBin, stateDir string) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf("daemon reconcile panicked: %v", r)
+			log.Errorf("release reconcile panicked: %v", r)
 		}
 	}()
 
@@ -44,9 +58,9 @@ func ReconcileDaemon(version, daemonBin, stateDir string) {
 		return
 	}
 
-	marker := filepath.Join(stateDir, daemonSyncMarker)
+	marker := filepath.Join(stateDir, releaseSyncMarker)
 	if synced, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(synced)) == version {
-		return // this server version already ensured its daemon
+		return // this server version already reconciled its payload
 	}
 
 	// Back off across attempts: the network (and, on a no-RTC box, a real clock
@@ -61,42 +75,48 @@ func ReconcileDaemon(version, daemonBin, stateDir string) {
 	} {
 		time.Sleep(delay)
 
-		changed, err := reconcileDaemon(version, daemonBin)
+		daemonChanged, scripts, err := reconcileRelease(version, daemonBin)
 		if err != nil {
-			log.Warnf("daemon reconcile attempt %d for %s failed: %v", attempt+1, version, err)
+			log.Warnf("release reconcile attempt %d for %s failed: %v", attempt+1, version, err)
 			continue
 		}
 
-		if changed {
-			log.Infof("daemon reconcile: installed the %s daemon; restarting it", version)
+		if daemonChanged {
+			log.Infof("release reconcile: installed the %s daemon; restarting it", version)
 			_ = exec.Command("sh", "-c", daemonRestartCmd).Run()
-		} else {
-			log.Infof("daemon reconcile: daemon already current for %s", version)
 		}
-		// Record success (whether or not the daemon changed) so we don't re-run
+		if scripts > 0 {
+			log.Infof("release reconcile: installed %d boot script(s) for %s; they take effect on the next restart",
+				scripts, version)
+		}
+		if !daemonChanged && scripts == 0 {
+			log.Infof("release reconcile: already current for %s", version)
+		}
+		// Record success (whether or not anything changed) so we don't re-run
 		// — or re-download — on every subsequent boot of this version.
 		if err := os.MkdirAll(stateDir, 0o755); err == nil {
 			_ = os.WriteFile(marker, []byte(version+"\n"), 0o644)
 		}
 		return
 	}
-	log.Warnf("daemon reconcile for %s did not complete; will retry on next boot", version)
+	log.Warnf("release reconcile for %s did not complete; will retry on next boot", version)
 }
 
-// reconcileDaemon downloads our release bundle for `version`, and if it carries
-// a myownmesh daemon that differs from the installed binary, swaps it in. It
-// reports whether the daemon changed. Serialized with the update endpoint via
-// the same lock so the two never fight over the cache dir.
-func reconcileDaemon(version, daemonBin string) (bool, error) {
+// reconcileRelease downloads our release bundle for `version` and installs the
+// parts of it that differ from what's on the device: the myownmesh daemon, and
+// the boot scripts. It reports whether the daemon changed and how many scripts
+// were written. Serialized with the update endpoint via the same lock so the two
+// never fight over the cache dir.
+func reconcileRelease(version, daemonBin string) (bool, int, error) {
 	if !acquireUpdateLock() {
-		// An update is running; it will install the daemon itself. Retry later.
-		return false, fmt.Errorf("an update is in progress")
+		// An update is running; it installs the same payload itself. Retry later.
+		return false, 0, fmt.Errorf("an update is in progress")
 	}
 	defer releaseUpdateLock()
 
 	_ = os.RemoveAll(CacheDir)
 	if err := os.MkdirAll(CacheDir, 0o755); err != nil {
-		return false, err
+		return false, 0, err
 	}
 	defer func() { _ = os.RemoveAll(CacheDir) }()
 
@@ -105,21 +125,40 @@ func reconcileDaemon(version, daemonBin string) (bool, error) {
 	url := bundleURL("v"+version, bundleAsset)
 	bundlePath := filepath.Join(CacheDir, bundleAsset)
 	if err := downloadWithRetry(url, bundlePath); err != nil {
-		return false, fmt.Errorf("download bundle: %w", err)
+		return false, 0, fmt.Errorf("download bundle: %w", err)
 	}
 	shaPath := bundlePath + ".sha256"
 	if err := downloadWithRetry(url+".sha256", shaPath); err != nil {
-		return false, fmt.Errorf("download checksum: %w", err)
+		return false, 0, fmt.Errorf("download checksum: %w", err)
 	}
 	if err := verifySha256(bundlePath, shaPath); err != nil {
-		return false, fmt.Errorf("checksum: %w", err)
+		return false, 0, fmt.Errorf("checksum: %w", err)
 	}
 
 	extractDir := filepath.Join(CacheDir, "bundle")
 	if _, err := utils.UnTarGz(bundlePath, extractDir); err != nil {
-		return false, fmt.Errorf("extract: %w", err)
+		return false, 0, fmt.Errorf("extract: %w", err)
 	}
-	return installDaemonFromBundle(extractDir, daemonBin)
+
+	return installReleaseFromBundle(extractDir, daemonBin)
+}
+
+// installReleaseFromBundle installs the parts of an extracted bundle that a
+// device updated by an older server never received: the boot scripts and the
+// pinned daemon. Reports whether the daemon changed and how many scripts were
+// written.
+//
+// Scripts first, and their result is returned even when the daemon step fails:
+// they're independent payloads, a bundle whose daemon already matches must
+// still be able to deliver a script, and having placed one is worth recording
+// either way.
+func installReleaseFromBundle(bundleDir, daemonBin string) (bool, int, error) {
+	scripts := installInitScripts(bundleDir)
+	daemonChanged, err := installDaemonFromBundle(bundleDir, daemonBin)
+	if err != nil {
+		return false, scripts, err
+	}
+	return daemonChanged, scripts, nil
 }
 
 // installDaemonFromBundle swaps the bundle's myownmesh into daemonDst when it
