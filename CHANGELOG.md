@@ -13,6 +13,24 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## Unreleased
 
+- **The USB drive comes formatted, named "CEC KVM", and carrying our icon.** It
+  is built in CI now (`support/usbdisk/`) and shipped in the release bundle,
+  rather than being made on the device at first boot. Building it there was
+  wrong twice over: `mkfs` on a multi-gigabyte file ran at `S03`, in the boot
+  path of a slow single-core board ahead of the network and the server; and the
+  "is it already there?" test was `[ -s image ]`, which a file created but not
+  successfully formatted passes. One interrupted first boot — a reboot landing
+  mid-format, so the cleanup never ran — left an unformatted volume that every
+  boot after happily exported, and Windows asked the customer to format their
+  KVM. Forever, because the next boot saw a non-empty file and asked no further
+  questions. `S03usbdev` now only checks the FAT boot signature before handing
+  the image to a host, so a half-made one is never exported again, and the
+  server installs the real one off the boot path. A formatted image already on
+  the device is the customer's drive and is never replaced. The bundled
+  `autorun.inf` is not for running anything — Windows disabled AutoRun for
+  removable drives in 2011 — but on a removable volume it still sets the drive's
+  icon and name.
+
 - **The startup reconcile now converges boot scripts too, not just the daemon.**
   The code that performs an update is the code already on the device, so a
   device updating _from_ an older server is updated by that server's updater —

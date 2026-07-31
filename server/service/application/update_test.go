@@ -1,6 +1,8 @@
 package application
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -432,5 +434,139 @@ func TestMigrateUsbNetworkFlagClearsStaleRndis(t *testing.T) {
 	}
 	if _, err := os.Stat(rndis); err == nil {
 		t.Fatal("stale RNDIS flag kept alongside NCM")
+	}
+}
+
+// gzipFile writes `body` gzipped to `path` — a stand-in for the bundle's
+// prebuilt drive image.
+func gzipFile(t *testing.T, path string, body []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fatImage returns bytes that look like a formatted FAT volume: the 0x55AA boot
+// signature at offset 510 is what every mkfs.vfat volume carries.
+func fatImage() []byte {
+	img := make([]byte, 1024)
+	img[510], img[511] = 0x55, 0xAA
+	return img
+}
+
+// The bug this replaced: S03usbdev built the image itself and treated "a file
+// of the right size exists" as "it's formatted". A boot interrupted mid-format
+// left a sized-but-empty file, and every boot after exported it — so Windows
+// asked the customer to format their KVM, forever. The image is built in CI
+// now, and a device carrying the broken one must be repaired.
+func TestInstallUsbDiskReplacesAnUnformattedImage(t *testing.T) {
+	bundle := t.TempDir()
+	gzipFile(t, filepath.Join(bundle, "usbdisk.img.gz"), fatImage())
+
+	dst := filepath.Join(t.TempDir(), "usbdisk.img")
+	// Exactly the broken state: right size, no filesystem.
+	if err := os.WriteFile(dst, make([]byte, 1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := usbDiskImageForTest
+	usbDiskImageForTest = dst
+	defer func() { usbDiskImageForTest = orig }()
+
+	if !installUsbDisk(bundle) {
+		t.Fatal("an unformatted image was not replaced")
+	}
+	if !looksFormatted(dst) {
+		t.Error("the replacement isn't a filesystem either")
+	}
+	// No stage file left behind.
+	if isFile(dst + ".new") {
+		t.Error("the staging file survived")
+	}
+}
+
+func TestInstallUsbDiskCreatesAMissingImage(t *testing.T) {
+	bundle := t.TempDir()
+	gzipFile(t, filepath.Join(bundle, "usbdisk.img.gz"), fatImage())
+
+	dst := filepath.Join(t.TempDir(), "sub", "usbdisk.img")
+	orig := usbDiskImageForTest
+	usbDiskImageForTest = dst
+	defer func() { usbDiskImageForTest = orig }()
+
+	if !installUsbDisk(bundle) {
+		t.Fatal("a missing image was not created")
+	}
+	if !looksFormatted(dst) {
+		t.Error("the created image isn't a filesystem")
+	}
+}
+
+// The drive is the CUSTOMER'S. Whatever they've put on it is theirs, and an
+// update that silently emptied it would be a worse bug than the one this fixes.
+func TestInstallUsbDiskLeavesAFormattedDriveAlone(t *testing.T) {
+	bundle := t.TempDir()
+	gzipFile(t, filepath.Join(bundle, "usbdisk.img.gz"), fatImage())
+
+	dst := filepath.Join(t.TempDir(), "usbdisk.img")
+	theirs := fatImage()
+	copy(theirs[0:11], []byte("THEIR STUFF"))
+	if err := os.WriteFile(dst, theirs, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := usbDiskImageForTest
+	usbDiskImageForTest = dst
+	defer func() { usbDiskImageForTest = orig }()
+
+	if installUsbDisk(bundle) {
+		t.Fatal("a formatted drive was overwritten")
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil || !bytes.Equal(got, theirs) {
+		t.Fatalf("the customer's drive was modified (%v)", err)
+	}
+}
+
+// A bundle from an older release carries no image — a quiet no-op, never
+// something that fails an update which already swapped in a working server.
+func TestInstallUsbDiskIgnoresBundleWithout(t *testing.T) {
+	if installUsbDisk(t.TempDir()) {
+		t.Fatal("claimed to install from a bundle with no image")
+	}
+}
+
+// Presence is not readiness — the distinction the whole change turns on.
+func TestLooksFormatted(t *testing.T) {
+	dir := t.TempDir()
+	blank := filepath.Join(dir, "blank.img")
+	if err := os.WriteFile(blank, make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if looksFormatted(blank) {
+		t.Error("a zero-filled file read as a filesystem")
+	}
+	short := filepath.Join(dir, "short.img")
+	if err := os.WriteFile(short, []byte("nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if looksFormatted(short) {
+		t.Error("a truncated file read as a filesystem")
+	}
+	if looksFormatted(filepath.Join(dir, "absent.img")) {
+		t.Error("a missing file read as a filesystem")
+	}
+	good := filepath.Join(dir, "good.img")
+	if err := os.WriteFile(good, fatImage(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !looksFormatted(good) {
+		t.Error("a FAT image didn't read as a filesystem")
 	}
 }
