@@ -117,6 +117,15 @@ jobs:
           tar -xzf "/tmp/${dasset}" -C bundle            # -> bundle/myownmesh
           cp server/NanoKVM-Server bundle/NanoKVM-Server
           cp -a web/dist bundle/web                      # -> bundle/web (the SPA)
+          # Init scripts ride along so an OTA can deliver one. Until now the
+          # bundle carried only the server, web and daemon, so a change to a
+          # boot script — or a NEW script the server depends on — reached a
+          # device only by a full flash or `just deploy`. That fails silently:
+          # the server arrives expecting something the device hasn't got.
+          mkdir -p bundle/init.d
+          cp kvmapp/system/init.d/S31usbnet  bundle/init.d/S31usbnet
+          cp kvmapp/system/init.d/S32usbdhcp bundle/init.d/S32usbdhcp
+          chmod +x bundle/init.d/*
           chmod +x bundle/NanoKVM-Server bundle/myownmesh
           file bundle/myownmesh bundle/NanoKVM-Server
           test -f bundle/web/index.html
@@ -127,7 +136,7 @@ jobs:
         run: |
           set -e
           NAME="nanokvm-mesh-riscv64"
-          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh web
+          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh web init.d
           sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
           ls -la "${NAME}.tar.gz"*
 

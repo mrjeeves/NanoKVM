@@ -410,7 +410,57 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	if err := chmodTree(webDst, 0o755); err != nil {
 		return false, err
 	}
+
+	// Init scripts last: the server and web are already in place, so a failure
+	// here can't strand a half-installed app, and a bundle without them (an
+	// older release) simply skips this.
+	installInitScripts(bundleDir)
 	return swapDaemon, nil
+}
+
+// initScriptDir is where Buildroot's rcS runs boot scripts from. The repo keeps
+// them under kvmapp/system/init.d/, which the firmware build installs here; an
+// OTA has to place them itself.
+const initScriptDir = "/etc/init.d"
+
+// initScriptDirForTest is the install target, indirected so a test can point it
+// somewhere writable instead of the real /etc/init.d.
+var initScriptDirForTest = initScriptDir
+
+// installInitScripts copies the bundle's init.d/ over the device's, so a boot
+// script can ship in an update.
+//
+// Until this existed the bundle carried only the server, web and daemon, so a
+// changed boot script — or a NEW one the server depends on — reached a device
+// only by a full flash or `just deploy`. That fails in the worst way: the
+// server arrives expecting something the device hasn't got, and nothing says
+// so. S32usbdhcp is exactly that case, which is what surfaced it.
+//
+// Best-effort by design. These are boot scripts: what's installed keeps running
+// either way, and the next boot picks up whatever landed. A failure must never
+// fail an update that has already swapped in a working server and web.
+//
+// Deliberately does NOT run them. Their effects belong to a boot — one of them
+// composes the USB gadget, and doing that under a host that is using it is how
+// a KVM loses its keyboard mid-session.
+func installInitScripts(bundleDir string) {
+	src := filepath.Join(bundleDir, "init.d")
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return // no init.d in this bundle — nothing to do
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		from := filepath.Join(src, e.Name())
+		to := filepath.Join(initScriptDirForTest, e.Name())
+		if err := copyFileMode(from, to, 0o755); err != nil {
+			log.Warnf("update: install init script %s: %s", e.Name(), err)
+			continue
+		}
+		log.Infof("update: installed init script %s", e.Name())
+	}
 }
 
 // chmodTree sets mode on root and everything under it — the served web tree,
