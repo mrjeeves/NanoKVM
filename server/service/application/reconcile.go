@@ -154,6 +154,12 @@ func reconcileRelease(version, daemonBin string) (bool, int, error) {
 // either way.
 func installReleaseFromBundle(bundleDir, daemonBin string) (bool, int, error) {
 	scripts := installInitScripts(bundleDir)
+	// The USB drive image rides the same reasoning: a device updated by an
+	// older server never received it, and it only takes effect at a boot, so it
+	// belongs in the same "staged, awaiting restart" count.
+	if installUsbDisk(bundleDir) {
+		scripts++
+	}
 	daemonChanged, err := installDaemonFromBundle(bundleDir, daemonBin)
 	if err != nil {
 		return false, scripts, err

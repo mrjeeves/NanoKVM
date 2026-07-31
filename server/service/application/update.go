@@ -1,6 +1,7 @@
 package application
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -420,6 +421,7 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	// here can't strand a half-installed app, and a bundle without them (an
 	// older release) simply skips this.
 	installInitScripts(bundleDir)
+	installUsbDisk(bundleDir)
 	MigrateUsbNetworkFlag()
 	return swapDaemon, nil
 }
@@ -529,6 +531,112 @@ func installInitScripts(bundleDir string) int {
 		changed++
 	}
 	return changed
+}
+
+// usbDiskImage backs the customer-facing USB drive: a filesystem of its own,
+// inside a file nothing but the gadget writes to. S03usbdev exports it when
+// /boot/usb.disk0 is empty. Indirected for tests.
+const usbDiskImage = "/data/usbdisk.img"
+
+var usbDiskImageForTest = usbDiskImage
+
+// looksFormatted reports whether an image carries a FAT boot signature.
+//
+// Presence is not readiness, and mistaking one for the other is what put an
+// unformatted drive in front of customers: S03usbdev used to build the image
+// itself and treat "a file of the right size exists" as "it's done", so a boot
+// interrupted mid-format left a volume Windows demanded be formatted — on every
+// boot after, forever, because the next boot saw a non-empty file and asked no
+// further questions.
+//
+// 0x55AA at offset 510 is the boot-sector signature every mkfs.vfat volume
+// carries and no zero-filled or truncated file does. Cheap, and decisive about
+// the exact failure that happened.
+func looksFormatted(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	var sig [2]byte
+	if _, err := f.ReadAt(sig[:], 510); err != nil {
+		return false
+	}
+	return sig[0] == 0x55 && sig[1] == 0xAA
+}
+
+// installUsbDisk lays down the release's prebuilt USB drive image, and reports
+// whether it wrote one.
+//
+// The image is built in CI (support/usbdisk/, release.yml) rather than on the
+// device: `mkfs` has no business in the boot path of a slow single-core board,
+// and building it once somewhere with a real toolchain also lets it carry the
+// autorun.inf that gives the drive our icon and the name "CEC KVM".
+//
+// **A formatted image already on the device is never replaced.** It is the
+// customer's drive; whatever they have put on it is theirs, and an update that
+// silently emptied it would be a worse bug than the one this fixes. Only a
+// missing image — or one that isn't a filesystem, which is exactly the broken
+// state described on looksFormatted — is written.
+//
+// Best-effort: a failure here leaves the device without a USB drive, which is
+// a missing convenience, not a broken KVM, and must never fail an update that
+// has already swapped in a working server.
+func installUsbDisk(bundleDir string) bool {
+	src := filepath.Join(bundleDir, "usbdisk.img.gz")
+	if !isFile(src) {
+		return false // a bundle from an older release
+	}
+	dst := usbDiskImageForTest
+	if looksFormatted(dst) {
+		return false // the customer's drive, with the customer's files on it
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		log.Warnf("update: usb drive: %s", err)
+		return false
+	}
+	// Stage and rename, so an interrupted write can never become the drive —
+	// the failure mode this whole change exists to remove.
+	stage := dst + ".new"
+	if err := gunzipTo(src, stage); err != nil {
+		_ = os.Remove(stage)
+		log.Warnf("update: usb drive: %s", err)
+		return false
+	}
+	if !looksFormatted(stage) {
+		_ = os.Remove(stage)
+		log.Warnf("update: usb drive image in the bundle isn't a filesystem; leaving the drive alone")
+		return false
+	}
+	if err := os.Rename(stage, dst); err != nil {
+		_ = os.Remove(stage)
+		log.Warnf("update: usb drive: %s", err)
+		return false
+	}
+	log.Infof("update: installed the USB drive image (takes effect on the next boot)")
+	return true
+}
+
+func gunzipTo(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	zr, err := gzip.NewReader(in)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = zr.Close() }()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	if _, err := io.Copy(out, zr); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 // chmodTree sets mode on root and everything under it — the served web tree,

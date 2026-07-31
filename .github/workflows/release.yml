@@ -127,6 +127,32 @@ jobs:
           cp kvmapp/system/init.d/S32usbdhcp bundle/init.d/S32usbdhcp
           cp kvmapp/system/init.d/S03usbdev  bundle/init.d/S03usbdev
           chmod +x bundle/init.d/*
+
+          # The customer-facing USB drive, built HERE rather than on the device.
+          # It used to be made on first boot by S03usbdev, which put mkfs in the
+          # boot path of a slow single-core board — and, worse, treated "a file
+          # of the right size exists" as "it's formatted", so a boot interrupted
+          # mid-format left a drive Windows asked the customer to format, on
+          # every boot after, forever.
+          #
+          # Building it once, somewhere with a real toolchain, removes both the
+          # boot-time work and the half-made state — and lets it carry files.
+          # autorun.inf is NOT for running anything (Windows disabled AutoRun for
+          # removable drives in 2011): on a removable volume it still sets the
+          # drive's icon and name, so the customer sees "CEC KVM" with our mark.
+          #
+          # 64 MiB of mostly zeros gzips to under 100 KB, so the bundle barely
+          # notices; it ships compressed because the device writes it to an SD
+          # card and there is no reason to move 64 MB to save a decompress.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dosfstools mtools
+          dd if=/dev/zero of=usbdisk.img bs=1M count=0 seek=64
+          mkfs.vfat -n "CEC KVM" usbdisk.img
+          MTOOLS_SKIP_CHECK=1 mcopy -i usbdisk.img support/usbdisk/autorun.inf ::/autorun.inf
+          MTOOLS_SKIP_CHECK=1 mcopy -i usbdisk.img support/usbdisk/cec.ico     ::/cec.ico
+          MTOOLS_SKIP_CHECK=1 mdir   -i usbdisk.img ::            # fail loudly if it isn't a filesystem
+          gzip -9 -c usbdisk.img > bundle/usbdisk.img.gz
+          rm -f usbdisk.img
           chmod +x bundle/NanoKVM-Server bundle/myownmesh
           file bundle/myownmesh bundle/NanoKVM-Server
           test -f bundle/web/index.html
@@ -137,7 +163,7 @@ jobs:
         run: |
           set -e
           NAME="nanokvm-mesh-riscv64"
-          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh web init.d
+          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh web init.d usbdisk.img.gz
           sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
           ls -la "${NAME}.tar.gz"*
 

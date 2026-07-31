@@ -356,6 +356,19 @@ deploy ip:
     cp kvmapp/system/init.d/S31usbnet    "$p/S31usbnet"
     cp kvmapp/system/init.d/S32usbdhcp   "$p/S32usbdhcp"
     cp kvmapp/system/init.d/S03usbdev    "$p/S03usbdev"
+    # The customer-facing USB drive. Built here rather than on the device (see
+    # support/usbdisk/README.md); needs dosfstools + mtools, so a developer
+    # without them still gets a working deploy, just no drive until the next
+    # over-the-air update installs the released one.
+    if command -v mkfs.vfat >/dev/null 2>&1 && command -v mcopy >/dev/null 2>&1; then
+      dd if=/dev/zero of="$p/usbdisk.img" bs=1M count=0 seek=64 2>/dev/null
+      mkfs.vfat -n "CEC KVM" "$p/usbdisk.img" >/dev/null
+      MTOOLS_SKIP_CHECK=1 mcopy -i "$p/usbdisk.img" support/usbdisk/autorun.inf ::/autorun.inf
+      MTOOLS_SKIP_CHECK=1 mcopy -i "$p/usbdisk.img" support/usbdisk/cec.ico     ::/cec.ico
+      gzip -9 -f "$p/usbdisk.img"
+    else
+      echo "note: dosfstools/mtools not found — skipping the USB drive image"
+    fi
     cp "{{oled_logo}}"                   "$p/logo.bin"
     cp -a web/dist/.                     "$p/web/"
     # OLED app is optional — only the local build-risc build produces it (too
@@ -396,6 +409,22 @@ deploy ip:
       # discipline as the flags below, and the reason we never rebuild a
       # live gadget.
       cp -f "$d/S03usbdev"      /etc/init.d/S03usbdev
+      # The USB drive image, if this deploy built one. A formatted image already
+      # on the device belongs to the customer and is left alone; only a missing
+      # one, or one that is not a filesystem (the half-made state the old
+      # build-on-device path could leave), is written. No apostrophes in here:
+      # this whole block is one single-quoted ssh argument, and one stray quote
+      # truncates the remote script mid-way -- which has already cost a deploy.
+      if [ -f "$d/usbdisk.img.gz" ]; then
+        sig=$(dd if=/data/usbdisk.img bs=1 skip=510 count=2 2>/dev/null | od -An -tx1 | tr -d " \n")
+        if [ "$sig" = "55aa" ]; then
+          echo "device: keeping the existing USB drive"
+        else
+          mkdir -p /data
+          gzip -dc "$d/usbdisk.img.gz" > /data/usbdisk.img.new && mv /data/usbdisk.img.new /data/usbdisk.img
+          echo "device: installed the USB drive image"
+        fi
+      fi
       rm -rf /kvmapp/server/web.new /kvmapp/server/web.old
       mkdir -p /kvmapp/server/web.new
       cp -a "$d/web/." /kvmapp/server/web.new/
