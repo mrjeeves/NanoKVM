@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { LoadingOutlined, RocketOutlined, SmileOutlined } from '@ant-design/icons';
+import {
+  DisconnectOutlined,
+  LoadingOutlined,
+  RocketOutlined,
+  SmileOutlined
+} from '@ant-design/icons';
 import { Button, Divider, Result, Spin } from 'antd';
 import { useTranslation } from 'react-i18next';
 import semver from 'semver';
@@ -23,17 +28,22 @@ export const Update = ({ setIsLocked }: UpdateProps) => {
   const [currentVersion, setCurrentVersion] = useState('');
   const [latestVersion, setLatestVersion] = useState('');
   const [errMsg, setErrMsg] = useState('');
+  // Why the channel lookup failed, straight from the device — so this says
+  // which wall it hit rather than leaving everyone to guess.
+  const [latestError, setLatestError] = useState('');
 
   useEffect(() => {
-    checkForUpdates();
+    // Page load is incidental, not a request to go and look — take the cached
+    // answer. The button below passes `true` and gets a real check.
+    checkForUpdates(false);
   }, []);
 
-  function checkForUpdates() {
+  function checkForUpdates(refresh = true) {
     if (status === 'loading') return;
     setStatus('loading');
 
     api
-      .getVersion()
+      .getVersion(refresh)
       .then((rsp: any) => {
         if (rsp.code !== 0 || !rsp.data) {
           setStatus('failed');
@@ -48,7 +58,15 @@ export const Update = ({ setIsLocked }: UpdateProps) => {
           const isLatest = semver.gte(rsp.data.current, rsp.data.latest);
           setStatus(isLatest ? 'latest' : 'outdated');
         } else {
-          setStatus('latest');
+          // No `latest` means the server got no answer from the release
+          // channel — the device has no route, no DNS, or a clock too far off
+          // for TLS. That is neither "behind" nor "up to date", and it used to
+          // be reported as the latter: a device that had simply lost its
+          // uplink showed "You already have the latest version", which reads
+          // as a checked fact. A released build then looks like one that never
+          // shipped, and the search starts in the wrong place entirely.
+          setLatestError(rsp.data?.latestError ?? '');
+          setStatus('unreachable');
         }
       })
       .catch(() => {
@@ -107,7 +125,7 @@ export const Update = ({ setIsLocked }: UpdateProps) => {
             title={currentVersion}
             subTitle={t('settings.update.isLatest')}
             extra={[
-              <Button key="confirm" onClick={checkForUpdates}>
+              <Button key="confirm" onClick={() => checkForUpdates(true)}>
                 {t('settings.update.title')}
               </Button>
             ]}
@@ -123,6 +141,24 @@ export const Update = ({ setIsLocked }: UpdateProps) => {
             extra={[
               <Button key="confirm" type="primary" onClick={update}>
                 {t('settings.update.confirm')}
+              </Button>
+            ]}
+          />
+        )}
+
+        {status === 'unreachable' && (
+          <Result
+            status="warning"
+            icon={<DisconnectOutlined />}
+            title={currentVersion}
+            subTitle={
+              latestError
+                ? `${t('settings.update.unreachable')} (${latestError})`
+                : t('settings.update.unreachable')
+            }
+            extra={[
+              <Button key="confirm" onClick={() => checkForUpdates(true)}>
+                {t('settings.update.title')}
               </Button>
             ]}
           />

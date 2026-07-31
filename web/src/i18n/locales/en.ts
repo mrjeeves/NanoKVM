@@ -507,6 +507,8 @@ const en = {
         queryFailed: 'Get version failed',
         updateFailed: 'Update failed. Please retry.',
         isLatest: 'You already have the latest version.',
+        unreachable:
+          "Couldn't check for updates — this device didn't reach the release channel. Check its internet connection and try again.",
         available: 'An update is available. Are you sure you want to update now?',
         updating: 'Update started. Please wait...',
         confirm: 'Confirm',
