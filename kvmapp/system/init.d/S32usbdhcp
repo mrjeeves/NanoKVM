@@ -110,6 +110,15 @@ stop_quiet() {
         kill "$(cat "$PIDFILE")" 2>/dev/null
         rm -f "$PIDFILE"
     fi
+    # Sweep anything the pidfile missed. udhcpd writes it a moment AFTER
+    # forking, so two starts close together — rcS at boot and the Virtual
+    # Network toggle, say — race: the second reads no pidfile, kills nothing,
+    # and leaves two servers answering on one link. Two DHCP servers handing
+    # out conflicting leases is worse than none, and it presents as the host
+    # intermittently failing to get an address at all.
+    for _p in $(ps 2>/dev/null | grep "udhcpd -S $CONF" | grep -v grep | awk '{print $1}'); do
+        kill "$_p" 2>/dev/null
+    done
 }
 
 stop() {
