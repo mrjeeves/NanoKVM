@@ -401,11 +401,24 @@ deploy ip:
       # from these flags (S03usbdev) and cannot be safely rebuilt on a running
       # device, so the flag has to be on disk BEFORE the reboot this deploy
       # ends with — that is what makes a deployed KVM reachable over its own
-      # cable without anyone touching a file. NCM, not RNDIS: macOS has no
-      # RNDIS driver, and a Mac is a likely thing to tether for setup. Only
-      # placed when neither flag exists, so an operator who turned it off stays
-      # turned off across updates.
-      [ -e /boot/usb.ncm ] || [ -e /boot/usb.rndis0 ] || touch /boot/usb.ncm
+      # cable without anyone touching a file.
+      #
+      # NCM, not RNDIS. Windows 11 ships no in-box RNDIS driver and macOS never
+      # had one: an RNDIS gadget enumerates, binds nothing, and lands in
+      # Device Manager under "Other devices" as an unusable entry — observed
+      # exactly that on a real desktop, with no network adapter and so no DHCP
+      # request ever sent.
+      #
+      # An existing RNDIS flag is therefore MIGRATED, not preserved. Leaving it
+      # would be respecting a setting that cannot work on any current host — it
+      # is a dead configuration, not an operator's choice, and a device already
+      # carrying one is precisely the device that needs the fix. The absence of
+      # both flags still means "off", and that IS a choice, so it is left alone.
+      if [ -e /boot/usb.rndis0 ] && [ ! -e /boot/usb.ncm ]; then
+        echo "device: migrating USB virtual network from RNDIS to NCM"
+        rm -f /boot/usb.rndis0
+        touch /boot/usb.ncm
+      fi
       if [ -f "$d/kvm_system" ]; then
         mkdir -p /kvmapp/kvm_system
         cp -f "$d/kvm_system" /kvmapp/kvm_system/kvm_system

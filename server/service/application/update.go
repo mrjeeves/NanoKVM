@@ -415,7 +415,54 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	// here can't strand a half-installed app, and a bundle without them (an
 	// older release) simply skips this.
 	installInitScripts(bundleDir)
+	migrateUsbNetworkFlag()
 	return swapDaemon, nil
+}
+
+// USB virtual-network flags, as S03usbdev reads them at boot.
+var (
+	usbFlagNcm   = "/boot/usb.ncm"
+	usbFlagRndis = "/boot/usb.rndis0"
+)
+
+// migrateUsbNetworkFlag switches a device from the RNDIS gadget to NCM.
+//
+// RNDIS cannot work on any current host. Windows 11 ships no in-box driver for
+// it and macOS never had one, so the function enumerates, binds nothing, and
+// sits in Device Manager under "Other devices" — no network adapter, therefore
+// no DHCP request, therefore a USB link that is up at every layer except the
+// one that matters. Observed exactly that on a real desktop.
+//
+// So an existing RNDIS flag is migrated rather than preserved: it is a dead
+// configuration, not an operator's choice, and a device already carrying one is
+// precisely the device that needs the fix. Only the flag is touched — the
+// running gadget is left alone, because rebuilding one under a host that is
+// using it is how a KVM loses its keyboard. The next boot composes NCM.
+//
+// The absence of BOTH flags is left alone. That one really is a choice: it
+// means the operator turned the virtual network off, and an update must not
+// switch a new USB interface on underneath a running deployment.
+func migrateUsbNetworkFlag() {
+	if _, err := os.Stat(usbFlagRndis); err != nil {
+		return // not on RNDIS; nothing to migrate
+	}
+	if _, err := os.Stat(usbFlagNcm); err == nil {
+		// Both present: S03usbdev prefers NCM, so it is already what boots.
+		// Drop the stale RNDIS flag so the two can't disagree.
+		if err := os.Remove(usbFlagRndis); err != nil {
+			log.Warnf("update: remove stale %s: %s", usbFlagRndis, err)
+		}
+		return
+	}
+	if err := os.WriteFile(usbFlagNcm, nil, 0o644); err != nil {
+		log.Warnf("update: write %s: %s", usbFlagNcm, err)
+		return
+	}
+	if err := os.Remove(usbFlagRndis); err != nil {
+		log.Warnf("update: remove %s: %s", usbFlagRndis, err)
+		return
+	}
+	log.Infof("update: USB virtual network migrated from RNDIS to NCM — active on the next boot")
 }
 
 // initScriptDir is where Buildroot's rcS runs boot scripts from. The repo keeps

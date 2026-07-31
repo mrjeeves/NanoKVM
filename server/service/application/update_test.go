@@ -344,3 +344,70 @@ func TestInstallInitScriptsPlacesBundledScripts(t *testing.T) {
 func TestInstallInitScriptsIgnoresBundleWithout(t *testing.T) {
 	installInitScripts(t.TempDir()) // must not panic
 }
+
+// RNDIS cannot work on any current host — Windows 11 ships no in-box driver and
+// macOS never had one — so a device carrying that flag has a USB link that is up
+// at every layer except the one that matters. An update migrates it rather than
+// preserving it.
+func TestMigrateUsbNetworkFlagSwitchesRndisToNcm(t *testing.T) {
+	dir := t.TempDir()
+	ncm, rndis := filepath.Join(dir, "usb.ncm"), filepath.Join(dir, "usb.rndis0")
+	orig := [2]string{usbFlagNcm, usbFlagRndis}
+	usbFlagNcm, usbFlagRndis = ncm, rndis
+	defer func() { usbFlagNcm, usbFlagRndis = orig[0], orig[1] }()
+
+	if err := os.WriteFile(rndis, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateUsbNetworkFlag()
+
+	if _, err := os.Stat(ncm); err != nil {
+		t.Fatalf("NCM flag not written: %v", err)
+	}
+	if _, err := os.Stat(rndis); err == nil {
+		t.Fatal("RNDIS flag still present — S03usbdev would still see a choice to make")
+	}
+}
+
+// Neither flag means the operator turned the virtual network OFF. That is a
+// real choice, and an update must not switch a new USB interface on underneath
+// a running deployment.
+func TestMigrateUsbNetworkFlagLeavesDisabledAlone(t *testing.T) {
+	dir := t.TempDir()
+	ncm, rndis := filepath.Join(dir, "usb.ncm"), filepath.Join(dir, "usb.rndis0")
+	orig := [2]string{usbFlagNcm, usbFlagRndis}
+	usbFlagNcm, usbFlagRndis = ncm, rndis
+	defer func() { usbFlagNcm, usbFlagRndis = orig[0], orig[1] }()
+
+	migrateUsbNetworkFlag()
+
+	if _, err := os.Stat(ncm); err == nil {
+		t.Fatal("an update enabled the USB network on a device that had it off")
+	}
+}
+
+// Both present: S03usbdev prefers NCM, so that is already what boots. Drop the
+// stale RNDIS flag so the two can't disagree about what the device is.
+func TestMigrateUsbNetworkFlagClearsStaleRndis(t *testing.T) {
+	dir := t.TempDir()
+	ncm, rndis := filepath.Join(dir, "usb.ncm"), filepath.Join(dir, "usb.rndis0")
+	orig := [2]string{usbFlagNcm, usbFlagRndis}
+	usbFlagNcm, usbFlagRndis = ncm, rndis
+	defer func() { usbFlagNcm, usbFlagRndis = orig[0], orig[1] }()
+
+	for _, p := range []string{ncm, rndis} {
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	migrateUsbNetworkFlag()
+
+	if _, err := os.Stat(ncm); err != nil {
+		t.Fatalf("NCM flag removed: %v", err)
+	}
+	if _, err := os.Stat(rndis); err == nil {
+		t.Fatal("stale RNDIS flag kept alongside NCM")
+	}
+}
