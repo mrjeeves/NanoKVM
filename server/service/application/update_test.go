@@ -324,7 +324,9 @@ func TestInstallInitScriptsPlacesBundledScripts(t *testing.T) {
 	initScriptDirForTest = target
 	defer func() { initScriptDirForTest = orig }()
 
-	installInitScripts(bundle)
+	if n := installInitScripts(bundle); n != 1 {
+		t.Fatalf("installed %d scripts, want 1", n)
+	}
 
 	got := filepath.Join(target, "S32usbdhcp")
 	fi, err := os.Stat(got)
@@ -336,13 +338,34 @@ func TestInstallInitScriptsPlacesBundledScripts(t *testing.T) {
 	if fi.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("installed mode %v is not executable", fi.Mode().Perm())
 	}
+
+	// Re-running must be a no-op. The startup reconcile calls this on a bundle
+	// the device may already match, and rewriting identical files onto flash —
+	// while logging "installed" — is both wear and a lie.
+	if n := installInitScripts(bundle); n != 0 {
+		t.Fatalf("re-install wrote %d scripts, want 0", n)
+	}
+
+	// A script that really did change is written, though.
+	if err := os.WriteFile(filepath.Join(dir, "S32usbdhcp"), []byte("#!/bin/sh\nexit 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n := installInitScripts(bundle); n != 1 {
+		t.Fatalf("changed script: installed %d, want 1", n)
+	}
+	body, err := os.ReadFile(got)
+	if err != nil || string(body) != "#!/bin/sh\nexit 1\n" {
+		t.Fatalf("changed script not written through: %q (%v)", body, err)
+	}
 }
 
 // A bundle from an older release has no init.d/. That must be a quiet no-op,
 // never an error that fails an update which has already swapped in a working
 // server and web.
 func TestInstallInitScriptsIgnoresBundleWithout(t *testing.T) {
-	installInitScripts(t.TempDir()) // must not panic
+	if n := installInitScripts(t.TempDir()); n != 0 { // must not panic
+		t.Fatalf("installed %d scripts from an empty bundle", n)
+	}
 }
 
 // RNDIS cannot work on any current host — Windows 11 ships no in-box driver and
@@ -360,7 +383,7 @@ func TestMigrateUsbNetworkFlagSwitchesRndisToNcm(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	migrateUsbNetworkFlag()
+	MigrateUsbNetworkFlag()
 
 	if _, err := os.Stat(ncm); err != nil {
 		t.Fatalf("NCM flag not written: %v", err)
@@ -380,7 +403,7 @@ func TestMigrateUsbNetworkFlagLeavesDisabledAlone(t *testing.T) {
 	usbFlagNcm, usbFlagRndis = ncm, rndis
 	defer func() { usbFlagNcm, usbFlagRndis = orig[0], orig[1] }()
 
-	migrateUsbNetworkFlag()
+	MigrateUsbNetworkFlag()
 
 	if _, err := os.Stat(ncm); err == nil {
 		t.Fatal("an update enabled the USB network on a device that had it off")
@@ -402,7 +425,7 @@ func TestMigrateUsbNetworkFlagClearsStaleRndis(t *testing.T) {
 		}
 	}
 
-	migrateUsbNetworkFlag()
+	MigrateUsbNetworkFlag()
 
 	if _, err := os.Stat(ncm); err != nil {
 		t.Fatalf("NCM flag removed: %v", err)

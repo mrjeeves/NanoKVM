@@ -13,6 +13,28 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## Unreleased
 
+- **The startup reconcile now converges boot scripts too, not just the daemon.**
+  The code that performs an update is the code already on the device, so a
+  device updating _from_ an older server is updated by that server's updater —
+  which copies only the parts it knows about and silently ignores an `init.d/`
+  it has never heard of. The build that added init scripts to the bundle
+  therefore couldn't deliver them during the very update that installed it:
+  `S03usbdev`, `S32usbdhcp` and `S31usbnet` would have waited for the release
+  *after* the one that carries them. The startup reconcile — which already
+  fetches this exact version's bundle to heal the identical daemon gap — now
+  installs any boot script that differs as well, closing it in one hop. Scripts
+  are written only when they actually differ (no rewriting identical files onto
+  flash, and "installed" in the log means something changed) and are never run:
+  their effects belong to a boot, and one of them composes the USB gadget, which
+  under a host that's using it is how a KVM loses its keyboard. They take effect
+  at the device's next restart.
+- **The RNDIS → NCM migration runs at every startup**, not only inside an
+  update. Same reasoning inverted: an update only ever reaches a device whose
+  current server already knew to migrate, which is precisely the device that
+  doesn't need it. It needs no network, no release tag and no marker, so it also
+  converges dev builds and devices whose reconcile has already run — a
+  stat-and-return once migrated. The absence of both flags still means "off",
+  which is a real choice, and is left alone.
 - **Firmware updates run off our own version and release channel.** The stock
   Sipeed updater — which installs over `/kvmapp` and clobbers our mesh server —
   is removed, both the web UI and the server routes. Settings → Update now

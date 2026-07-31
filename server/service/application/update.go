@@ -32,15 +32,20 @@ const (
 )
 
 // Device service controls. The update handler restarts both; the startup
-// daemon reconcile (reconcile.go) restarts only the daemon.
+// release reconcile (reconcile.go) restarts only the daemon.
 const (
 	serverRestartCmd = "/etc/init.d/S95nanokvm restart"
 	daemonRestartCmd = "/etc/init.d/S94myownmesh restart"
 
-	// daemonSyncMarker records, under the mesh home dir, the fork version whose
-	// daemon the startup reconcile has already ensured — so it runs once per
+	// releaseSyncMarker records, under the mesh home dir, the fork version whose
+	// payload the startup reconcile has already ensured — so it runs once per
 	// version, not on every boot.
-	daemonSyncMarker = ".daemon-sync"
+	//
+	// The filename still says "daemon" because it IS the marker devices in the
+	// field already carry, and the reconcile it gates has only widened. Renaming
+	// it would make every deployed device treat its version as unreconciled and
+	// re-download a bundle to learn it was already current.
+	releaseSyncMarker = ".daemon-sync"
 )
 
 // tagPattern bounds an operator-supplied version to a release-tag shape
@@ -415,7 +420,7 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	// here can't strand a half-installed app, and a bundle without them (an
 	// older release) simply skips this.
 	installInitScripts(bundleDir)
-	migrateUsbNetworkFlag()
+	MigrateUsbNetworkFlag()
 	return swapDaemon, nil
 }
 
@@ -425,7 +430,7 @@ var (
 	usbFlagRndis = "/boot/usb.rndis0"
 )
 
-// migrateUsbNetworkFlag switches a device from the RNDIS gadget to NCM.
+// MigrateUsbNetworkFlag switches a device from the RNDIS gadget to NCM.
 //
 // RNDIS cannot work on any current host. Windows 11 ships no in-box driver for
 // it and macOS never had one, so the function enumerates, binds nothing, and
@@ -442,7 +447,10 @@ var (
 // The absence of BOTH flags is left alone. That one really is a choice: it
 // means the operator turned the virtual network off, and an update must not
 // switch a new USB interface on underneath a running deployment.
-func migrateUsbNetworkFlag() {
+// Exported because it is called on every startup from main, not only from an
+// update: an update only ever reaches a device whose CURRENT server already
+// knew to migrate, which is precisely the device that doesn't need it.
+func MigrateUsbNetworkFlag() {
 	if _, err := os.Stat(usbFlagRndis); err != nil {
 		return // not on RNDIS; nothing to migrate
 	}
@@ -490,24 +498,37 @@ var initScriptDirForTest = initScriptDir
 // Deliberately does NOT run them. Their effects belong to a boot — one of them
 // composes the USB gadget, and doing that under a host that is using it is how
 // a KVM loses its keyboard mid-session.
-func installInitScripts(bundleDir string) {
+//
+// Only scripts that actually differ are written, and the count of those is
+// returned. That keeps the log honest — "installed" should mean something
+// changed — and keeps a re-run (the startup reconcile, an update to the same
+// version) from rewriting identical files onto flash.
+func installInitScripts(bundleDir string) int {
 	src := filepath.Join(bundleDir, "init.d")
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		return // no init.d in this bundle — nothing to do
+		return 0 // no init.d in this bundle — nothing to do
 	}
+	changed := 0
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		from := filepath.Join(src, e.Name())
 		to := filepath.Join(initScriptDirForTest, e.Name())
+		// A missing destination reads as "differs", which is what we want: a
+		// NEW script the server depends on is exactly the case this exists for.
+		if differs, err := filesDiffer(from, to); err == nil && !differs {
+			continue
+		}
 		if err := copyFileMode(from, to, 0o755); err != nil {
 			log.Warnf("update: install init script %s: %s", e.Name(), err)
 			continue
 		}
-		log.Infof("update: installed init script %s", e.Name())
+		log.Infof("update: installed init script %s (takes effect on the next boot)", e.Name())
+		changed++
 	}
+	return changed
 }
 
 // chmodTree sets mode on root and everything under it — the served web tree,
