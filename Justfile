@@ -354,6 +354,8 @@ deploy ip:
     cp server/NanoKVM-Server             "$p/NanoKVM-Server"
     cp kvmapp/system/init.d/S94myownmesh "$p/S94myownmesh"
     cp kvmapp/system/init.d/S31usbnet    "$p/S31usbnet"
+    cp kvmapp/system/init.d/S32usbdhcp   "$p/S32usbdhcp"
+    cp kvmapp/system/init.d/S03usbdev    "$p/S03usbdev"
     cp "{{oled_logo}}"                   "$p/logo.bin"
     cp -a web/dist/.                     "$p/web/"
     # OLED app is optional — only the local build-risc build produces it (too
@@ -388,6 +390,12 @@ deploy ip:
       cp -f "$d/NanoKVM-Server" /kvmapp/server/NanoKVM-Server
       cp -f "$d/S94myownmesh"   /etc/init.d/S94myownmesh
       cp -f "$d/S31usbnet"      /etc/init.d/S31usbnet
+      cp -f "$d/S32usbdhcp"     /etc/init.d/S32usbdhcp
+      # The gadget composer. Copied like any other init script: it takes
+      # effect at the next boot, which this deploy ends with — the same
+      # discipline as the flags below, and the reason we never rebuild a
+      # live gadget.
+      cp -f "$d/S03usbdev"      /etc/init.d/S03usbdev
       rm -rf /kvmapp/server/web.new /kvmapp/server/web.old
       mkdir -p /kvmapp/server/web.new
       cp -a "$d/web/." /kvmapp/server/web.new/
@@ -395,12 +403,34 @@ deploy ip:
       mv /kvmapp/server/web.new /kvmapp/server/web
       rm -rf /kvmapp/server/web.old
       cp -f "$d/logo.bin" /boot/logo.bin
+      # USB virtual network on by default. The gadget is composed once per boot
+      # from these flags (S03usbdev) and cannot be safely rebuilt on a running
+      # device, so the flag has to be on disk BEFORE the reboot this deploy
+      # ends with — that is what makes a deployed KVM reachable over its own
+      # cable without anyone touching a file.
+      #
+      # NCM, not RNDIS. Windows 11 ships no in-box RNDIS driver and macOS never
+      # had one: an RNDIS gadget enumerates, binds nothing, and lands in
+      # Device Manager under "Other devices" as an unusable entry — observed
+      # exactly that on a real desktop, with no network adapter and so no DHCP
+      # request ever sent.
+      #
+      # An existing RNDIS flag is therefore MIGRATED, not preserved. Leaving it
+      # would be respecting a setting that cannot work on any current host — it
+      # is a dead configuration rather than a deliberate setting, and a device
+      # already carrying one is precisely the device that needs the fix. Absence of
+      # both flags still means "off", and that IS a choice, so it is left alone.
+      if [ -e /boot/usb.rndis0 ] && [ ! -e /boot/usb.ncm ]; then
+        echo "device: migrating USB virtual network from RNDIS to NCM"
+        rm -f /boot/usb.rndis0
+        touch /boot/usb.ncm
+      fi
       if [ -f "$d/kvm_system" ]; then
         mkdir -p /kvmapp/kvm_system
         cp -f "$d/kvm_system" /kvmapp/kvm_system/kvm_system
         chmod +x /kvmapp/kvm_system/kvm_system
       fi
-      chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /kvmapp/server/NanoKVM-Server
+      chmod +x /kvmapp/system/bin/myownmesh /etc/init.d/S94myownmesh /etc/init.d/S31usbnet /etc/init.d/S32usbdhcp /etc/init.d/S03usbdev /kvmapp/server/NanoKVM-Server
       rm -rf "$d" /kvmapp/nanokvm-deploy.tar.gz
       echo "device: files staged"
     '

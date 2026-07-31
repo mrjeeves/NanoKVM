@@ -344,6 +344,12 @@ func (b *Bridge) onMeshEvent(ev MeshEvent) {
 
 // refreshFleetRoster snapshots the fleet network's approved-peer roster into
 // the senderMayControl cache. No fleet key → empty cache (owner-only).
+//
+// It also repairs the roster when our OWNER is missing from it — see
+// preRosterOwner for why that is load-bearing rather than tidy. This runs on
+// connect, on fleet adoption, and on every presence tick, so a device that
+// somehow loses the entry heals within one interval instead of going quietly
+// deaf to the only node allowed to drive it.
 func (b *Bridge) refreshFleetRoster() {
 	key := b.state.FleetKey()
 	b.mu.Lock()
@@ -355,7 +361,8 @@ func (b *Bridge) refreshFleetRoster() {
 		b.mu.Unlock()
 		return
 	}
-	entries, err := ctl.RosterList(DeriveFleetNetworkID(key))
+	fleetNet := DeriveFleetNetworkID(key)
+	entries, err := ctl.RosterList(fleetNet)
 	if err != nil {
 		// Keep the previous snapshot: a transient daemon stall must not
 		// revoke a co-member's working controls.
@@ -369,7 +376,99 @@ func (b *Bridge) refreshFleetRoster() {
 	b.mu.Lock()
 	b.fleetRoster = roster
 	b.mu.Unlock()
+
+	if owner := pubkeyPart(b.state.Owner()); owner != "" {
+		if _, ok := roster[owner]; !ok {
+			b.preRosterOwner(fleetNet)
+		}
+	}
 }
+
+// preRosterOwner writes this device's OWNER into the fleet network's local
+// roster.
+//
+// Without it a claimed KVM can never admit the one node that owns it. A fleet
+// mesh is CLOSED with auto_approve false, and the daemon admits an
+// authenticating peer only when `cfg.auto_approve || already-rostered`. So the
+// owner connects, ICE succeeds, the signed handshake authenticates — and the
+// link parks at PendingApproval forever, where the daemon's admission gate
+// drops every application frame that follows: presence, control, and the site
+// tunnel the app's Open / Wi-Fi / Update / Unclaim buttons all ride. The owner
+// meanwhile sees a healthy peer, so the failure reads as "the KVM is there and
+// nothing works" (observed: myownmesh.log looping "dropping pre-admission
+// frame … class=Gossip/Keepalive" until the idle channel dies, then redialing).
+// Roster gossip can't bootstrap this: it is itself an application frame, so it
+// is dropped by the very gate it would open.
+//
+// The owner is pre-rostered rather than earned. Ownership was established by
+// the claim and by the fleet key we accepted from it (senderMayControl-gated),
+// so there is no authority gap — and it grants no new authority anyway: the
+// owner already passes senderMayControl on the owner== arm, roster or not.
+// Co-members are NOT seeded here; they arrive with the owner's signed member
+// log once the link is admitted.
+//
+// This is the symmetric half of the owner's own pre-roster of us at claim
+// time. An AllMyStuff node does exactly this for its owner ("A non-owner
+// pre-rosters its owner", node/src/mesh.rs); the KVM is an equally non-owner
+// fleet member and never did.
+func (b *Bridge) preRosterOwner(networkID string) {
+	owner := pubkeyPart(b.state.Owner())
+	if owner == "" || networkID == "" {
+		return
+	}
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if ctl == nil {
+		return
+	}
+	if err := ctl.RosterApprove(networkID, owner, b.state.FleetName()); err != nil {
+		log.Warnf("mesh: pre-roster owner on fleet mesh %s: %s", networkID, err)
+		return
+	}
+	log.Infof("mesh: pre-rostered owner %s on fleet mesh %s (a closed mesh admits only rostered peers)",
+		b.state.Owner(), networkID)
+	b.mu.Lock()
+	if b.fleetRoster == nil {
+		b.fleetRoster = map[string]struct{}{}
+	}
+	b.fleetRoster[owner] = struct{}{}
+	b.mu.Unlock()
+}
+
+// fleetMeshCarryingUs reports whether the fleet network has at least one peer
+// the daemon calls ACTIVE — a link that really passes application frames.
+//
+// The roster used to stand in for this, and it can't any more: preRosterOwner
+// makes the roster non-empty the moment we join, so counting entries would
+// answer "converged" before a single packet has crossed. Worse, roster size was
+// always the weaker signal — a rostered peer that never finishes the bilateral
+// approval sits at PendingApproval with every frame dropped, which is exactly
+// the state this guard exists to keep us out of.
+func (b *Bridge) fleetMeshCarryingUs() bool {
+	key := b.state.FleetKey()
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if key == "" || ctl == nil {
+		return false
+	}
+	peers, err := ctl.PeersList(DeriveFleetNetworkID(key))
+	if err != nil {
+		log.Debugf("mesh: fleet peers list: %s", err)
+		return false
+	}
+	for _, p := range peers {
+		if p.Status == peerStatusActive {
+			return true
+		}
+	}
+	return false
+}
+
+// peerStatusActive is the daemon's PeerStatus::Active on the wire — both sides
+// approved, application frames flow. Every other status means they don't.
+const peerStatusActive = "active"
 
 // socketPath resolves the daemon control socket path. We use mesh.Socket (on
 // tmpfs by default) because the daemon's natural default, $Home/daemon.sock, is
@@ -869,8 +968,9 @@ func (b *Bridge) Unclaim() {
 }
 
 // leaveJoiningMeshAfterAdoption leaves the joining mesh once the fleet mesh is
-// really carrying us — the fleet roster has CONVERGED — so the device is never
-// left dark. If the fleet mesh never converges within the bounded wait we
+// really carrying us — it has an ACTIVE peer, i.e. a link that passes frames —
+// so the device is never left dark. If the fleet mesh never converges within
+// the bounded wait we
 // KEEP the joining mesh: reachable on two meshes beats stranded on a fleet
 // mesh that isn't working (the old behavior stayed on the shared mesh forever
 // too, so this is no regression). The tail of the claim conversation, which
@@ -887,10 +987,8 @@ func (b *Bridge) leaveJoiningMeshAfterAdoption() {
 			return // released mid-wait — the joining mesh is home again
 		}
 		b.refreshFleetRoster()
-		b.mu.Lock()
-		converged = len(b.fleetRoster) > 0
-		b.mu.Unlock()
-		if converged {
+		if b.fleetMeshCarryingUs() {
+			converged = true
 			break
 		}
 	}
@@ -1094,6 +1192,11 @@ func (b *Bridge) joinFleetNetwork(networkID, name string, venue *string) {
 		}
 		log.Infof("mesh: joined fleet network %s", networkID)
 	}
+	// Before the planes, not after: a fleet mesh admits only rostered peers, and
+	// the owner may finish its handshake the instant the network exists. Seeding
+	// the roster first means the approval is already there to be found instead of
+	// arriving after the link has parked at PendingApproval.
+	b.preRosterOwner(networkID)
 	// Retry the plane subscribes a few times before giving up: unlike the main
 	// network (where a joinPlanes failure aborts connectAndRun and the whole
 	// handshake retries), a fleet failure here would leave the fleet planes

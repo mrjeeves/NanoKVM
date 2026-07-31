@@ -410,7 +410,104 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	if err := chmodTree(webDst, 0o755); err != nil {
 		return false, err
 	}
+
+	// Init scripts last: the server and web are already in place, so a failure
+	// here can't strand a half-installed app, and a bundle without them (an
+	// older release) simply skips this.
+	installInitScripts(bundleDir)
+	migrateUsbNetworkFlag()
 	return swapDaemon, nil
+}
+
+// USB virtual-network flags, as S03usbdev reads them at boot.
+var (
+	usbFlagNcm   = "/boot/usb.ncm"
+	usbFlagRndis = "/boot/usb.rndis0"
+)
+
+// migrateUsbNetworkFlag switches a device from the RNDIS gadget to NCM.
+//
+// RNDIS cannot work on any current host. Windows 11 ships no in-box driver for
+// it and macOS never had one, so the function enumerates, binds nothing, and
+// sits in Device Manager under "Other devices" — no network adapter, therefore
+// no DHCP request, therefore a USB link that is up at every layer except the
+// one that matters. Observed exactly that on a real desktop.
+//
+// So an existing RNDIS flag is migrated rather than preserved: it is a dead
+// configuration, not an operator's choice, and a device already carrying one is
+// precisely the device that needs the fix. Only the flag is touched — the
+// running gadget is left alone, because rebuilding one under a host that is
+// using it is how a KVM loses its keyboard. The next boot composes NCM.
+//
+// The absence of BOTH flags is left alone. That one really is a choice: it
+// means the operator turned the virtual network off, and an update must not
+// switch a new USB interface on underneath a running deployment.
+func migrateUsbNetworkFlag() {
+	if _, err := os.Stat(usbFlagRndis); err != nil {
+		return // not on RNDIS; nothing to migrate
+	}
+	if _, err := os.Stat(usbFlagNcm); err == nil {
+		// Both present: S03usbdev prefers NCM, so it is already what boots.
+		// Drop the stale RNDIS flag so the two can't disagree.
+		if err := os.Remove(usbFlagRndis); err != nil {
+			log.Warnf("update: remove stale %s: %s", usbFlagRndis, err)
+		}
+		return
+	}
+	if err := os.WriteFile(usbFlagNcm, nil, 0o644); err != nil {
+		log.Warnf("update: write %s: %s", usbFlagNcm, err)
+		return
+	}
+	if err := os.Remove(usbFlagRndis); err != nil {
+		log.Warnf("update: remove %s: %s", usbFlagRndis, err)
+		return
+	}
+	log.Infof("update: USB virtual network migrated from RNDIS to NCM — active on the next boot")
+}
+
+// initScriptDir is where Buildroot's rcS runs boot scripts from. The repo keeps
+// them under kvmapp/system/init.d/, which the firmware build installs here; an
+// OTA has to place them itself.
+const initScriptDir = "/etc/init.d"
+
+// initScriptDirForTest is the install target, indirected so a test can point it
+// somewhere writable instead of the real /etc/init.d.
+var initScriptDirForTest = initScriptDir
+
+// installInitScripts copies the bundle's init.d/ over the device's, so a boot
+// script can ship in an update.
+//
+// Until this existed the bundle carried only the server, web and daemon, so a
+// changed boot script — or a NEW one the server depends on — reached a device
+// only by a full flash or `just deploy`. That fails in the worst way: the
+// server arrives expecting something the device hasn't got, and nothing says
+// so. S32usbdhcp is exactly that case, which is what surfaced it.
+//
+// Best-effort by design. These are boot scripts: what's installed keeps running
+// either way, and the next boot picks up whatever landed. A failure must never
+// fail an update that has already swapped in a working server and web.
+//
+// Deliberately does NOT run them. Their effects belong to a boot — one of them
+// composes the USB gadget, and doing that under a host that is using it is how
+// a KVM loses its keyboard mid-session.
+func installInitScripts(bundleDir string) {
+	src := filepath.Join(bundleDir, "init.d")
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return // no init.d in this bundle — nothing to do
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		from := filepath.Join(src, e.Name())
+		to := filepath.Join(initScriptDirForTest, e.Name())
+		if err := copyFileMode(from, to, 0o755); err != nil {
+			log.Warnf("update: install init script %s: %s", e.Name(), err)
+			continue
+		}
+		log.Infof("update: installed init script %s", e.Name())
+	}
 }
 
 // chmodTree sets mode on root and everything under it — the served web tree,

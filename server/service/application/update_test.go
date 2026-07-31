@@ -302,3 +302,112 @@ func TestInstallBundleLeavesUnchangedDaemon(t *testing.T) {
 		t.Errorf("an unchanged daemon should not create a backup")
 	}
 }
+
+// An OTA has to be able to deliver a boot script. The bundle carried only the
+// server, web and daemon, so a new script the server depends on — S32usbdhcp,
+// which is what surfaced this — reached a device only by a full flash or
+// `just deploy`. That fails in the worst way: the server arrives expecting
+// something the device hasn't got, and nothing says so.
+func TestInstallInitScriptsPlacesBundledScripts(t *testing.T) {
+	bundle := t.TempDir()
+	dir := filepath.Join(bundle, "init.d")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "S32usbdhcp"), []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Redirect the install target; the real one is /etc/init.d.
+	target := t.TempDir()
+	orig := initScriptDirForTest
+	initScriptDirForTest = target
+	defer func() { initScriptDirForTest = orig }()
+
+	installInitScripts(bundle)
+
+	got := filepath.Join(target, "S32usbdhcp")
+	fi, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("script not installed: %v", err)
+	}
+	// Must land executable — rcS runs it via run-parts, which skips a file it
+	// can't execute, so a non-executable script is the same as an absent one.
+	if fi.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("installed mode %v is not executable", fi.Mode().Perm())
+	}
+}
+
+// A bundle from an older release has no init.d/. That must be a quiet no-op,
+// never an error that fails an update which has already swapped in a working
+// server and web.
+func TestInstallInitScriptsIgnoresBundleWithout(t *testing.T) {
+	installInitScripts(t.TempDir()) // must not panic
+}
+
+// RNDIS cannot work on any current host — Windows 11 ships no in-box driver and
+// macOS never had one — so a device carrying that flag has a USB link that is up
+// at every layer except the one that matters. An update migrates it rather than
+// preserving it.
+func TestMigrateUsbNetworkFlagSwitchesRndisToNcm(t *testing.T) {
+	dir := t.TempDir()
+	ncm, rndis := filepath.Join(dir, "usb.ncm"), filepath.Join(dir, "usb.rndis0")
+	orig := [2]string{usbFlagNcm, usbFlagRndis}
+	usbFlagNcm, usbFlagRndis = ncm, rndis
+	defer func() { usbFlagNcm, usbFlagRndis = orig[0], orig[1] }()
+
+	if err := os.WriteFile(rndis, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateUsbNetworkFlag()
+
+	if _, err := os.Stat(ncm); err != nil {
+		t.Fatalf("NCM flag not written: %v", err)
+	}
+	if _, err := os.Stat(rndis); err == nil {
+		t.Fatal("RNDIS flag still present — S03usbdev would still see a choice to make")
+	}
+}
+
+// Neither flag means the operator turned the virtual network OFF. That is a
+// real choice, and an update must not switch a new USB interface on underneath
+// a running deployment.
+func TestMigrateUsbNetworkFlagLeavesDisabledAlone(t *testing.T) {
+	dir := t.TempDir()
+	ncm, rndis := filepath.Join(dir, "usb.ncm"), filepath.Join(dir, "usb.rndis0")
+	orig := [2]string{usbFlagNcm, usbFlagRndis}
+	usbFlagNcm, usbFlagRndis = ncm, rndis
+	defer func() { usbFlagNcm, usbFlagRndis = orig[0], orig[1] }()
+
+	migrateUsbNetworkFlag()
+
+	if _, err := os.Stat(ncm); err == nil {
+		t.Fatal("an update enabled the USB network on a device that had it off")
+	}
+}
+
+// Both present: S03usbdev prefers NCM, so that is already what boots. Drop the
+// stale RNDIS flag so the two can't disagree about what the device is.
+func TestMigrateUsbNetworkFlagClearsStaleRndis(t *testing.T) {
+	dir := t.TempDir()
+	ncm, rndis := filepath.Join(dir, "usb.ncm"), filepath.Join(dir, "usb.rndis0")
+	orig := [2]string{usbFlagNcm, usbFlagRndis}
+	usbFlagNcm, usbFlagRndis = ncm, rndis
+	defer func() { usbFlagNcm, usbFlagRndis = orig[0], orig[1] }()
+
+	for _, p := range []string{ncm, rndis} {
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	migrateUsbNetworkFlag()
+
+	if _, err := os.Stat(ncm); err != nil {
+		t.Fatalf("NCM flag removed: %v", err)
+	}
+	if _, err := os.Stat(rndis); err == nil {
+		t.Fatal("stale RNDIS flag kept alongside NCM")
+	}
+}
