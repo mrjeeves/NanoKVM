@@ -126,20 +126,38 @@ func (b *Bridge) RaiseHand() error {
 // ensureSilentHelpAreaLocked joins the standing support area, healing a room
 // persisted by a beacon-era build on the way: those rooms were created `open`
 // (the daemon auto-dialed every co-present peer to carry beacons), and the
-// network kind is governed state a config update can't flip — so once per
-// run, the room is re-created, which bootstraps it Silent and purges the
-// roster of strangers the open era gossiped in. Callers hold b.help.mu.
+// network kind is governed state a config update can't flip — so a room whose
+// governed kind still reads `open` is re-created, which bootstraps it Silent
+// and purges the roster of strangers the open era gossiped in. Checked at
+// most once per run; a room already silent (or an unreadable kind — never
+// churn the room on a guess) is joined as-is. Callers hold b.help.mu.
 func (b *Bridge) ensureSilentHelpAreaLocked() error {
 	if !b.help.migrated {
-		// Best-effort: removing a room the daemon doesn't carry is success
-		// on the daemon side, and a remove failure only means the add below
-		// joins the room as-is (the old behavior, healed next run).
-		if err := b.networkRemove(CecHelpNetworkID); err != nil {
-			log.Debugf("mesh: CEC area pre-remove (migration): %s", err)
-		}
 		b.help.migrated = true
+		if kind := b.governanceKind(CecHelpNetworkID); kind == "open" {
+			log.Infof("mesh: CEC area is governed open (the beacon era) — re-creating it silent")
+			if err := b.networkRemove(CecHelpNetworkID); err != nil {
+				log.Debugf("mesh: CEC area pre-remove (migration): %s", err)
+			}
+		}
 	}
 	return b.networkAdd(cecHelpNetworkConfig())
+}
+
+// governanceKind is the nil-ctl guard for governance_state; empty on any
+// failure (an older daemon, or a network the daemon doesn't carry).
+func (b *Bridge) governanceKind(networkID string) string {
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if ctl == nil {
+		return ""
+	}
+	kind, err := ctl.GovernanceKind(networkID)
+	if err != nil {
+		return ""
+	}
+	return kind
 }
 
 // LowerHand takes this device's hand down: it **leaves the asking room**,
