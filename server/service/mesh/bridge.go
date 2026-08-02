@@ -581,6 +581,33 @@ func (b *Bridge) ensureMemberships() error {
 		}
 	}
 
+	// CEC hygiene: the daemon persists the asking room and auto-rejoins it,
+	// so a crash mid-ask would leave this KVM sitting in the help queue —
+	// reading as a raised hand to every watching technician — with nobody
+	// actually asking. A fresh bridge run starts with the hand down, so a
+	// persisted membership without a live ask is always stale.
+	if present[CecAskNetworkID] && !b.HelpAsking() {
+		if err := b.networkRemove(CecAskNetworkID); err != nil {
+			log.Warnf("mesh: leave stale CEC asking room: %s", err)
+		} else {
+			log.Infof("mesh: left stale CEC asking room (no live ask)")
+			delete(present, CecAskNetworkID)
+		}
+	}
+	// And heal a support-area room persisted by a beacon-era build: those
+	// were created `open` (auto-dialing every co-present stranger), and the
+	// governed kind can only be fixed by re-creating the room — which also
+	// purges the roster of strangers the open era gossiped in. Residency is
+	// restored immediately so a technician's pinned redial still finds this
+	// KVM after the heal.
+	if present[CecHelpNetworkID] {
+		b.help.mu.Lock()
+		if err := b.ensureSilentHelpAreaLocked(); err != nil {
+			log.Warnf("mesh: re-create CEC area silent: %s", err)
+		}
+		b.help.mu.Unlock()
+	}
+
 	// The joining mesh's signaling follows the public-claims policy, and the
 	// daemon persists a network's config across restarts — so when the
 	// recorded policy differs from the configured one (or was never
@@ -1572,6 +1599,14 @@ func (b *Bridge) broadcastPresence() {
 		return
 	}
 	for _, n := range nets {
+		// Never broadcast the KVM's graph profile on the CEC rooms: they are
+		// world-joinable, and a profile advert there is how support-area
+		// strangers once filled each other's graphs. A technician who
+		// deliberately dialed this KVM learns its identity over the direct
+		// session (greetPeer), not from a room broadcast.
+		if n == CecHelpNetworkID || n == CecAskNetworkID {
+			continue
+		}
 		if err := ctl.ChannelSendAll(n, ChannelPresence, json.RawMessage(payload)); err != nil {
 			// Warn, not debug: a swallowed presence failure is the difference
 			// between "the KVM is invisible and nothing says why" and a log

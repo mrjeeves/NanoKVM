@@ -1,7 +1,6 @@
 package mesh
 
 import (
-	"reflect"
 	"testing"
 )
 
@@ -27,38 +26,16 @@ func TestSupportIDFromDevice(t *testing.T) {
 	}
 }
 
-func TestCecHelpHubTopology(t *testing.T) {
-	cases := []struct {
-		name string
-		spec string
-		want map[string]interface{}
-	}{
-		{"empty", "", nil},
-		{"whitespace", "   ", nil},
-		{"single", "hubA", map[string]interface{}{"kind": "hubs", "hubs": []string{"hubA"}}},
-		{"multi", "hubA, hubB ,hubC", map[string]interface{}{"kind": "hubs", "hubs": []string{"hubA", "hubB", "hubC"}}},
-		{"redundancy", "hubA,hubB:2", map[string]interface{}{"kind": "hubs", "hubs": []string{"hubA", "hubB"}, "spoke_redundancy": 2}},
-		{"bad_redundancy_kept_as_ids", "hubA:xyz", map[string]interface{}{"kind": "hubs", "hubs": []string{"hubA"}}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := cecHelpHubTopology(c.spec)
-			if !reflect.DeepEqual(got, c.want) {
-				t.Errorf("cecHelpHubTopology(%q) = %#v, want %#v", c.spec, got, c.want)
-			}
-		})
-	}
-}
-
 func TestCecHelpNetworkConfigShape(t *testing.T) {
-	// Without CEC_HELP_HUBS the config must be Open + nostr/mDNS and carry NO
-	// topology (daemon default). Mirrors AllMyStuff help_network_config.
+	// The standing support area is Silent — signaling-only presence, no
+	// auto-dial, no topology shaping (there are no connections to shape).
+	// Mirrors AllMyStuff help_network_config.
 	cfg := cecHelpNetworkConfig()
 	if cfg["id"] != CecHelpNetworkID || cfg["network_id"] != CecHelpNetworkID {
 		t.Errorf("network id = %v/%v, want %s", cfg["id"], cfg["network_id"], CecHelpNetworkID)
 	}
-	if cfg["kind"] != "open" {
-		t.Errorf("kind = %v, want open", cfg["kind"])
+	if cfg["kind"] != "silent" {
+		t.Errorf("kind = %v, want silent", cfg["kind"])
 	}
 	if cfg["auto_approve"] != true {
 		t.Errorf("auto_approve = %v, want true", cfg["auto_approve"])
@@ -68,6 +45,25 @@ func TestCecHelpNetworkConfigShape(t *testing.T) {
 		t.Errorf("signaling = %v, want nostr+mdns", cfg["signaling"])
 	}
 	if _, present := cfg["topology"]; present {
-		t.Errorf("topology present without CEC_HELP_HUBS: %v", cfg["topology"])
+		t.Errorf("signaling-only area must carry no topology: %v", cfg["topology"])
+	}
+}
+
+func TestCecAskNetworkConfigShape(t *testing.T) {
+	// The asking room: same Silent shape under its own well-known id —
+	// membership is the whole raised-hand signal. Mirrors AllMyStuff
+	// ask_network_config.
+	cfg := cecAskNetworkConfig()
+	if cfg["id"] != CecAskNetworkID || cfg["network_id"] != CecAskNetworkID {
+		t.Errorf("network id = %v/%v, want %s", cfg["id"], cfg["network_id"], CecAskNetworkID)
+	}
+	if CecAskNetworkID == CecHelpNetworkID {
+		t.Fatal("the queue must be its own room")
+	}
+	if cfg["kind"] != "silent" {
+		t.Errorf("kind = %v, want silent", cfg["kind"])
+	}
+	if _, present := cfg["topology"]; present {
+		t.Errorf("asking room must carry no topology: %v", cfg["topology"])
 	}
 }

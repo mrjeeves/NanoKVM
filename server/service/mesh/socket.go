@@ -371,6 +371,27 @@ func (s *Socket) NetworksList() ([]NetworkSummary, error) {
 	return data.Networks, nil
 }
 
+// GovernanceKind returns a joined network's *governed* kind ("open" /
+// "closed" / "silent") from the daemon's signed-state view — the authoritative
+// kind, which a config update cannot flip (it only seeds the bootstrap at
+// first attach). Empty string when the daemon predates the op, the network
+// isn't joined, or the state carries no kind.
+func (s *Socket) GovernanceKind(network string) (string, error) {
+	resp, err := s.request(request{"op": "governance_state", "network": network})
+	if err != nil {
+		return "", err
+	}
+	var data struct {
+		State struct {
+			Kind string `json:"kind"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		return "", err
+	}
+	return data.State.Kind, nil
+}
+
 // NetworkAdd joins a network described by config (a NetworkConfig JSON object,
 // see config.rs). config is passed as a generic map so we can build exactly the
 // fields we want and let the daemon fill the rest with defaults.

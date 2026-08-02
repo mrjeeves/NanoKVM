@@ -2,28 +2,35 @@ package mesh
 
 // CEC "hand raise" (Ask-for-help) support.
 //
-// A KVM raises its hand exactly the way a CEC Support customer does: it joins
-// the one well-known help area (`cecsupport-clients`) and broadcasts a
-// SupportPresence beacon on the `cec.presence` channel with available:true,
-// re-beaconing until the hand is lowered. Technicians watching the area collect
-// the beacons into a longest-waiting-first queue. The beacon carries *want*,
-// never access — a technician still connects deliberately, and the KVM's own
-// consent/route gating (control.go, native.go) guards any actual session.
+// A KVM raises its hand exactly the way a CEC Support customer does: it lives
+// on the one well-known **Silent** support area (`cecsupport-clients`) and
+// raises its hand by **joining the asking room** (`cecsupport-asking`) — a
+// second Silent mesh whose signaling membership IS the technicians' queue.
+// MyOwnMesh is a mesh signaling system for direct WebRTC peer-to-peer
+// connections, and a Silent room uses only that half: co-present devices see
+// each other's announces, nothing ever connects on its own, and nothing is
+// routed through anything (the only data-path fallback anywhere is WebRTC's
+// own TURN relay when NAT rules out a direct pair). Lowering the hand is
+// leaving the room. A technician answers by dialing this device directly on
+// the standing area; the KVM's own consent/route gating (control.go,
+// native.go) guards any actual session.
+//
+// This replaces the `cec.presence` channel beacons: those rode data channels,
+// which a Silent area rightly never opens on its own — the exact deadlock
+// that once forced the area Open (auto-connecting every customer to every
+// stranger).
 //
 // This is a NEW, additive plane: the KVM's normal presence lives on the
 // AllMyStuff graph (allmystuff-cloud-mesh-v1, see protocol.go), whereas a hand
 // raise rides the CEC plane. The two never mix. Everything here mirrors
-// AllMyStuff's node/src/mesh.rs (cec_ask_help / cec_broadcast_presence),
-// node/src/cec.rs (help_network_config), and the wire contract in
-// crates/allmystuff-cec-protocol (wire.rs SupportPresence, ids.rs support_id).
+// AllMyStuff's node/src/mesh.rs (cec_ask_help / cec_help_watch),
+// node/src/cec.rs (help_network_config / ask_network_config), and the wire
+// contract in crates/allmystuff-cec-protocol (lib.rs, ids.rs support_id).
 
 import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,28 +38,21 @@ import (
 )
 
 const (
-	// CecHelpNetworkID is the single well-known help mesh every CEC client
-	// shares (allmystuff-cec-protocol::HELP_NETWORK_ID). A raiser joins it and
-	// beacons there; the beacon is the whole signal.
+	// CecHelpNetworkID is the single well-known standing support area every
+	// CEC node lives on (allmystuff-cec-protocol::HELP_NETWORK_ID). Silent:
+	// residents are discoverable at the signaling layer (that's how a
+	// technician's pinned redial finds a rebooted KVM, and how a phoned-in
+	// number resolves to a device), and connected to nobody until a
+	// technician deliberately dials.
 	CecHelpNetworkID = "cecsupport-clients"
-	// CecChannelPresence carries SupportPresence beacons
-	// (allmystuff-cec-protocol::CHANNEL_PRESENCE).
-	CecChannelPresence = "cec.presence"
+	// CecAskNetworkID is the asking room — the help queue itself
+	// (allmystuff-cec-protocol::ASK_NETWORK_ID). Joined only while the hand
+	// is up; membership is the entire signal.
+	CecAskNetworkID = "cecsupport-asking"
 	// CecChannelControl carries the point-to-point connect handshake
 	// (allmystuff-cec-protocol::CHANNEL_CONTROL) — a technician's connect
 	// Request and our Approve reply.
 	CecChannelControl = "cec.control"
-	// CecRoleClient marks this node as a help-seeker (customer), not a
-	// technician (Role::Client in the wire enum).
-	CecRoleClient = "client"
-	// cecProtocolVersion is the CEC wire-protocol version
-	// (allmystuff-cec-protocol::PROTOCOL_VERSION). Distinct from the AllMyStuff
-	// graph's ProtocolVersion even though both are currently 1.
-	cecProtocolVersion = 1
-	// cecHelpBeaconInterval is the steady re-beacon cadence while a hand is up
-	// (allmystuff-cec-protocol::HELP_BEACON_SECS). Technicians age a silent
-	// beacon out after HELP_TTL_SECS (90s), so this tolerates a missed beat.
-	cecHelpBeaconInterval = 20 * time.Second
 	// cecScopeThreeHours is the ApprovalScope this device grants
 	// (allmystuff-cec-protocol::ApprovalScope::ThreeHours, serialised
 	// internally-tagged as {"kind":"three_hours"}).
@@ -69,50 +69,25 @@ const (
 	cecGrantSweep = 30 * time.Second
 )
 
-// cecHelpWarmup is the front-loaded beacon schedule after a raise: absolute
-// offsets t=2,3,5,10s (then cecHelpBeaconInterval thereafter), so a technician
-// sees a freshly raised hand quickly instead of waiting a full 20s. Mirrors the
-// warm-up loop in AllMyStuff node/src/mesh.rs cec_ask_help.
-var cecHelpWarmup = []time.Duration{
-	2 * time.Second,
-	3 * time.Second,
-	5 * time.Second,
-	10 * time.Second,
-}
-
-// SupportPresence is the CEC help beacon. Field names/json tags mirror
-// allmystuff-cec-protocol/src/wire.rs exactly — the daemon relays this as an
-// opaque payload and a technician's app decodes it. `protocol` and `available`
-// are always sent (they have serde defaults on the Rust side, but being
-// explicit costs nothing and keeps intent clear).
-type SupportPresence struct {
-	Protocol   uint32 `json:"protocol"`
-	DeviceID   string `json:"device_id"`
-	SupportID  string `json:"support_id"`
-	Label      string `json:"label"`
-	Role       string `json:"role"`
-	Available  bool   `json:"available"`
-	AppVersion string `json:"app_version"`
-	OS         string `json:"os"`
-	Hostname   string `json:"hostname"`
-	Boot       uint64 `json:"boot"`
-	SentAt     uint64 `json:"sent_at"`
-}
-
-// helpState tracks whether this device currently has its hand up and owns the
-// re-beacon goroutine. Guarded by its own mutex so a raise/lower never contends
-// with the bridge's membership or presence locks.
+// helpState tracks whether this device currently has its hand up (asking-room
+// membership) and the per-run area bookkeeping. Guarded by its own mutex so a
+// raise/lower never contends with the bridge's membership or presence locks.
 type helpState struct {
 	mu     sync.Mutex
 	asking bool
-	joined bool          // whether we've joined the help network this run (idempotent join)
-	cancel chan struct{} // closed to stop the beacon loop
-	done   chan struct{} // closed when the beacon loop has exited
+	joined bool // whether we've joined the support area this run (idempotent join)
+	// migrated notes the once-per-run area re-create that heals a room a
+	// beacon-era build persisted as `open` (the network kind is governed
+	// state bootstrapped at first attach — a config update can't flip it, so
+	// the room is re-created silent, which also purges its leaked roster).
+	migrated bool
 }
 
-// RaiseHand puts this device's hand up on the CEC help mesh: it joins the help
-// area (once), sends an immediate available:true beacon, and starts the
-// re-beacon loop. Idempotent — a raise while already asking is a no-op.
+// RaiseHand puts this device's hand up: it takes residence on the (Silent)
+// support area (once), then **joins the asking room** — whose signaling
+// membership is the entire "I need help" signal every watching technician
+// reads. No beacons, no wires: the engine's own room announce carries the
+// hand. Idempotent — a raise while already asking is a no-op.
 func (b *Bridge) RaiseHand() error {
 	b.help.mu.Lock()
 	defer b.help.mu.Unlock()
@@ -121,7 +96,7 @@ func (b *Bridge) RaiseHand() error {
 		return nil
 	}
 	if !b.help.joined {
-		if err := b.networkAdd(cecHelpNetworkConfig()); err != nil {
+		if err := b.ensureSilentHelpAreaLocked(); err != nil {
 			return fmt.Errorf("join help mesh: %w", err)
 		}
 		// Become a full participant so a technician who answers can actually
@@ -137,48 +112,71 @@ func (b *Bridge) RaiseHand() error {
 		}
 		b.help.joined = true
 	}
-	// Send the first beacon before we commit to "asking" so a dead daemon
+	// Join the asking room before committing to "asking", so a dead daemon
 	// surfaces as an error to the caller instead of a silently-raised hand.
-	if err := b.sendHelpBeacon(true); err != nil {
-		return fmt.Errorf("beacon: %w", err)
+	if err := b.networkAdd(cecAskNetworkConfig()); err != nil {
+		return fmt.Errorf("join asking room: %w", err)
 	}
 
 	b.help.asking = true
-	b.help.cancel = make(chan struct{})
-	b.help.done = make(chan struct{})
-	go b.helpBeaconLoop(b.help.cancel, b.help.done)
-
 	log.Infof("mesh: CEC hand raised (support id %s)", b.SupportID())
 	return nil
 }
 
-// LowerHand takes this device's hand down: it stops the re-beacon loop and
-// sends one available:false beacon so the technician queue drops it promptly
-// (rather than waiting out the 90s TTL). Idempotent — lowering an already-down
-// hand is a no-op. We do NOT leave the help mesh; matching AllMyStuff, the node
-// stays a member so the next raise is instant.
+// ensureSilentHelpAreaLocked joins the standing support area, healing a room
+// persisted by a beacon-era build on the way: those rooms were created `open`
+// (the daemon auto-dialed every co-present peer to carry beacons), and the
+// network kind is governed state a config update can't flip — so a room whose
+// governed kind still reads `open` is re-created, which bootstraps it Silent
+// and purges the roster of strangers the open era gossiped in. Checked at
+// most once per run; a room already silent (or an unreadable kind — never
+// churn the room on a guess) is joined as-is. Callers hold b.help.mu.
+func (b *Bridge) ensureSilentHelpAreaLocked() error {
+	if !b.help.migrated {
+		b.help.migrated = true
+		if kind := b.governanceKind(CecHelpNetworkID); kind == "open" {
+			log.Infof("mesh: CEC area is governed open (the beacon era) — re-creating it silent")
+			if err := b.networkRemove(CecHelpNetworkID); err != nil {
+				log.Debugf("mesh: CEC area pre-remove (migration): %s", err)
+			}
+		}
+	}
+	return b.networkAdd(cecHelpNetworkConfig())
+}
+
+// governanceKind is the nil-ctl guard for governance_state; empty on any
+// failure (an older daemon, or a network the daemon doesn't carry).
+func (b *Bridge) governanceKind(networkID string) string {
+	b.mu.Lock()
+	ctl := b.ctl
+	b.mu.Unlock()
+	if ctl == nil {
+		return ""
+	}
+	kind, err := ctl.GovernanceKind(networkID)
+	if err != nil {
+		return ""
+	}
+	return kind
+}
+
+// LowerHand takes this device's hand down: it **leaves the asking room**,
+// which removes it from every watching technician's queue at once (the
+// daemon broadcasts a signaling Leave; a crash instead ages out with the
+// room's presence). Idempotent — lowering an already-down hand is a no-op.
+// We do NOT leave the support area; matching AllMyStuff, the node stays a
+// resident so reconnects and the next raise are instant.
 func (b *Bridge) LowerHand() error {
 	b.help.mu.Lock()
 	if !b.help.asking {
 		b.help.mu.Unlock()
 		return nil
 	}
-	cancel, done := b.help.cancel, b.help.done
 	b.help.asking = false
-	b.help.cancel = nil
-	b.help.done = nil
 	b.help.mu.Unlock()
 
-	// Stop the loop first so it can't race a stray available:true beacon in
-	// after our hand-down.
-	if cancel != nil {
-		close(cancel)
-	}
-	if done != nil {
-		<-done
-	}
-	if err := b.sendHelpBeacon(false); err != nil {
-		return fmt.Errorf("beacon down: %w", err)
+	if err := b.networkRemove(CecAskNetworkID); err != nil {
+		return fmt.Errorf("leave asking room: %w", err)
 	}
 	log.Infof("mesh: CEC hand lowered")
 	return nil
@@ -212,77 +210,6 @@ func (b *Bridge) SupportID() string {
 		return ""
 	}
 	return supportIDFromDevice(nodeID)
-}
-
-// helpBeaconLoop re-broadcasts the raised beacon on the warm-up schedule and
-// then every cecHelpBeaconInterval until cancel is closed.
-func (b *Bridge) helpBeaconLoop(cancel, done chan struct{}) {
-	defer close(done)
-
-	var elapsed time.Duration
-	for _, at := range cecHelpWarmup {
-		select {
-		case <-cancel:
-			return
-		case <-time.After(at - elapsed):
-		}
-		elapsed = at
-		if err := b.sendHelpBeacon(true); err != nil {
-			log.Debugf("mesh: CEC re-beacon failed: %s", err)
-		}
-	}
-
-	ticker := time.NewTicker(cecHelpBeaconInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-cancel:
-			return
-		case <-ticker.C:
-			if err := b.sendHelpBeacon(true); err != nil {
-				log.Debugf("mesh: CEC re-beacon failed: %s", err)
-			}
-		}
-	}
-}
-
-// sendHelpBeacon broadcasts one SupportPresence on the help mesh.
-func (b *Bridge) sendHelpBeacon(available bool) error {
-	return b.channelSendAll(CecHelpNetworkID, CecChannelPresence, b.buildSupportPresence(available))
-}
-
-// buildSupportPresence assembles the beacon from the live device identity.
-func (b *Bridge) buildSupportPresence(available bool) SupportPresence {
-	b.mu.Lock()
-	nodeID := b.nodeID
-	b.mu.Unlock()
-
-	profile := b.currentProfile()
-	return SupportPresence{
-		Protocol:   cecProtocolVersion,
-		DeviceID:   nodeID,
-		SupportID:  supportIDFromDevice(nodeID),
-		Label:      profile.Label,
-		Role:       CecRoleClient,
-		Available:  available,
-		AppVersion: profile.Version,
-		OS:         "linux",
-		Hostname:   b.dev.hostname,
-		Boot:       b.boot,
-		SentAt:     uint64(time.Now().Unix()),
-	}
-}
-
-// channelSendAll broadcasts a typed-channel frame via the daemon control
-// socket, guarding on a live connection the same way networkAdd does.
-func (b *Bridge) channelSendAll(network, channel string, payload interface{}) error {
-	b.mu.Lock()
-	ctl := b.ctl
-	b.mu.Unlock()
-	if ctl == nil {
-		return fmt.Errorf("channel_send_all: bridge not connected")
-	}
-	return ctl.ChannelSendAll(network, channel, payload)
 }
 
 // channelSendTo sends a typed-channel frame point-to-point to one peer.
@@ -479,59 +406,37 @@ func (b *Bridge) evictTech(key string) {
 	}
 }
 
-// cecHelpNetworkConfig builds the daemon network config for the CEC help area.
-// It mirrors AllMyStuff node/src/cec.rs help_network_config: an Open network
-// (zero-config membership — the raiser's button is the whole join) with nostr +
-// mDNS signaling, and, when CEC_HELP_HUBS is set, a hub topology so members
-// connect only to CEC-operated hubs and beacons flood hub-ward to technicians
-// (never a customer↔customer N² mesh). Unset leaves the daemon default.
+// cecHelpNetworkConfig builds the daemon network config for the standing CEC
+// support area. Mirrors AllMyStuff node/src/cec.rs help_network_config: a
+// **Silent** network — signaling-only presence, no auto-dial, no roster
+// gossip, no topology (there are no connections to shape). `auto_approve`
+// keeps the mesh-level handshake unattended when a technician deliberately
+// dials this device; access stays gated by the KVM's own time-boxed CEC
+// grants (cecAdmit).
 func cecHelpNetworkConfig() map[string]interface{} {
-	cfg := map[string]interface{}{
+	return map[string]interface{}{
 		"id":           CecHelpNetworkID,
 		"network_id":   CecHelpNetworkID,
 		"label":        "CEC Support",
-		"kind":         "open",
+		"kind":         "silent",
 		"auto_approve": true,
 		"signaling":    map[string]interface{}{"strategy": "nostr", "mdns": true},
 	}
-	if topo := cecHelpHubTopology(os.Getenv("CEC_HELP_HUBS")); topo != nil {
-		cfg["topology"] = topo
-	}
-	return cfg
 }
 
-// cecHelpHubTopology parses CEC_HELP_HUBS ("hub1,hub2[:redundancy]") into the
-// daemon's hub topology JSON, or nil when unset/empty (caller then leaves the
-// daemon default, a full mesh). Ports AllMyStuff cec.rs help_hub_topology: the
-// last ':' separates an optional numeric spoke-redundancy; device pubkeys are
-// base32 so they never contain a ':'.
-func cecHelpHubTopology(spec string) map[string]interface{} {
-	spec = strings.TrimSpace(spec)
-	if spec == "" {
-		return nil
+// cecAskNetworkConfig builds the daemon network config for the asking room —
+// the help queue itself. Mirrors AllMyStuff node/src/cec.rs
+// ask_network_config: Silent like the area, joined only while the hand is up;
+// membership is the entire signal.
+func cecAskNetworkConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"id":           CecAskNetworkID,
+		"network_id":   CecAskNetworkID,
+		"label":        "CEC Support — asking",
+		"kind":         "silent",
+		"auto_approve": true,
+		"signaling":    map[string]interface{}{"strategy": "nostr", "mdns": true},
 	}
-	idsPart := spec
-	redundancy := -1
-	if i := strings.LastIndex(spec, ":"); i >= 0 {
-		idsPart = spec[:i]
-		if r, err := strconv.Atoi(strings.TrimSpace(spec[i+1:])); err == nil {
-			redundancy = r
-		}
-	}
-	var hubs []string
-	for _, h := range strings.Split(idsPart, ",") {
-		if h = strings.TrimSpace(h); h != "" {
-			hubs = append(hubs, h)
-		}
-	}
-	if len(hubs) == 0 {
-		return nil
-	}
-	topo := map[string]interface{}{"kind": "hubs", "hubs": hubs}
-	if redundancy >= 0 {
-		topo["spoke_redundancy"] = redundancy
-	}
-	return topo
 }
 
 // supportIDFromDevice derives the 9-digit CEC support number for a device id,
