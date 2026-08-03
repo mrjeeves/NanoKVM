@@ -33,7 +33,7 @@ image := "nanokvm-builder"
 web_image := "nanokvm-web-builder"
 daemon_dst := "kvmapp/system/bin/myownmesh"
 oled_dst := "kvmapp/kvm_system/kvm_system"
-oled_logo := "tools/logo_generator/allmystuff/logo.bin"
+oled_logo := "tools/logo_generator/cec/logo.bin"
 mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
 nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 

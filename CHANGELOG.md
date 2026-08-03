@@ -1,4 +1,4 @@
-# AllMyKVM changelog
+# CEC KVM changelog
 
 The release history of **this fork** — Critical Error Computing's AllMyStuff /
 CEC integration built on top of Sipeed's NanoKVM. Entries below are our own
@@ -79,7 +79,7 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## 0.1.0
 
-First AllMyKVM release — the NanoKVM as a first-class AllMyStuff mesh appliance:
+First CEC KVM release — the NanoKVM as a first-class AllMyStuff mesh appliance:
 
 - Pure-Go **MyOwnMesh bridge** (`server/service/mesh/`) with a bundled daemon
   pinned in `.myownmesh-rev`.

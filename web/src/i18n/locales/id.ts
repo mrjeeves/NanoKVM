@@ -31,20 +31,20 @@ const id = {
       loginButtonText: 'Masuk',
       tips: {
         reset1:
-          'To reset the passwords, pressing and holding the BOOT button on the AllMyKVM for 10 seconds.',
+          'To reset the passwords, pressing and holding the BOOT button on the CEC KVM for 10 seconds.',
         reset2: 'Untuk langkah-langkah rinci, lihat dokumen ini:',
         reset3: 'Akun web default:',
         reset4: 'Akun SSH default:',
         change1: 'Perhatikan bahwa tindakan ini akan mengubah kata sandi berikut:',
         change2: 'Kata sandi login web',
         change3: 'Kata sandi root sistem (kata sandi login SSH)',
-        change4: 'Untuk mengatur ulang kata sandi, tekan dan tahan tombol BOOT pada AllMyKVM.'
+        change4: 'Untuk mengatur ulang kata sandi, tekan dan tahan tombol BOOT pada CEC KVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Konfigurasi Wi-Fi untuk AllMyKVM',
-      success: 'Please check the network status of AllMyKVM and visit the new IP address.',
+      description: 'Konfigurasi Wi-Fi untuk CEC KVM',
+      success: 'Please check the network status of CEC KVM and visit the new IP address.',
       failed: 'Operasi gagal, silakan coba lagi.',
       invalidMode:
         'Mode saat ini tidak mendukung pengaturan jaringan. Silakan buka perangkat Anda dan aktifkan mode konfigurasi Wi-Fi.',
@@ -166,10 +166,10 @@ const id = {
       resetHid: 'Setel ulang HID',
       hidOnly: {
         title: 'Mode hanya HID',
-        desc: 'Jika mouse dan keyboard Anda berhenti merespons dan menyetel ulang HID tidak membantu, mungkin ada masalah kompatibilitas antara AllMyKVM dan perangkat. Coba aktifkan mode HID-Only untuk kompatibilitas yang lebih baik.',
+        desc: 'Jika mouse dan keyboard Anda berhenti merespons dan menyetel ulang HID tidak membantu, mungkin ada masalah kompatibilitas antara CEC KVM dan perangkat. Coba aktifkan mode HID-Only untuk kompatibilitas yang lebih baik.',
         tip1: 'Mengaktifkan mode HID-Hanya akan melepas U-disk virtual dan jaringan virtual',
         tip2: 'Dalam mode HID-Only, pemasangan gambar dinonaktifkan',
-        tip3: 'AllMyKVM akan otomatis reboot setelah berpindah mode',
+        tip3: 'CEC KVM akan otomatis reboot setelah berpindah mode',
         enable: 'Aktifkan mode HID-Hanya',
         disable: 'Nonaktifkan mode HID-Hanya'
       }
@@ -192,18 +192,18 @@ const id = {
       cancelBtn: 'Tidak',
       tips: {
         title: 'Cara mengunggah',
-        usb1: 'Hubungkan AllMyKVM ke komputer Anda melalui USB.',
+        usb1: 'Hubungkan CEC KVM ke komputer Anda melalui USB.',
         usb2: 'Pastikan disk virtual telah terpasang (Pengaturan - Disk Virtual).',
         usb3: 'Buka disk virtual di komputer Anda dan salin file gambar ke direktori root disk virtual.',
-        scp1: 'Pastikan AllMyKVM dan komputer Anda berada di jaringan lokal yang sama.',
-        scp2: 'Buka terminal di komputer Anda dan gunakan perintah SCP untuk mengunggah file gambar ke direktori /data di AllMyKVM.',
+        scp1: 'Pastikan CEC KVM dan komputer Anda berada di jaringan lokal yang sama.',
+        scp2: 'Buka terminal di komputer Anda dan gunakan perintah SCP untuk mengunggah file gambar ke direktori /data di CEC KVM.',
         scp3: 'Contoh: scp jalur-gambar-anda root@ip-nanokvm-anda:/data',
         tfCard: 'Kartu TF',
         tf1: 'Metode ini didukung di sistem linux',
-        tf2: 'Dapatkan Kartu TF dari AllMyKVM (untuk versi LENGKAP, bongkar casingnya terlebih dahulu).',
+        tf2: 'Dapatkan Kartu TF dari CEC KVM (untuk versi LENGKAP, bongkar casingnya terlebih dahulu).',
         tf3: 'Masukkan Kartu TF ke pembaca kartu dan hubungkan ke komputer Anda.',
         tf4: 'Salin berkas gambar ke direktori /data pada Kartu TF.',
-        tf5: 'Masukkan Kartu TF ke dalam AllMyKVM.'
+        tf5: 'Masukkan Kartu TF ke dalam CEC KVM.'
       }
     },
     script: {
@@ -221,7 +221,7 @@ const id = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'Terminal AllMyKVM',
+      nanokvm: 'Terminal CEC KVM',
       serial: 'Terminal Port Serial',
       serialPort: 'Port Serial',
       serialPortPlaceholder: 'Silahkan masukkan port serial',
@@ -270,14 +270,14 @@ const id = {
     settings: {
       title: 'Pengaturan',
       about: {
-        title: 'Tentang AllMyKVM',
+        title: 'Tentang CEC KVM',
         information: 'Informasi',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Versi Aplikasi',
-        applicationTip: 'Versi aplikasi web AllMyKVM',
+        applicationTip: 'Versi aplikasi web CEC KVM',
         image: 'Version Gambar',
-        imageTip: 'Versi image sistem AllMyKVM',
+        imageTip: 'Versi image sistem CEC KVM',
         deviceKey: 'Kunci Perangkat',
         community: 'Komunitas',
         hostname: 'Nama Host',
@@ -364,7 +364,7 @@ const id = {
         network: 'Jaringan virtual',
         networkDesc: 'Pasang kartu jaringan virtual pada host jarak jauh',
         reboot: 'Mulai ulang',
-        rebootDesc: 'Apakah Anda yakin ingin me-reboot AllMyKVM?',
+        rebootDesc: 'Apakah Anda yakin ingin me-reboot CEC KVM?',
         okBtn: 'Ya',
         cancelBtn: 'Tidak'
       },
@@ -391,7 +391,7 @@ const id = {
         },
         dns: {
           title: 'DNS',
-          description: 'Konfigurasi server DNS untuk AllMyKVM',
+          description: 'Konfigurasi server DNS untuk CEC KVM',
           mode: 'Mode',
           dhcp: 'DHCP',
           manual: 'Manual',
@@ -436,8 +436,8 @@ const id = {
         download: 'Mengunduh',
         package: 'paket instalasi',
         unzip: 'dan unzip itu',
-        upTailscale: 'Unggah tailscale ke direktori AllMyKVM /usr/bin/',
-        upTailscaled: 'Unggah tailscaled ke direktori AllMyKVM /usr/sbin/',
+        upTailscale: 'Unggah tailscale ke direktori CEC KVM /usr/bin/',
+        upTailscaled: 'Unggah tailscaled ke direktori CEC KVM /usr/sbin/',
         refresh: 'Segarkan halaman ini',
         notRunning: 'Tailscale tidak berjalan. Silakan mulai untuk melanjutkan.',
         run: 'Mulai',
@@ -499,7 +499,7 @@ const id = {
         defaultTitle: 'Asisten umum',
         defaultDescription: 'Obrolan umum, pencarian, dan bantuan ruang kerja.',
         kvmTitle: 'Kontrol jarak jauh',
-        kvmDescription: 'Operasikan host jarak jauh melalui AllMyKVM.',
+        kvmDescription: 'Operasikan host jarak jauh melalui CEC KVM.',
         switched: 'Peran agen dialihkan',
         switchFailed: 'Gagal mengganti peran agen'
       },

@@ -31,20 +31,20 @@ const pt_br = {
       loginButtonText: 'Login',
       tips: {
         reset1:
-          'Para redefinir as senhas, pressione e segure o botão BOOT no AllMyKVM por 10 segundos.',
+          'Para redefinir as senhas, pressione e segure o botão BOOT no CEC KVM por 10 segundos.',
         reset2: 'Para etapas detalhadas, por favor, consulte este documento:',
         reset3: 'Conta padrão da Web:',
         reset4: 'Conta padrão SSH:',
         change1: 'Por favor, note que esta ação irá alterar as seguintes senhas:',
         change2: 'Senha de login da Web',
         change3: 'Senha root do sistema (senha de login SSH)',
-        change4: 'Para redefinir as senhas, pressione e segure o botão BOOT no AllMyKVM.'
+        change4: 'Para redefinir as senhas, pressione e segure o botão BOOT no CEC KVM.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Configurar Wi-Fi para o AllMyKVM',
-      success: 'Por favor, verifique o status da rede do AllMyKVM e visite o novo endereço IP.',
+      description: 'Configurar Wi-Fi para o CEC KVM',
+      success: 'Por favor, verifique o status da rede do CEC KVM e visite o novo endereço IP.',
       failed: 'Operação falhou, por favor, tente novamente.',
       invalidMode:
         'O modo atual não suporta configuração de rede. Vá para o seu dispositivo e ative o modo de configuração Wi-Fi.',
@@ -166,10 +166,10 @@ const pt_br = {
       resetHid: 'Redefinir HID',
       hidOnly: {
         title: 'Modo somente HID',
-        desc: 'Se o seu mouse e teclado pararem de responder e a redefinição de HID não ajudar, pode ser um problema de compatibilidade entre o AllMyKVM e o dispositivo. Tente habilitar o modo Somente-HID para melhor compatibilidade.',
+        desc: 'Se o seu mouse e teclado pararem de responder e a redefinição de HID não ajudar, pode ser um problema de compatibilidade entre o CEC KVM e o dispositivo. Tente habilitar o modo Somente-HID para melhor compatibilidade.',
         tip1: 'Habilitar o modo Somente-HID irá desmontar o U-disk virtual e a rede virtual',
         tip2: 'No modo Somente-HID, a montagem de imagem está desativada',
-        tip3: 'AllMyKVM será reiniciado automaticamente após a troca de modos',
+        tip3: 'CEC KVM será reiniciado automaticamente após a troca de modos',
         enable: 'Habilitar modo Somente-HID',
         disable: 'Desabilitar modo Somente-HID'
       }
@@ -192,18 +192,18 @@ const pt_br = {
       cancelBtn: 'Não',
       tips: {
         title: 'Como fazer upload',
-        usb1: 'Conecte o AllMyKVM ao seu computador via USB.',
+        usb1: 'Conecte o CEC KVM ao seu computador via USB.',
         usb2: 'Certifique-se de que o disco virtual está montado (Configurações - Disco Virtual).',
         usb3: 'Abra o disco virtual no seu computador e copie o arquivo de imagem para o diretório raiz do disco virtual.',
-        scp1: 'Certifique-se de que o AllMyKVM e seu computador estão na mesma rede local.',
-        scp2: 'Abra um terminal no seu computador e use o comando SCP para fazer upload do arquivo de imagem para o diretório /data no AllMyKVM.',
+        scp1: 'Certifique-se de que o CEC KVM e seu computador estão na mesma rede local.',
+        scp2: 'Abra um terminal no seu computador e use o comando SCP para fazer upload do arquivo de imagem para o diretório /data no CEC KVM.',
         scp3: 'Exemplo: scp seu-caminho-da-imagem root@seu-ip-nanokvm:/data',
         tfCard: 'Cartão TF',
         tf1: 'Este método é suportado em sistemas Linux',
-        tf2: 'Remova o cartão TF do AllMyKVM (para a versão FULL, desmonte a caixa primeiro).',
+        tf2: 'Remova o cartão TF do CEC KVM (para a versão FULL, desmonte a caixa primeiro).',
         tf3: 'Insira o cartão TF em um leitor de cartão e conecte-o ao seu computador.',
         tf4: 'Copie o arquivo de imagem para o diretório /data no cartão TF.',
-        tf5: 'Insira o cartão TF no AllMyKVM.'
+        tf5: 'Insira o cartão TF no CEC KVM.'
       }
     },
     script: {
@@ -221,7 +221,7 @@ const pt_br = {
     },
     terminal: {
       title: 'Terminal',
-      nanokvm: 'Terminal AllMyKVM',
+      nanokvm: 'Terminal CEC KVM',
       serial: 'Terminal de Porta Serial',
       serialPort: 'Porta Serial',
       serialPortPlaceholder: 'Por favor, digite a porta serial',
@@ -270,14 +270,14 @@ const pt_br = {
     settings: {
       title: 'Configurações',
       about: {
-        title: 'Sobre o AllMyKVM',
+        title: 'Sobre o CEC KVM',
         information: 'Informação',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Versão do Aplicativo',
-        applicationTip: 'Versão do aplicativo web AllMyKVM',
+        applicationTip: 'Versão do aplicativo web CEC KVM',
         image: 'Versão da Imagem',
-        imageTip: 'Versão da imagem do sistema AllMyKVM',
+        imageTip: 'Versão da imagem do sistema CEC KVM',
         deviceKey: 'Chave do Dispositivo',
         community: 'Comunidade',
         hostname: 'Nome do Host',
@@ -365,7 +365,7 @@ const pt_br = {
         network: 'Rede Virtual',
         networkDesc: 'Montar placa de rede virtual no host remoto',
         reboot: 'Reiniciar',
-        rebootDesc: 'Tem certeza de que deseja reiniciar o AllMyKVM?',
+        rebootDesc: 'Tem certeza de que deseja reiniciar o CEC KVM?',
         okBtn: 'Sim',
         cancelBtn: 'Não'
       },
@@ -392,7 +392,7 @@ const pt_br = {
         },
         dns: {
           title: 'DNS',
-          description: 'Configurar servidores DNS para o AllMyKVM',
+          description: 'Configurar servidores DNS para o CEC KVM',
           mode: 'Modo',
           dhcp: 'DHCP',
           manual: 'Manual',
@@ -437,8 +437,8 @@ const pt_br = {
         download: 'Baixar o',
         package: 'pacote de instalação',
         unzip: 'e descompacte-o',
-        upTailscale: 'Fazer upload do tailscale para o diretório AllMyKVM /usr/bin/',
-        upTailscaled: 'Fazer upload do tailscaled para o diretório AllMyKVM /usr/sbin/',
+        upTailscale: 'Fazer upload do tailscale para o diretório CEC KVM /usr/bin/',
+        upTailscaled: 'Fazer upload do tailscaled para o diretório CEC KVM /usr/sbin/',
         refresh: 'Atualizar página atual',
         notRunning: 'Tailscale não está em execução. Por favor, inicie-o para continuar.',
         run: 'Iniciar',
@@ -500,7 +500,7 @@ const pt_br = {
         defaultTitle: 'Assistente geral',
         defaultDescription: 'Ajuda geral sobre bate-papo, pesquisa e espaço de trabalho.',
         kvmTitle: 'Controle remoto',
-        kvmDescription: 'Opera o host remoto por meio de AllMyKVM.',
+        kvmDescription: 'Opera o host remoto por meio de CEC KVM.',
         switched: 'Função de agente trocada',
         switchFailed: 'Falha ao mudar de função de agente'
       },
