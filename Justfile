@@ -51,6 +51,28 @@ default: help
 help:
     @just --list
 
+# Match the AllMyStuff clean-checkout contract: discard local edits, fetch every
+# remote branch, and recover automatically when the current branch was merged
+# and deleted on origin.
+[doc("Discard local changes + pull + fetch all; falls back to the default branch when yours is gone on origin.")]
+pull:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git reset --hard HEAD
+    git fetch --all --prune
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+      default=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD | sed 's|^origin/||' || true)
+      default=${default:-main}
+      echo "→ origin no longer has '$branch' (merged & deleted?) — switching to '$default'"
+      git checkout "$default"
+    fi
+    git pull
+
+[doc("just pull (clean + fetch all), then git checkout (e.g. `just checkout main`).")]
+checkout *args: pull
+    @git checkout {{args}}
+
 # ── Development: format, vet, and test the Go server ───────────────────────────
 # The app-repo dev loop (fmt / fmt-check / lint / test / check), scoped to the
 # CGO-free Go packages (config, service/mesh, service/button) so it runs on any
@@ -163,6 +185,10 @@ build-risc: build-server daemon build-web build-oled
     @echo "  web/dist"
     @echo "  {{oled_dst}}"
     @echo "Deploy: just deploy <device-ip>"
+
+# The standard project entry point; keep build-risc as the descriptive alias.
+[doc("Build a complete device image (server + web + daemon + OLED).")]
+build: build-risc
 
 # Build just the NanoKVM server (Go, with the mesh bridge) in the builder image.
 [doc("Build just the Go server (mesh bridge) in the builder image.")]
@@ -311,7 +337,7 @@ fetch VERSION="latest":
     echo "   (the OLED app isn't in the release bundle — build it with 'just build-oled' if you want the on-screen mesh name)"
     echo "Now: just deploy <device-ip>   (or use 'just install <device-ip>')"
 
-# Fetch the prebuilt device bundle (server + daemon) and deploy to a device.
+# Fetch the prebuilt device bundle, deploy it, and reboot the device.
 install ip VERSION="latest": (fetch VERSION)
     @just deploy {{ip}}
 
@@ -338,11 +364,12 @@ release VERSION:
     echo "  Then: just install <device-ip>   (downloads that bundle and deploys)"
 
 # Copy the complete device build (server + daemon + web + init scripts + OLED +
-# boot logo) to a device as ONE bundle: a single scp + a single ssh, so you type
+# boot logo) to a device as ONE bundle, then reboot it automatically: a single
+# scp + the install/reboot SSH calls, so you type
 # the device password twice, not a dozen times. (Add SSH connection multiplexing
 # — see the "Fewer password prompts" note in the README — to make it just once,
 # shared with reboot/verify too.)
-[doc("Deploy the built server + daemon + web + init scripts to a device (one bundle).")]
+[doc("Deploy the complete device bundle, then reboot the device.")]
 deploy ip:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -463,7 +490,8 @@ deploy ip:
       rm -rf "$d" /kvmapp/nanokvm-deploy.tar.gz
       echo "device: files staged"
     '
-    echo "OK — just reboot {{ip}} && just verify {{ip}}"
+    just reboot {{ip}}
+    echo "OK — device reboot requested; run 'just verify {{ip}}' after it returns"
 
 reboot ip:
     @ssh root@{{ip}} reboot || true
