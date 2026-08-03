@@ -32,20 +32,20 @@ const hu = {
       loginButtonText: 'Bejelentkezés',
       tips: {
         reset1:
-          'To reset the passwords, pressing and holding the BOOT button on the AllMyKVM for 10 seconds.',
+          'To reset the passwords, pressing and holding the BOOT button on the CEC KVM for 10 seconds.',
         reset2: 'A részletes lépésekért tekintse meg ezt a dokumentumot:',
         reset3: 'Alapértelmezett webes fiók:',
         reset4: 'Alapértelmezett SSH-fiók:',
         change1: 'Vegye figyelembe, hogy ez a művelet a következő jelszavakat módosítja:',
         change2: 'Webes bejelentkezési jelszó',
         change3: 'Rendszer root jelszava (SSH bejelentkezési jelszó)',
-        change4: 'A jelszavak visszaállításához tartsa lenyomva a BOOT gombot a AllMyKVM-en.'
+        change4: 'A jelszavak visszaállításához tartsa lenyomva a BOOT gombot a CEC KVM-en.'
       }
     },
     wifi: {
       title: 'Wi-Fi',
-      description: 'Wi-Fi beállítása a AllMyKVM-hez',
-      success: 'Please check the network status of AllMyKVM and visit the new IP address.',
+      description: 'Wi-Fi beállítása a CEC KVM-hez',
+      success: 'Please check the network status of CEC KVM and visit the new IP address.',
       failed: 'A művelet sikertelen, próbálja újra.',
       invalidMode:
         'Az aktuális mód nem támogatja a hálózat beállítását. Kérjük, lépjen az eszközére, és engedélyezze a Wi-Fi konfigurációs módot.',
@@ -168,10 +168,10 @@ const hu = {
       resetHid: 'HID alaphelyzetbe állítása',
       hidOnly: {
         title: 'Csak HID mód',
-        desc: 'Ha az egér és a billentyűzet nem válaszol, és az HID alaphelyzetbe állítása nem segít, akkor az AllMyKVM és az eszköz közötti kompatibilitási probléma lehet. Próbálja engedélyezni az HID-Csak módot a jobb kompatibilitás érdekében.',
+        desc: 'Ha az egér és a billentyűzet nem válaszol, és az HID alaphelyzetbe állítása nem segít, akkor az CEC KVM és az eszköz közötti kompatibilitási probléma lehet. Próbálja engedélyezni az HID-Csak módot a jobb kompatibilitás érdekében.',
         tip1: 'Az HID-Csak mód engedélyezése leválasztja a virtuális U-lemezt és a virtuális hálózatot',
         tip2: 'HID-Csak módban a képrögzítés le van tiltva',
-        tip3: 'A AllMyKVM automatikusan újraindul az üzemmódváltás után',
+        tip3: 'A CEC KVM automatikusan újraindul az üzemmódváltás után',
         enable: 'Engedélyezze a HID-Csak módot',
         disable: 'A HID-Csak mód letiltása'
       }
@@ -194,18 +194,18 @@ const hu = {
       cancelBtn: 'Nem',
       tips: {
         title: 'Hogyan tölts fel képeket',
-        usb1: 'Csatlakoztassa a AllMyKVM-t a számítógépéhez USB-n keresztül.',
+        usb1: 'Csatlakoztassa a CEC KVM-t a számítógépéhez USB-n keresztül.',
         usb2: 'Győződjön meg róla, hogy a virtuális lemez csatlakoztatva van (Beállítások - Virtuális lemez).',
         usb3: 'Nyissa meg a virtuális lemezt a számítógépén, és másolja a kép fájlt a virtuális lemez gyökérkönyvtárába.',
-        scp1: 'Győződjön meg róla, hogy a AllMyKVM és a számítógépe ugyanazon a helyi hálózaton van.',
-        scp2: 'Nyisson meg egy terminált a számítógépén, és használja az SCP parancsot a kép fájl feltöltésére a /data könyvtárba a AllMyKVM-en.',
+        scp1: 'Győződjön meg róla, hogy a CEC KVM és a számítógépe ugyanazon a helyi hálózaton van.',
+        scp2: 'Nyisson meg egy terminált a számítógépén, és használja az SCP parancsot a kép fájl feltöltésére a /data könyvtárba a CEC KVM-en.',
         scp3: 'Példa: scp your-image-path root@your-nanokvm-ip:/data',
         tfCard: 'TF Kártya',
         tf1: 'Ez a módszer támogatott Linux rendszeren',
-        tf2: 'Vegye ki a TF kártyát a AllMyKVM-ből (a TELJES verzióhoz, először szedje szét a házat).',
+        tf2: 'Vegye ki a TF kártyát a CEC KVM-ből (a TELJES verzióhoz, először szedje szét a házat).',
         tf3: 'Helyezze a TF kártyát egy kártyaolvasóba, és csatlakoztassa a számítógépéhez.',
         tf4: 'Másolja a képfájlt a TF kártya /data könyvtárába.',
-        tf5: 'Helyezze vissza a TF kártyát a AllMyKVM-be.'
+        tf5: 'Helyezze vissza a TF kártyát a CEC KVM-be.'
       }
     },
     script: {
@@ -223,7 +223,7 @@ const hu = {
     },
     terminal: {
       title: 'Terminál',
-      nanokvm: 'AllMyKVM Terminál',
+      nanokvm: 'CEC KVM Terminál',
       serial: 'Soros port terminál',
       serialPort: 'Soros port',
       serialPortPlaceholder: 'Adja meg a soros portot',
@@ -272,14 +272,14 @@ const hu = {
     settings: {
       title: 'Beállítások',
       about: {
-        title: 'AllMyKVM Névjegy',
+        title: 'CEC KVM Névjegy',
         information: 'Információ',
         ip: 'IP',
         mdns: 'mDNS',
         application: 'Alkalmazás verzió',
-        applicationTip: 'AllMyKVM webalkalmazás verziója',
+        applicationTip: 'CEC KVM webalkalmazás verziója',
         image: 'Képfájl verzió',
-        imageTip: 'AllMyKVM rendszerkép verziója',
+        imageTip: 'CEC KVM rendszerkép verziója',
         deviceKey: 'Eszköz kulcs',
         community: 'Közösség',
         hostname: 'Gazdanév',
@@ -367,7 +367,7 @@ const hu = {
         network: 'Virtuális hálózat',
         networkDesc: 'Virtuális hálózati kártya csatlakoztatása a távoli gazdagépen',
         reboot: 'Újraindítás',
-        rebootDesc: 'Biztos, hogy újra akarja indítani a AllMyKVM-t?',
+        rebootDesc: 'Biztos, hogy újra akarja indítani a CEC KVM-t?',
         okBtn: 'Igen',
         cancelBtn: 'Nem'
       },
@@ -394,7 +394,7 @@ const hu = {
         },
         dns: {
           title: 'DNS',
-          description: 'DNS-kiszolgálók beállítása a AllMyKVM számára',
+          description: 'DNS-kiszolgálók beállítása a CEC KVM számára',
           mode: 'Mód',
           dhcp: 'DHCP',
           manual: 'Kézi',
@@ -439,8 +439,8 @@ const hu = {
         download: 'Letöltés a',
         package: 'telepítési csomag',
         unzip: 'és kicsomagolás',
-        upTailscale: 'Töltsön fel tailscale-t a AllMyKVM /usr/bin/ könyvtárába',
-        upTailscaled: 'Töltsön fel tailscaled-t a AllMyKVM /usr/sbin/ könyvtárába',
+        upTailscale: 'Töltsön fel tailscale-t a CEC KVM /usr/bin/ könyvtárába',
+        upTailscaled: 'Töltsön fel tailscaled-t a CEC KVM /usr/sbin/ könyvtárába',
         refresh: 'Frissítse az aktuális oldalt',
         notRunning: 'Tailscale nem fut. Kérjük, indítsa el a folytatáshoz.',
         run: 'Indítás',
@@ -502,7 +502,7 @@ const hu = {
         defaultTitle: 'Általános asszisztens',
         defaultDescription: 'Általános csevegési, keresési és munkaterületi súgó.',
         kvmTitle: 'Távoli vezérlés',
-        kvmDescription: 'Működtesse a távoli gazdagépet az AllMyKVM segítségével.',
+        kvmDescription: 'Működtesse a távoli gazdagépet az CEC KVM segítségével.',
         switched: 'Ügynöki szerepkör megváltozott',
         switchFailed: 'Nem sikerült váltani az ügynöki szerepkört'
       },
