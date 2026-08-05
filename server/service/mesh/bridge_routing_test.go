@@ -186,3 +186,31 @@ func TestJoinPlanesBeforeConnectFailsFast(t *testing.T) {
 		t.Fatal("joinPlanes with no connections should fail")
 	}
 }
+
+// TestSiteResponseUsesOfferNetwork pins the route-network contract. A KVM and
+// viewer may share several meshes; the site response must use the exact network
+// that carried the Offer, not whichever joined network happens to come first.
+func TestSiteResponseUsesOfferNetwork(t *testing.T) {
+	f := startFakeDaemon(t)
+	ctl, err := Dial(f.sock)
+	if err != nil {
+		t.Fatalf("dial ctl: %v", err)
+	}
+	defer ctl.Close()
+
+	b := &Bridge{ctl: ctl, networks: []string{"stale-net", "turn-net"}}
+	b.sites = newSiteHost(nil, 80, b.sendSiteFrame)
+	b.sites.markRouteActive("route:r", "turn-net", "peer-p")
+
+	// A refused Open produces an immediate outbound Close without starting HTTP,
+	// making the selected response network directly observable.
+	b.sites.handleFrame("peer-p", NewSiteOpen("route:r", 0, 1, 81))
+
+	reqs := f.requests("channel_send_to")
+	if len(reqs) != 1 {
+		t.Fatalf("site response sends = %d, want 1", len(reqs))
+	}
+	if got, _ := reqs[0]["network"].(string); got != "turn-net" {
+		t.Fatalf("site response network = %q, want turn-net", got)
+	}
+}

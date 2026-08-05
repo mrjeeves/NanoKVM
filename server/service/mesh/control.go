@@ -269,7 +269,7 @@ func (b *Bridge) handleSiteOffer(network, from string, rc *RouteControl) {
 		b.sendRouteReject(network, from, routeID, "not this KVM's owner — claim it first")
 		return
 	}
-	b.sites.markRouteActive(routeID, from)
+	b.sites.markRouteActive(routeID, network, from)
 	if err := b.sendControlTo(network, from, NewRouteAccept(routeID)); err != nil {
 		log.Warnf("mesh: send route Accept to %s: %s", from, err)
 	}

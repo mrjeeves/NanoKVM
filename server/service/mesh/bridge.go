@@ -1558,28 +1558,22 @@ func (b *Bridge) rejectRouteTo(peer, route, reason string) {
 	}
 }
 
-// sendSiteFrame sends one outbound SiteFrame on CHANNEL_MEDIA to a peer. It
-// targets the network the peer's route is on; we broadcast across our networks
-// to the peer (channel_send_to is addressed by peer, so the correct network's
-// send reaches them and others are harmless no-ops).
-func (b *Bridge) sendSiteFrame(peer string, frame SiteFrame) error {
+// sendSiteFrame sends one outbound SiteFrame on CHANNEL_MEDIA to a peer on the
+// exact network that carried the route offer. A peer can share multiple meshes;
+// channel_send_to success only confirms a local enqueue, so trying the first
+// joined network can silently strand a response on a stale path.
+func (b *Bridge) sendSiteFrame(network, peer string, frame SiteFrame) error {
 	b.mu.Lock()
 	ctl := b.ctl
-	nets := append([]string(nil), b.networks...)
 	b.mu.Unlock()
+	if ctl == nil {
+		return fmt.Errorf("site send: bridge not connected")
+	}
 	payload, err := json.Marshal(frame)
 	if err != nil {
 		return err
 	}
-	var lastErr error
-	for _, n := range nets {
-		if err := ctl.ChannelSendTo(n, ChannelMedia, peer, json.RawMessage(payload)); err != nil {
-			lastErr = err
-		} else {
-			return nil // delivered on this network
-		}
-	}
-	return lastErr
+	return ctl.ChannelSendTo(network, ChannelMedia, peer, json.RawMessage(payload))
 }
 
 // broadcastPresence pushes the current NodeProfile on CHANNEL_PRESENCE to every
