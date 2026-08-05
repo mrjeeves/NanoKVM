@@ -161,7 +161,7 @@ func TestSiteHostOpenAllowListAndDataRoundTrip(t *testing.T) {
 	// disallowed port is refused with a Close frame.
 	var outMu sync.Mutex
 	var out []SiteFrame
-	send := func(peer string, f SiteFrame) error {
+	send := func(network, peer string, f SiteFrame) error {
 		outMu.Lock()
 		out = append(out, f)
 		outMu.Unlock()
@@ -175,7 +175,7 @@ func TestSiteHostOpenAllowListAndDataRoundTrip(t *testing.T) {
 	h.serveConn = func(*meshConn) {}
 	const route = "route:peer:site->kvm:site-view:0"
 	const peer = "peer-AB12C"
-	h.markRouteActive(route, peer)
+	h.markRouteActive(route, "turn-net", peer)
 
 	// Disallowed port → refused with a Close frame, no conn created.
 	h.handleFrame(peer, NewSiteOpen(route, 0, 1, 8080))

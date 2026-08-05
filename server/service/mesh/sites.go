@@ -21,8 +21,9 @@ type siteHost struct {
 	engine      *gin.Engine
 	allowedPort uint16
 
-	// send emits one outbound SiteFrame on CHANNEL_MEDIA to a specific peer.
-	send func(peer string, frame SiteFrame) error
+	// send emits one outbound SiteFrame on CHANNEL_MEDIA to a specific peer on
+	// the same network that carried the route offer.
+	send func(network, peer string, frame SiteFrame) error
 
 	// nack reports a frame that arrived on a dead/foreign route back to its
 	// sender as a RouteControl Reject. AllMyStuff deliberately never NACKs the
@@ -45,19 +46,24 @@ type siteHost struct {
 	// expire_offer is deliberately message-less) and re-offers under a fresh
 	// route id, so entries here can go stale; they're small, and a reject on
 	// the next stray frame (see nack) settles the peer's side.
-	activeRoutes map[string]string // route id -> peer (the offerer)
+	activeRoutes map[string]siteRoute // route id -> offer network + peer
 	// lastNack rate-limits per-route Reject replies: a viewer draining a full
 	// pipe onto a dead route must produce one reject, not one per frame.
 	lastNack map[string]time.Time
 }
 
-func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(peer string, frame SiteFrame) error) *siteHost {
+type siteRoute struct {
+	network string
+	peer    string
+}
+
+func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(network, peer string, frame SiteFrame) error) *siteHost {
 	h := &siteHost{
 		engine:       engine,
 		allowedPort:  allowedPort,
 		send:         send,
 		conns:        make(map[string]map[uint64]*meshConn),
-		activeRoutes: make(map[string]string),
+		activeRoutes: make(map[string]siteRoute),
 		lastNack:     make(map[string]time.Time),
 	}
 	h.serveConn = h.serveHTTP
@@ -66,9 +72,9 @@ func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(peer string, 
 
 // markRouteActive records that we accepted a site route Offer from peer, so its
 // media SiteFrames are served.
-func (h *siteHost) markRouteActive(route, peer string) {
+func (h *siteHost) markRouteActive(route, network, peer string) {
 	h.mu.Lock()
-	h.activeRoutes[route] = peer
+	h.activeRoutes[route] = siteRoute{network: network, peer: peer}
 	h.mu.Unlock()
 }
 
@@ -92,8 +98,8 @@ func (h *siteHost) tearDownRoute(route string) {
 func (h *siteHost) tearDownPeer(pubkey string) {
 	h.mu.Lock()
 	var closing []*meshConn
-	for route, peer := range h.activeRoutes {
-		if pubkeyPart(peer) != pubkey {
+	for route, target := range h.activeRoutes {
+		if pubkeyPart(target.peer) != pubkey {
 			continue
 		}
 		for _, c := range h.conns[route] {
@@ -115,7 +121,7 @@ func (h *siteHost) tearDownAll() {
 	h.mu.Lock()
 	conns := h.conns
 	h.conns = make(map[string]map[uint64]*meshConn)
-	h.activeRoutes = make(map[string]string)
+	h.activeRoutes = make(map[string]siteRoute)
 	h.mu.Unlock()
 	for _, byConn := range conns {
 		for _, c := range byConn {
@@ -128,8 +134,19 @@ func (h *siteHost) tearDownAll() {
 func (h *siteHost) routePeer(route string) (string, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	peer, ok := h.activeRoutes[route]
-	return peer, ok
+	target, ok := h.activeRoutes[route]
+	return target.peer, ok
+}
+
+// routeTarget returns the immutable destination selected when the site route
+// was accepted. A route's response traffic must use this exact network: the
+// same peer may share several meshes, and a successful local enqueue on a
+// different (stale) mesh is not end-to-end delivery.
+func (h *siteHost) routeTarget(route string) (siteRoute, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	target, ok := h.activeRoutes[route]
+	return target, ok
 }
 
 // nackCooldown bounds how often one dead route is NACKed; a viewer draining a
@@ -166,8 +183,8 @@ func (h *siteHost) nackDeadRoute(peer, route string) {
 func (h *siteHost) handleFrame(peer string, f SiteFrame) {
 	// Only serve frames on a route whose Offer we accepted, and only from the
 	// peer that made that offer (the mesh authenticates the sender).
-	offerer, active := h.routePeer(f.Route)
-	if !active || offerer != peer {
+	target, active := h.routeTarget(f.Route)
+	if !active || target.peer != peer {
 		log.Debugf("mesh: dropping site frame on inactive/foreign route %s", f.Route)
 		h.nackDeadRoute(peer, f.Route)
 		return
@@ -192,15 +209,20 @@ func (h *siteHost) handleFrame(peer string, f SiteFrame) {
 // handleOpen validates the requested port against our allow-list and, if it
 // matches, spins up a meshConn served by the gin engine.
 func (h *siteHost) handleOpen(peer string, f SiteFrame) {
+	target, active := h.routeTarget(f.Route)
+	if !active || target.peer != peer {
+		h.nackDeadRoute(peer, f.Route)
+		return
+	}
 	if f.Port != h.allowedPort {
 		// The advert is the allow-list: refuse anything else by immediately
 		// closing the connection.
 		log.Warnf("mesh: site open for unadvertised port %d (allow %d); refusing", f.Port, h.allowedPort)
-		_ = h.send(peer, NewSiteClose(f.Route, 0, f.Conn))
+		_ = h.send(target.network, peer, NewSiteClose(f.Route, 0, f.Conn))
 		return
 	}
 
-	send := func(frame SiteFrame) error { return h.send(peer, frame) }
+	send := func(frame SiteFrame) error { return h.send(target.network, peer, frame) }
 	c := newMeshConn(f.Route, f.Conn, send)
 
 	h.mu.Lock()
