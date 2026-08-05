@@ -13,9 +13,9 @@ export const Community = () => {
       url: 'https://github.com/mrjeeves/NanoKVM'
     },
     {
-      name: 'AllMyStuff',
+      name: 'Desktop App',
       icon: <DownloadIcon size={24} />,
-      url: 'https://allmystuff.works'
+      url: 'https://support.cec.direct'
     },
     {
       name: 'FAQ',
@@ -37,7 +37,7 @@ export const Community = () => {
             target="_blank"
           >
             {community.icon}
-            <span className="text-xs">{community.name}</span>
+            <span className="text-center text-xs">{community.name}</span>
           </a>
         ))}
       </div>
