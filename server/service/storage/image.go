@@ -161,8 +161,8 @@ func (s *Service) MountImage(c *gin.Context) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	rsp.OkRsp(c)
 	persistVirtualMedia(req)
+	rsp.OkRsp(c)
 	log.Debugf("mount image %s success", req.File)
 }
 
