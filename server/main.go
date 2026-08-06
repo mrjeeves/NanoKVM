@@ -20,6 +20,7 @@ import (
 	"NanoKVM-Server/service/button"
 	"NanoKVM-Server/service/mesh"
 	"NanoKVM-Server/service/mesh/glue"
+	"NanoKVM-Server/service/viewer"
 	"NanoKVM-Server/service/vm"
 	"NanoKVM-Server/service/vm/jiggler"
 	"NanoKVM-Server/utils"
@@ -45,13 +46,15 @@ func initialize() {
 	// init screen parameters
 	_ = common.GetScreen()
 
-	// init HDMI
+	// Keep HDMI present only while a web or mesh-native screen viewer holds a
+	// lease. The viewer manager adds a short handoff grace between routes.
 	vision := common.GetKvmVision()
-	vision.SetHDMI(false)
-	time.Sleep(10 * time.Millisecond)
-	if !utils.IsHdmiDisabled() {
-		vision.SetHDMI(true)
-	}
+	viewer.Configure(func(active bool) {
+		vision.SetHDMI(active)
+		if active {
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
 
 	// run mouse jiggler
 	jiggler.GetJiggler().Run()
