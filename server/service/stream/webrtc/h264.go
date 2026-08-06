@@ -3,6 +3,7 @@ package webrtc
 import (
 	"NanoKVM-Server/config"
 	"NanoKVM-Server/service/iceservers"
+	"NanoKVM-Server/service/viewer"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -47,6 +48,8 @@ func Connect(c *gin.Context) {
 		log.Debugf("h264 websocket disconnected: %s", c.ClientIP())
 	}()
 	log.Debugf("h264 websocket connected: %s", c.ClientIP())
+	releaseViewer := viewer.Acquire()
+	defer releaseViewer()
 
 	var zeroTime time.Time
 	_ = wsConn.SetReadDeadline(zeroTime)
