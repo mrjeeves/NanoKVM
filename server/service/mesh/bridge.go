@@ -100,6 +100,10 @@ type Bridge struct {
 	// join and each presence tick; a cache (never an inline roster_list) so
 	// authorization checks on the event-stream goroutine stay non-blocking.
 	fleetRoster map[string]struct{}
+	// delegatedTechs are short, memory-only CEC leases renewed by the computer
+	// this KVM is physically attached to. They are separate from the KVM's own
+	// persisted help grants so one flow can never shorten or revoke the other.
+	delegatedTechs map[string]time.Time
 
 	// help owns the CEC "hand raise" state (see cec.go): whether this device
 	// currently has its hand up on the cecsupport-clients mesh, and the
@@ -136,13 +140,14 @@ func NewBridge(engine *gin.Engine, conf *config.Config) *Bridge {
 	port := webPort(conf)
 
 	b := &Bridge{
-		conf:   conf,
-		engine: engine,
-		mesh:   conf.Mesh,
-		state:  st,
-		dev:    dev,
-		boot:   newBootID(),
-		lanes:  make(map[uint8]bool),
+		conf:           conf,
+		engine:         engine,
+		mesh:           conf.Mesh,
+		state:          st,
+		dev:            dev,
+		boot:           newBootID(),
+		lanes:          make(map[uint8]bool),
+		delegatedTechs: make(map[string]time.Time),
 	}
 	// The site host serves only our advertised web port.
 	b.sites = newSiteHost(engine, port, b.sendSiteFrame)

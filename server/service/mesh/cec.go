@@ -66,7 +66,7 @@ const (
 	// cecGrantSweep is how often expired grants are swept. Access is refused the
 	// moment a grant lapses (every check is deadline-aware), so this only
 	// governs how quickly an already-open stream is actually torn down.
-	cecGrantSweep = 30 * time.Second
+	cecGrantSweep = 2 * time.Second
 )
 
 // helpState tracks whether this device currently has its hand up (asking-room
@@ -362,6 +362,10 @@ func (b *Bridge) cecGrantJanitor(stop <-chan struct{}) {
 		case now := <-ticker.C:
 			for _, key := range b.state.PruneCecGrants(now) {
 				log.Infof("mesh: CEC authorisation for %s expired — ending its access", key)
+				b.evictTech(key)
+			}
+			for _, key := range b.pruneDelegatedTechs(now) {
+				log.Infof("mesh: attached-computer delegation for %s expired — ending its KVM access", key)
 				b.evictTech(key)
 			}
 		}

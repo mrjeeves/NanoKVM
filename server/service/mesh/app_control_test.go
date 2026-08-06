@@ -22,6 +22,15 @@ func TestAppControlDecodes(t *testing.T) {
 		t.Fatalf("kind = %q, want restart_device", msg.App.Kind)
 	}
 
+	msg, err = DecodeControlMessage(json.RawMessage(`{"t":"app","kind":"kvm_support_grant","technician":"tech-pub","expires_in":8}`))
+	if err != nil {
+		t.Fatalf("decode kvm_support_grant: %v", err)
+	}
+	if msg.App == nil || msg.App.Kind != AppControlKindKvmSupportGrant ||
+		msg.App.Technician != "tech-pub" || msg.App.ExpiresIn != 8 {
+		t.Fatalf("support grant decoded incorrectly: %+v", msg.App)
+	}
+
 	// A newer app command decodes as Unknown, never errors (serde(other)).
 	msg, err = DecodeControlMessage(json.RawMessage(`{"t":"app","kind":"defragment_flux_capacitor"}`))
 	if err != nil {
@@ -29,6 +38,42 @@ func TestAppControlDecodes(t *testing.T) {
 	}
 	if msg.Kind != ControlKindApp || msg.App == nil || msg.App.Kind != AppControlKindUnknown {
 		t.Fatalf("future app kind should decode as unknown, got %+v", msg)
+	}
+}
+
+func TestKvmSupportGrantOnlyFromAttachedComputer(t *testing.T) {
+	b := testBridge(t)
+	b.state.SetAttachedTo("customer-pub-ABCDE", "Customer")
+	grant := &AppControl{
+		Kind:       AppControlKindKvmSupportGrant,
+		Technician: "tech-pub-ABCDE",
+		ExpiresIn:  8,
+	}
+
+	b.handleApp("fleet", "stranger-pub", grant)
+	if b.senderMayControl("tech-pub") {
+		t.Fatal("a non-attached node delegated KVM control")
+	}
+
+	b.handleApp("fleet", "customer-pub", grant)
+	if !b.senderMayControl("tech-pub") {
+		t.Fatal("attached computer's live technician was not delegated")
+	}
+
+	// A wire value cannot turn the renewable heartbeat into standing access.
+	long := *grant
+	long.Technician = "other-tech"
+	long.ExpiresIn = 3600
+	b.handleApp("fleet", "customer-pub", &long)
+	if b.senderMayControl("other-tech") {
+		t.Fatal("overlong support delegation was accepted")
+	}
+
+	b.mu.Lock()
+	b.delegatedTechs["tech-pub"] = time.Now().Add(-time.Second)
+	b.mu.Unlock()
+	if b.senderMayControl("tech-pub") {
+		t.Fatal("expired attached-computer delegation still authorizes control")
 	}
 }
 

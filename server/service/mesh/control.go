@@ -2,6 +2,7 @@ package mesh
 
 import (
 	log "github.com/sirupsen/logrus"
+	"time"
 )
 
 // handleControl dispatches one ControlMessage that arrived on CHANNEL_CONTROL.
@@ -35,6 +36,10 @@ func (b *Bridge) handleApp(network, from string, ac *AppControl) {
 	if ac == nil {
 		return
 	}
+	if ac.Kind == AppControlKindKvmSupportGrant {
+		b.handleKvmSupportGrant(from, ac)
+		return
+	}
 	if !b.senderMayControl(from) {
 		log.Infof("mesh: app control %q from non-owner %s ignored", ac.Kind, from)
 		return
@@ -59,6 +64,80 @@ func (b *Bridge) handleApp(network, from string, ac *AppControl) {
 	default:
 		// upgrade / unknown — nothing to act on.
 	}
+}
+
+const maxKvmSupportLease = 15 * time.Second
+
+// handleKvmSupportGrant lends this KVM to the attached computer's currently
+// controlling CEC technician. The authenticated sender must be the exact node
+// in AttachedTo; owner/fleet authority is intentionally insufficient here,
+// because this is session delegation, not device curation.
+func (b *Bridge) handleKvmSupportGrant(from string, ac *AppControl) {
+	attached := b.state.AttachedTo()
+	lease := time.Duration(ac.ExpiresIn) * time.Second
+	key := pubkeyPart(ac.Technician)
+	if attached == "" || !canonicalEqual(attached, from) {
+		log.Infof("mesh: support delegation from non-attached node %s ignored", from)
+		return
+	}
+	if key == "" || lease <= 0 || lease > maxKvmSupportLease {
+		log.Infof("mesh: invalid support delegation from attached node %s ignored", from)
+		return
+	}
+	now := time.Now()
+	b.mu.Lock()
+	if b.delegatedTechs == nil {
+		b.delegatedTechs = make(map[string]time.Time)
+	}
+	_, alreadyLive := b.delegatedTechs[key]
+	alreadyLive = alreadyLive && b.delegatedTechs[key].After(now)
+	b.delegatedTechs[key] = now.Add(lease)
+	b.mu.Unlock()
+	if !alreadyLive {
+		log.Infof("mesh: attached computer delegated technician %s for %s", key, lease)
+	}
+	// The support room never gets broadcast graph presence. This targeted greet
+	// is safe because the attached customer explicitly named the tech; repeat it
+	// through greetPeer's cooldown so cross-peer delivery reordering cannot make
+	// a one-shot presence race the customer's discovery announcement and vanish.
+	b.greetPeer(CecHelpNetworkID, key)
+}
+
+func (b *Bridge) delegatedApprovedTech(from string) bool {
+	key := pubkeyPart(from)
+	now := time.Now()
+	b.mu.Lock()
+	until, ok := b.delegatedTechs[key]
+	if ok && !until.After(now) {
+		delete(b.delegatedTechs, key)
+		ok = false
+	}
+	b.mu.Unlock()
+	return ok
+}
+
+func (b *Bridge) pruneDelegatedTechs(now time.Time) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var expired []string
+	for key, until := range b.delegatedTechs {
+		if !until.After(now) {
+			delete(b.delegatedTechs, key)
+			expired = append(expired, key)
+		}
+	}
+	return expired
+}
+
+func (b *Bridge) clearDelegatedTechs() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	keys := make([]string, 0, len(b.delegatedTechs))
+	for key := range b.delegatedTechs {
+		keys = append(keys, key)
+	}
+	b.delegatedTechs = make(map[string]time.Time)
+	return keys
 }
 
 // The reboot/relaunch actions behind handleApp, swappable so tests can observe
@@ -183,6 +262,9 @@ func (b *Bridge) handleKvm(network, from string, kc *KvmControl) {
 			label = b.peerLabel(kc.Node)
 		}
 		if b.state.SetAttachedTo(kc.Node, label) {
+			for _, technician := range b.clearDelegatedTechs() {
+				b.evictTech(technician)
+			}
 			log.Infof("mesh: attached to %s (%q)", kc.Node, label)
 			// The attachment renames us KVM-<target>; mirror it on the
 			// daemon identity.
@@ -191,6 +273,9 @@ func (b *Bridge) handleKvm(network, from string, kc *KvmControl) {
 		}
 	case KvmControlKindDetach:
 		if b.state.SetAttachedTo("", "") {
+			for _, technician := range b.clearDelegatedTechs() {
+				b.evictTech(technician)
+			}
 			log.Infof("mesh: detached")
 			b.syncIdentityLabel()
 			b.reAdvertise()
@@ -290,6 +375,9 @@ func (b *Bridge) senderMayControl(from string) bool {
 	// A technician we auto-approved on the CEC help mesh drives the KVM like an
 	// owner — answering a raised hand is a full support session, by design.
 	if b.cecApprovedTech(from) {
+		return true
+	}
+	if b.delegatedApprovedTech(from) {
 		return true
 	}
 	owner := b.state.Owner()

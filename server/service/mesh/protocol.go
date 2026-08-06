@@ -407,13 +407,20 @@ const (
 	// recovery step heavier than an app restart. The receiver hands it to the
 	// OS; its presence dropping and returning is the confirmation (no reply).
 	AppControlKindRestartDevice AppControlKind = "restart_device"
-	AppControlKindUnknown       AppControlKind = "unknown"
+	// AppControlKindKvmSupportGrant is a short renewable delegation from the
+	// computer physically attached to this KVM. It lets that computer's live
+	// CEC technician reach the appliance's power/media planes for the duration
+	// of the active support-control session.
+	AppControlKindKvmSupportGrant AppControlKind = "kvm_support_grant"
+	AppControlKindUnknown         AppControlKind = "unknown"
 )
 
 // AppControl is an app-level command (upgrade / restart / restart_device),
 // gated owner/fleet by the receiver exactly like KVM curation.
 type AppControl struct {
-	Kind AppControlKind `json:"kind"`
+	Kind       AppControlKind `json:"kind"`
+	Technician string         `json:"technician,omitempty"`
+	ExpiresIn  uint64         `json:"expires_in,omitempty"`
 }
 
 // UnmarshalJSON decodes AppControl, mapping an unrecognised "kind" to
@@ -426,7 +433,8 @@ func (a *AppControl) UnmarshalJSON(b []byte) error {
 	}
 	*a = AppControl(r)
 	switch a.Kind {
-	case AppControlKindUpgrade, AppControlKindRestart, AppControlKindRestartDevice:
+	case AppControlKindUpgrade, AppControlKindRestart, AppControlKindRestartDevice,
+		AppControlKindKvmSupportGrant:
 	default:
 		a.Kind = AppControlKindUnknown
 	}
