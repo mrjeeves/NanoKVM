@@ -10,9 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
-	"regexp"
 )
 
 type Service struct{}
@@ -137,43 +137,42 @@ func (s *Service) DownloadImageFile(c *gin.Context) {
 		return
 	}
 
-    // Multipart Reader direkt nutzen (keine FormFile!)
-    reader, err := c.Request.MultipartReader()
-    if err != nil {
+	// Multipart Reader direkt nutzen (keine FormFile!)
+	reader, err := c.Request.MultipartReader()
+	if err != nil {
 		log.Error("invalid multipart data")
 		rsp.ErrRsp(c, -1, "invalid multipart data")
 		defer os.Remove(sentinelPath)
-        return
-    }
+		return
+	}
 
-	
 	var lw *loggingWriter
 
-    for {
-        part, err := reader.NextPart()
-        if err == io.EOF {
-            break
-        }
-        if err != nil {
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
 			log.Error("failed to read part")
 			rsp.ErrRsp(c, -1, "failed to read part")
 			lw.stopTicker()
 			defer os.Remove(sentinelPath)
-            return
-        }
+			return
+		}
 
-        if part.FormName() != "file" {
-            continue
-        }
+		if part.FormName() != "file" {
+			continue
+		}
 
-        filename := part.FileName()
-        if filename == "" {
+		filename := part.FileName()
+		if filename == "" {
 			log.Error("no filename")
 			rsp.ErrRsp(c, -1, "no filename")
 			lw.stopTicker()
 			defer os.Remove(sentinelPath)
-            return
-        }
+			return
+		}
 
 		filename = filepath.Base(filename)
 
@@ -191,8 +190,9 @@ func (s *Service) DownloadImageFile(c *gin.Context) {
 			return
 		}
 
-		if !strings.HasSuffix(strings.ToLower(filename), ".iso") {
-			rsp.ErrRsp(c, -1, "only .iso files allowed")
+		lowerName := strings.ToLower(filename)
+		if !strings.HasSuffix(lowerName, ".iso") && !strings.HasSuffix(lowerName, ".img") {
+			rsp.ErrRsp(c, -1, "only .iso and .img files allowed")
 			defer os.Remove(sentinelPath)
 			return
 		}
@@ -213,16 +213,16 @@ func (s *Service) DownloadImageFile(c *gin.Context) {
 			return
 		}
 
-        outPath := "/data/" + filename
-        out, err := os.Create(outPath)
-        if err != nil {
+		outPath := "/data/" + filename
+		out, err := os.Create(outPath)
+		if err != nil {
 			log.Error("cannot create file")
 			rsp.ErrRsp(c, -1, "cannot create file")
 			lw.stopTicker()
 			defer os.Remove(sentinelPath)
-            return
-        }
-        defer out.Close()
+			return
+		}
+		defer out.Close()
 
 		if strings.Contains(string(data), "start") {
 			err = os.WriteFile(sentinelPath, []byte(filename), 0644)
@@ -234,7 +234,7 @@ func (s *Service) DownloadImageFile(c *gin.Context) {
 				defer os.Remove(sentinelPath)
 				return
 			}
-			
+
 			lw = &loggingWriter{writer: out, totalSize: c.Request.ContentLength}
 			lw.startTicker()
 		} else {
@@ -248,26 +248,28 @@ func (s *Service) DownloadImageFile(c *gin.Context) {
 			}
 		}
 
-        // Direkt streamen → kein RAM-Bedarf außer kleinem Buffer
-        _, err = io.Copy(lw, part)
-        if err != nil {
+		// Direkt streamen → kein RAM-Bedarf außer kleinem Buffer
+		_, err = io.Copy(lw, part)
+		if err != nil {
 			log.Error("write failed")
 			rsp.ErrRsp(c, -1, "write failed")
 			lw.stopTicker()
 			defer os.Remove(outPath)
 			defer os.Remove(sentinelPath)
-            return
-        }
-
-		ok, err := isISO9660(outPath)
-		if err != nil || !ok {
-			rsp.ErrRsp(c, -1, "file is not a valid ISO image")
-			lw.stopTicker()
-			defer os.Remove(outPath)
-			defer os.Remove(sentinelPath)
 			return
 		}
-    }
+
+		if strings.HasSuffix(lowerName, ".iso") {
+			ok, err := isISO9660(outPath)
+			if err != nil || !ok {
+				rsp.ErrRsp(c, -1, "file is not a valid ISO image")
+				lw.stopTicker()
+				defer os.Remove(outPath)
+				defer os.Remove(sentinelPath)
+				return
+			}
+		}
+	}
 	lw.stopTicker()
 
 	rsp.OkRspWithData(c, &proto.StatusImageRsp{
@@ -275,9 +277,9 @@ func (s *Service) DownloadImageFile(c *gin.Context) {
 		File:       "",
 		Percentage: "",
 	})
-	
+
 	defer os.Remove(sentinelPath)
-    return
+	return
 }
 
 func (s *Service) DownloadImage(c *gin.Context) {

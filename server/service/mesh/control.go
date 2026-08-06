@@ -18,6 +18,8 @@ func (b *Bridge) handleControl(network, from string, msg ControlMessage) {
 		b.handleRoute(network, from, msg.Route)
 	case ControlKindApp:
 		b.handleApp(network, from, msg.App)
+	case ControlKindProfileRequest:
+		b.reAdvertise()
 	default:
 		// share / site / unknown — not acted on in v1.
 	}
