@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"bufio"
+	"encoding/json"
 	"math/rand"
 	"os"
 	"strconv"
@@ -9,6 +10,20 @@ import (
 
 	"NanoKVM-Server/config"
 )
+
+const virtualMediaMetadata = "/data/.allmystuff-virtual-media.json"
+
+func readVirtualMedia() *VirtualMediaAdvert {
+	data, err := os.ReadFile(virtualMediaMetadata)
+	if err != nil {
+		return nil
+	}
+	var media VirtualMediaAdvert
+	if json.Unmarshal(data, &media) != nil || media.Source == "" || media.File == "" {
+		return nil
+	}
+	return &media
+}
 
 // deviceInfo is a CGO-free snapshot of the host's identity + hardware thumbnail.
 // We deliberately gather it here (os/proc reads) rather than importing
@@ -208,10 +223,11 @@ func buildProfile(nodeID string, conf *config.Config, dev deviceInfo, st *State,
 		FleetName:  snap.FleetName,
 		FleetOwner: snap.FleetName, // a fleet is named for its owner; track it
 		Kvm: &KvmAdvert{
-			AttachedTo:  attached,
-			Web:         id,
-			JoiningMesh: joiningMesh,
-			Meshes:      meshes,
+			AttachedTo:   attached,
+			Web:          id,
+			JoiningMesh:  joiningMesh,
+			Meshes:       meshes,
+			VirtualMedia: readVirtualMedia(),
 		},
 	}
 }

@@ -81,10 +81,17 @@ type SiteAdvert struct {
 // (mirrors Rust's Option None / skip_serializing_if), Web/JoiningMesh likewise
 // when "", and Meshes when empty.
 type KvmAdvert struct {
-	AttachedTo  *string  `json:"attached_to,omitempty"`
-	Web         string   `json:"web,omitempty"`
-	JoiningMesh string   `json:"joining_mesh,omitempty"`
-	Meshes      []string `json:"meshes,omitempty"`
+	AttachedTo   *string             `json:"attached_to,omitempty"`
+	Web          string              `json:"web,omitempty"`
+	JoiningMesh  string              `json:"joining_mesh,omitempty"`
+	Meshes       []string            `json:"meshes,omitempty"`
+	VirtualMedia *VirtualMediaAdvert `json:"virtual_media,omitempty"`
+}
+
+type VirtualMediaAdvert struct {
+	Source string `json:"source"`
+	Label  string `json:"label"`
+	File   string `json:"file"`
 }
 
 // ---- NodeProfile ------------------------------------------------------------
@@ -188,12 +195,13 @@ func endsWith(s, suffix string) bool {
 type ControlKind string
 
 const (
-	ControlKindRoute     ControlKind = "route"
-	ControlKindShare     ControlKind = "share"
-	ControlKindOwnership ControlKind = "ownership"
-	ControlKindSite      ControlKind = "site"
-	ControlKindApp       ControlKind = "app"
-	ControlKindKvm       ControlKind = "kvm"
+	ControlKindRoute          ControlKind = "route"
+	ControlKindShare          ControlKind = "share"
+	ControlKindOwnership      ControlKind = "ownership"
+	ControlKindSite           ControlKind = "site"
+	ControlKindApp            ControlKind = "app"
+	ControlKindKvm            ControlKind = "kvm"
+	ControlKindProfileRequest ControlKind = "profile_request"
 	// ControlKindUnknown is the forward-compatible fallback for a "t" a newer
 	// build introduced. The whole message decodes (never errors) and is
 	// ignored, so the traffic this build understands keeps flowing.
@@ -249,6 +257,8 @@ func DecodeControlMessage(raw json.RawMessage) (ControlMessage, error) {
 			return ControlMessage{}, err
 		}
 		msg.App = &ac
+	case ControlKindProfileRequest:
+		// No nested payload. The bridge answers with a fresh presence advert.
 	default:
 		// share / site / anything newer: keep Raw, mark Unknown so
 		// callers don't misroute it. We deliberately don't fail.

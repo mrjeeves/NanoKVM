@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,13 +18,34 @@ import (
 )
 
 const (
-	imageDirectory = "/data"
-	imageNone      = "/dev/mmcblk0p3"
-	cdromFlag      = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/cdrom"
-	mountDevice    = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file"
-	inquiryString  = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/inquiry_string"
-	roFlag         = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/ro"
+	imageDirectory       = "/data"
+	imageNone            = "/dev/mmcblk0p3"
+	cdromFlag            = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/cdrom"
+	mountDevice          = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file"
+	inquiryString        = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/inquiry_string"
+	roFlag               = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/ro"
+	virtualMediaMetadata = "/data/.allmystuff-virtual-media.json"
 )
+
+type virtualMediaState struct {
+	Source string `json:"source"`
+	Label  string `json:"label"`
+	File   string `json:"file"`
+}
+
+func persistVirtualMedia(req proto.MountImageReq) {
+	if req.File == "" {
+		_ = os.Remove(virtualMediaMetadata)
+		return
+	}
+	if req.Source == "" {
+		return
+	}
+	data, err := json.Marshal(virtualMediaState{Source: req.Source, Label: req.Label, File: req.File})
+	if err == nil {
+		_ = os.WriteFile(virtualMediaMetadata, data, 0o600)
+	}
+}
 
 func (s *Service) GetImages(c *gin.Context) {
 	var rsp proto.Response
@@ -63,35 +85,31 @@ func (s *Service) MountImage(c *gin.Context) {
 		return
 	}
 
-	// cdrom and ro flag
-	// set to 0 when unmount image
-	// set to 1 when mount image and the CD-ROM is enabled
-	if req.File == "" || req.Cdrom {
-		flag := "0"
-		if req.File != "" && req.Cdrom {
-			flag = "1"
-		}
-
-		// unmount
-		if err := os.WriteFile(mountDevice, []byte("\n"), 0o666); err != nil {
-			log.Errorf("unmount file failed: %s", err)
-			rsp.ErrRsp(c, -2, "unmount image failed")
-			return
-		}
-
-		// ro flag
-		if err := os.WriteFile(roFlag, []byte(flag), 0o666); err != nil {
-			log.Errorf("set ro flag failed: %s", err)
-			rsp.ErrRsp(c, -2, "set ro flag failed")
-			return
-		}
-
-		// cdrom flag
-		if err := os.WriteFile(cdromFlag, []byte(flag), 0o666); err != nil {
-			log.Errorf("set cdrom flag failed: %s", err)
-			rsp.ErrRsp(c, -2, "set cdrom flag failed")
-			return
-		}
+	// The gadget flags are only writable while the previous backing file is
+	// detached. Do this for every mount, not just CD-ROM images: a raw USB disk
+	// arriving after an ISO must clear cdrom while remaining read-only.
+	if err := os.WriteFile(mountDevice, []byte("\n"), 0o666); err != nil {
+		log.Errorf("unmount file failed: %s", err)
+		rsp.ErrRsp(c, -2, "unmount image failed")
+		return
+	}
+	ro := "0"
+	if req.File != "" && (req.Cdrom || req.ReadOnly) {
+		ro = "1"
+	}
+	cdrom := "0"
+	if req.File != "" && req.Cdrom {
+		cdrom = "1"
+	}
+	if err := os.WriteFile(roFlag, []byte(ro), 0o666); err != nil {
+		log.Errorf("set ro flag failed: %s", err)
+		rsp.ErrRsp(c, -2, "set ro flag failed")
+		return
+	}
+	if err := os.WriteFile(cdromFlag, []byte(cdrom), 0o666); err != nil {
+		log.Errorf("set cdrom flag failed: %s", err)
+		rsp.ErrRsp(c, -2, "set cdrom flag failed")
+		return
 	}
 
 	inquiryVen := "NanoKVM"
@@ -143,6 +161,7 @@ func (s *Service) MountImage(c *gin.Context) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	persistVirtualMedia(req)
 	rsp.OkRsp(c)
 	log.Debugf("mount image %s success", req.File)
 }

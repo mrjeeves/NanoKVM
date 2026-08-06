@@ -50,6 +50,11 @@ func TestNodeProfileRoundTripWithKvm(t *testing.T) {
 		Kvm: &KvmAdvert{
 			AttachedTo: &attached,
 			Web:        "tcp:80",
+			VirtualMedia: &VirtualMediaAdvert{
+				Source: "tech-laptop",
+				Label:  "Windows 11 installer",
+				File:   "/data/windows-11.iso",
+			},
 		},
 	}
 	s := mustMarshal(t, p)
@@ -63,6 +68,9 @@ func TestNodeProfileRoundTripWithKvm(t *testing.T) {
 	if !strings.Contains(s, `"web":"tcp:80"`) {
 		t.Fatalf("web not in wire shape: %s", s)
 	}
+	if !strings.Contains(s, `"virtual_media":{"source":"tech-laptop","label":"Windows 11 installer","file":"/data/windows-11.iso"}`) {
+		t.Fatalf("virtual media not in wire shape: %s", s)
+	}
 
 	var back NodeProfile
 	if err := json.Unmarshal([]byte(s), &back); err != nil {
@@ -70,6 +78,16 @@ func TestNodeProfileRoundTripWithKvm(t *testing.T) {
 	}
 	if !reflect.DeepEqual(p, back) {
 		t.Fatalf("round trip mismatch:\n got %+v\nwant %+v", back, p)
+	}
+}
+
+func TestProfileRequestDecodesAsKnownControl(t *testing.T) {
+	msg, err := DecodeControlMessage(json.RawMessage(`{"t":"profile_request"}`))
+	if err != nil {
+		t.Fatalf("decode profile request: %v", err)
+	}
+	if msg.Kind != ControlKindProfileRequest {
+		t.Fatalf("profile request decoded as %q", msg.Kind)
 	}
 }
 
