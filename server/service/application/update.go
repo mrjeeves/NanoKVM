@@ -1,6 +1,7 @@
 package application
 
 import (
+	"NanoKVM-Server/service/storage"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -421,7 +422,16 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	// here can't strand a half-installed app, and a bundle without them (an
 	// older release) simply skips this.
 	installInitScripts(bundleDir)
+	// Release the drive image BEFORE the updater can replace it. The gadget has
+	// this exact path open as its backing store, and swapping the inode under a
+	// live LUN is what makes a host report "USB device not recognized" — the
+	// detach turns it into an ordinary media-removed event instead. Re-attached
+	// unconditionally below, including when the install was a no-op.
+	detached := storage.DetachDriveBacking()
 	installUsbDisk(bundleDir)
+	if detached {
+		storage.ReattachDriveBacking()
+	}
 	MigrateUsbNetworkFlag()
 	return swapDaemon, nil
 }
