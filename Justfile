@@ -38,13 +38,13 @@ mom_repo := "https://github.com/mrjeeves/MyOwnMesh"
 nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 
 # The Go packages this fork owns and that build & test without the on-device C
-# libs (libkvm): the mesh bridge, the hand-raise button watcher, and config. The
+# libs (libkvm): the mesh bridge, the hand-raise button watcher, config, and utils. The
 # rest of the server is upstream device glue that only links in the builder
 # image, so the quality recipes below scope to these — they run on any dev
 # machine (no Docker, no cross toolchain, no device libs). `go_pure_dirs` is the
 # same set as plain paths for gofmt (which takes dirs, not `./...` patterns).
-go_pure_pkgs := "./config/... ./service/mesh/... ./service/button/..."
-go_pure_dirs := "config service/mesh service/button"
+go_pure_pkgs := "./config/... ./service/mesh/... ./service/button/... ./utils/..."
+go_pure_dirs := "config service/mesh service/button utils"
 
 default: help
 
@@ -75,7 +75,7 @@ checkout *args: pull
 
 # ── Development: format, vet, and test the Go server ───────────────────────────
 # The app-repo dev loop (fmt / fmt-check / lint / test / check), scoped to the
-# CGO-free Go packages (config, service/mesh, service/button) so it runs on any
+# CGO-free Go packages (config, service/mesh, service/button, utils) so it runs on any
 # dev machine — no Docker, no cross toolchain, no device libs. Mirrors the
 # AllMyStuff / CEC Support Justfiles.
 
