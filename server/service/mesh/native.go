@@ -1,7 +1,6 @@
 package mesh
 
 import (
-	"NanoKVM-Server/service/viewer"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -87,13 +86,12 @@ func (b *Bridge) SetInputSink(is InputSink) {
 // H.264 onto its lane. The pump goroutine owns pipe (closes it on exit); cancel
 // is closed to stop it.
 type displaySession struct {
-	routeID     string          // the accepted route id
-	peer        string          // the console's canonical pubkey (media destination)
-	network     string          // the display offer's network
-	lane        uint8           // the announced video lane
-	pipe        *MediaTrackPipe // the dedicated media-track connection
-	cancel      chan struct{}   // closed to stop runVideoPump
-	releaseView func()          // drops the shared HDMI viewer lease exactly once
+	routeID string          // the accepted route id
+	peer    string          // the console's canonical pubkey (media destination)
+	network string          // the display offer's network
+	lane    uint8           // the announced video lane
+	pipe    *MediaTrackPipe // the dedicated media-track connection
+	cancel  chan struct{}   // closed to stop runVideoPump
 
 	// needKey gates the pump so it never streams a delta before the viewer has a
 	// keyframe: set at session start and on every Refresh, the pump drops access
@@ -155,7 +153,6 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 		b.sendRouteReject(network, from, routeID, "this KVM only streams h264")
 		return
 	}
-	releaseView := viewer.Acquire()
 	// NOTE: an offer that arrives while a display session is already active is
 	// NOT rejected — it supersedes it (evict-and-replace below). See the commit
 	// block for why: a re-offer is the same authorized viewer re-homing its
@@ -165,7 +162,6 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 	// holds b.mu, and a failure leaves no half-armed route behind.
 	pipe, err := DialMediaTrackPipe(b.socketPath())
 	if err != nil {
-		releaseView()
 		log.Warnf("mesh: open media pipe for display route %s: %s", routeID, err)
 		b.sendRouteReject(network, from, routeID, "could not open the media lane")
 		return
@@ -195,18 +191,16 @@ func (b *Bridge) handleDisplayOffer(network, from string, rc *RouteControl) {
 			close(old.cancel)
 		}
 		_ = pipe.Close()
-		releaseView()
 		b.sendRouteReject(network, from, routeID, "no free video lane")
 		return
 	}
 	sess := &displaySession{
-		routeID:     routeID,
-		peer:        pubkeyPart(from),
-		network:     network,
-		lane:        lane,
-		pipe:        pipe,
-		cancel:      make(chan struct{}),
-		releaseView: releaseView,
+		routeID: routeID,
+		peer:    pubkeyPart(from),
+		network: network,
+		lane:    lane,
+		pipe:    pipe,
+		cancel:  make(chan struct{}),
 	}
 	// Start gated: a fresh viewer decodes nothing until its first IDR, and the
 	// encoder is free-running, so the pump must drop deltas until a keyframe
@@ -430,9 +424,6 @@ func (b *Bridge) handleInputEvent(from string, ev InputEvent) {
 // viewer's jitter buffer tracks the encoder's real output rate.
 func (b *Bridge) runVideoPump(sess *displaySession) {
 	defer sess.pipe.Close()
-	if sess.releaseView != nil {
-		defer sess.releaseView()
-	}
 
 	b.mu.Lock()
 	vs := b.videoSource
