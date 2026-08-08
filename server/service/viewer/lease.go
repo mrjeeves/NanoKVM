@@ -75,10 +75,21 @@ var (
 func Configure(fn func(bool)) {
 	mu.Lock()
 	apply = fn
-	known = false // force the first transition so boot state is asserted
+	known = false // nothing applied yet this process
 	recomputeLocked()
+	// Do NOT assert the idle state now. This used to switch the receiver off
+	// the instant the process came up, and the server restarts on every update
+	// and every `S95nanokvm restart` — so an operator who was watching had the
+	// attached machine's display yanked and handed back a moment later when
+	// their viewer reconnected. A hot-plug caused by nothing they did, and the
+	// cycling this feature is not supposed to produce.
+	//
+	// Arming the same idle grace an ordinary disconnect uses instead means a
+	// viewer that reconnects within it sees no transition at all, while a
+	// device nobody is watching still settles to off exactly as before — just
+	// one grace period later, which nothing depends on.
+	armOffTimerLocked()
 	mu.Unlock()
-	pump()
 }
 
 // SetAllowed records the operator's persisted HDMI preference (the web UI's

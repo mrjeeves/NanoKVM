@@ -76,12 +76,12 @@ func TestFirstViewerActivatesAndLastViewerDeactivates(t *testing.T) {
 	releaseA()
 	// One viewer remains: no power-down, and no redundant re-assert.
 	time.Sleep(20 * time.Millisecond)
-	if got := r.snapshot(); !reflect.DeepEqual(got, []bool{false, true}) {
+	if got := r.snapshot(); !reflect.DeepEqual(got, []bool{true}) {
 		t.Fatalf("one remaining viewer must keep HDMI active: %v", got)
 	}
 
 	releaseB()
-	waitFor(t, r, []bool{false, true, false})
+	waitFor(t, r, []bool{true, false})
 }
 
 func TestHandoffCancelsPendingDeactivation(t *testing.T) {
@@ -93,12 +93,12 @@ func TestHandoffCancelsPendingDeactivation(t *testing.T) {
 	// Re-acquire inside the idle grace: the hardware must never be touched.
 	next := Acquire()
 	time.Sleep(20 * time.Millisecond)
-	if got := r.snapshot(); !reflect.DeepEqual(got, []bool{false, true}) {
+	if got := r.snapshot(); !reflect.DeepEqual(got, []bool{true}) {
 		t.Fatalf("a hand-off inside the grace must not hot-plug the source: %v", got)
 	}
 
 	next()
-	waitFor(t, r, []bool{false, true, false})
+	waitFor(t, r, []bool{true, false})
 }
 
 // A KVM whose operator switched HDMI off in the web UI must stay off however
@@ -109,6 +109,8 @@ func TestDisabledPreferenceOutranksViewers(t *testing.T) {
 
 	SetAllowed(false)
 	release := Acquire()
+	// The startup grace still settles to off; the viewer must not undo that.
+	waitFor(t, r, []bool{false})
 	time.Sleep(20 * time.Millisecond)
 	if got := r.snapshot(); !reflect.DeepEqual(got, []bool{false}) {
 		t.Fatalf("a disabled KVM must not be woken by a viewer: %v", got)
@@ -159,12 +161,42 @@ func TestNoteResyncsExternalHardwareChange(t *testing.T) {
 	r := newLease(t)
 
 	release := Acquire()
-	waitFor(t, r, []bool{false, true})
+	waitFor(t, r, []bool{true})
 
 	// Something outside the lease switched the receiver off (a manual reset's
 	// off half). Without Note the lease still believes it is on and would never
 	// re-assert it for the viewer that is still connected.
 	Note(false)
-	waitFor(t, r, []bool{false, true, true})
+	waitFor(t, r, []bool{true, true})
 	release()
+}
+
+// A server restart must not touch the receiver. The process comes up on every
+// update and every `S95nanokvm restart`, and asserting the idle state there
+// dropped the attached machine's display and handed it back when the viewer
+// reconnected — a hot-plug caused by nothing the operator did.
+func TestStartupDoesNotTouchTheReceiver(t *testing.T) {
+	r := newLease(t)
+
+	// newLease has already called Configure. Nothing may have been applied yet.
+	if got := r.snapshot(); len(got) != 0 {
+		t.Fatalf("startup touched the hardware: %v", got)
+	}
+}
+
+// A viewer that reconnects across a restart, inside the grace, sees exactly one
+// transition — on — not off-then-on.
+func TestReconnectAcrossARestartIsASingleTransition(t *testing.T) {
+	r := newLease(t)
+
+	release := Acquire()
+	waitFor(t, r, []bool{true})
+	release()
+	waitFor(t, r, []bool{true, false})
+}
+
+// A device nobody is watching still settles to off, just one grace later.
+func TestStartupStillSettlesToOffWhenNobodyConnects(t *testing.T) {
+	r := newLease(t)
+	waitFor(t, r, []bool{false})
 }
