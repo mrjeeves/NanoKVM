@@ -46,6 +46,13 @@ func initialize() {
 	// init screen parameters
 	_ = common.GetScreen()
 
+	// Heal a device that on-demand HDMI (reverted) left dark: if it also
+	// carries a persisted disable flag it boots with no picture and nothing on
+	// screen to explain it. Cleared once, before the check below, so the device
+	// comes back on THIS start rather than the next one. HDMI stays a setting —
+	// see ClearHDMIDisabledOnce for why this is a migration and not a policy.
+	utils.ClearHDMIDisabledOnce()
+
 	// init HDMI
 	vision := common.GetKvmVision()
 	vision.SetHDMI(false)
