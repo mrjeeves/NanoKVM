@@ -286,7 +286,16 @@ type meshAuthHandler struct {
 }
 
 func (m meshAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	m.engine.ServeHTTP(w, middleware.WithMeshAuth(r))
+	r = middleware.WithMeshAuth(r)
+	if !acceptsGzip(r) {
+		m.engine.ServeHTTP(w, r)
+		return
+	}
+	// See compress.go: on this transport compression buys round-trips, not just
+	// bytes, and round-trips are what the tunnel runs out of.
+	gw := &gzipWriter{ResponseWriter: w}
+	defer gw.close()
+	m.engine.ServeHTTP(gw, r)
 }
 
 // oneShotListener is a net.Listener that yields a single pre-built conn once,

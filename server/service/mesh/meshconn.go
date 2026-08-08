@@ -45,6 +45,16 @@ type meshConn struct {
 	readDeadline  time.Time
 	writeDeadline time.Time
 	deadlineMu    sync.Mutex
+	// deadlineCh is closed and replaced whenever a read deadline is set, so a
+	// Read already parked in its select re-evaluates instead of sleeping
+	// through it. net/http depends on exactly that: finishRequest calls
+	// abortPendingRead, which sets a deadline in the past and then WAITS for
+	// the in-flight read to return. A conn that only sampled the deadline on
+	// entry never returned, so the request never finished, the connection was
+	// never closed, and every tunneled browser connection leaked a goroutine
+	// and a table entry — until the browser hit its per-host connection cap
+	// and simply stopped fetching the rest of the page.
+	deadlineCh chan struct{}
 }
 
 // newMeshConn builds a meshConn for one tunneled connection.
@@ -56,6 +66,7 @@ func newMeshConn(route string, conn uint64, send func(SiteFrame) error) *meshCon
 		inbound:      make(chan []byte, 64),
 		closed:       make(chan struct{}),
 		remoteClosed: make(chan struct{}),
+		deadlineCh:   make(chan struct{}),
 	}
 }
 
@@ -113,31 +124,51 @@ func (m *meshConn) Read(p []byte) (int, error) {
 		return n, nil
 	}
 
-	var timeout <-chan time.Time
-	m.deadlineMu.Lock()
-	dl := m.readDeadline
-	m.deadlineMu.Unlock()
-	if !dl.IsZero() {
-		d := time.Until(dl)
-		if d <= 0 {
-			return 0, timeoutErr{}
-		}
-		t := time.NewTimer(d)
-		defer t.Stop()
-		timeout = t.C
-	}
+	// Re-entered whenever the deadline moves under us, so a deadline set after
+	// this Read parked still takes effect (see deadlineCh).
+	for {
+		m.deadlineMu.Lock()
+		dl := m.readDeadline
+		changed := m.deadlineCh
+		m.deadlineMu.Unlock()
 
+		var timeout <-chan time.Time
+		var timer *time.Timer
+		if !dl.IsZero() {
+			d := time.Until(dl)
+			if d <= 0 {
+				return 0, timeoutErr{}
+			}
+			timer = time.NewTimer(d)
+			timeout = timer.C
+		}
+
+		n, err, done := m.readOnce(p, timeout, changed)
+		if timer != nil {
+			timer.Stop()
+		}
+		if done {
+			return n, err
+		}
+	}
+}
+
+// readOnce is one pass of Read's select. done is false only when the deadline
+// changed and the caller must re-evaluate it.
+func (m *meshConn) readOnce(p []byte, timeout <-chan time.Time, changed <-chan struct{}) (int, error, bool) {
 	select {
 	case <-m.closed:
-		return 0, io.EOF
+		return 0, io.EOF, true
 	case data := <-m.inbound:
 		n := copy(p, data)
 		if n < len(data) {
 			m.leftover = data[n:]
 		}
-		return n, nil
+		return n, nil, true
 	case <-timeout:
-		return 0, timeoutErr{}
+		return 0, timeoutErr{}, true
+	case <-changed:
+		return 0, nil, false
 	case <-m.remoteClosed:
 		// Drain any racing buffered Data before reporting EOF.
 		select {
@@ -146,9 +177,9 @@ func (m *meshConn) Read(p []byte) (int, error) {
 			if n < len(data) {
 				m.leftover = data[n:]
 			}
-			return n, nil
+			return n, nil, true
 		default:
-			return 0, io.EOF
+			return 0, io.EOF, true
 		}
 	}
 }
@@ -216,6 +247,7 @@ func (m *meshConn) SetDeadline(t time.Time) error {
 	m.deadlineMu.Lock()
 	m.readDeadline = t
 	m.writeDeadline = t
+	m.wakeReadersLocked()
 	m.deadlineMu.Unlock()
 	return nil
 }
@@ -224,8 +256,16 @@ func (m *meshConn) SetDeadline(t time.Time) error {
 func (m *meshConn) SetReadDeadline(t time.Time) error {
 	m.deadlineMu.Lock()
 	m.readDeadline = t
+	m.wakeReadersLocked()
 	m.deadlineMu.Unlock()
 	return nil
+}
+
+// wakeReadersLocked republishes deadlineCh so a parked Read re-reads the
+// deadline it was given. Callers hold deadlineMu.
+func (m *meshConn) wakeReadersLocked() {
+	close(m.deadlineCh)
+	m.deadlineCh = make(chan struct{})
 }
 
 // SetWriteDeadline implements net.Conn.
