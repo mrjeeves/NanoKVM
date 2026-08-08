@@ -1,7 +1,6 @@
 package direct
 
 import (
-	"NanoKVM-Server/service/viewer"
 	"net/http"
 	"time"
 
@@ -31,8 +30,6 @@ func Connect(c *gin.Context) {
 		log.Debugf("h264 websocket disconnected: %s", ws.RemoteAddr())
 	}()
 	log.Debugf("h264 websocket connected: %s", ws.RemoteAddr())
-	releaseViewer := viewer.Acquire()
-	defer releaseViewer()
 
 	_ = ws.SetReadDeadline(time.Time{})
 

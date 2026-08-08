@@ -43,8 +43,8 @@ nanokvm_repo := "https://github.com/mrjeeves/NanoKVM"
 # image, so the quality recipes below scope to these — they run on any dev
 # machine (no Docker, no cross toolchain, no device libs). `go_pure_dirs` is the
 # same set as plain paths for gofmt (which takes dirs, not `./...` patterns).
-go_pure_pkgs := "./config/... ./service/mesh/... ./service/button/... ./service/viewer/..."
-go_pure_dirs := "config service/mesh service/button service/viewer"
+go_pure_pkgs := "./config/... ./service/mesh/... ./service/button/..."
+go_pure_dirs := "config service/mesh service/button"
 
 default: help
 

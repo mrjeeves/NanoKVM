@@ -21,7 +21,6 @@ import (
 	"NanoKVM-Server/service/mesh"
 	"NanoKVM-Server/service/mesh/glue"
 	"NanoKVM-Server/service/storage"
-	"NanoKVM-Server/service/viewer"
 	"NanoKVM-Server/service/vm"
 	"NanoKVM-Server/service/vm/jiggler"
 	"NanoKVM-Server/utils"
@@ -29,12 +28,6 @@ import (
 	"github.com/gin-gonic/gin"
 	cors "github.com/rs/cors/wrapper/gin"
 )
-
-// hdmiSettle is how long the receiver is given to re-negotiate with the source
-// after HPD is re-asserted. Measured against a cold hot-plug, not a warm one:
-// the source's own EDID read and mode set is the slow half, and it is the same
-// work a physical replug triggers.
-const hdmiSettle = 1500 * time.Millisecond
 
 func main() {
 	initialize()
@@ -53,24 +46,13 @@ func initialize() {
 	// init screen parameters
 	_ = common.GetScreen()
 
-	// Keep HDMI present only while a web or mesh-native screen viewer holds a
-	// lease. The operator's persisted preference is seeded FIRST and outranks
-	// the lease: /api/vm/hdmi still reports that setting to the UI, so a lease
-	// that ignored it left the switch reading "on" over a dark receiver.
+	// init HDMI
 	vision := common.GetKvmVision()
-	viewer.SetAllowed(!utils.IsHdmiDisabled())
-	viewer.Configure(func(active bool) {
-		vision.SetHDMI(active)
-		if active {
-			// Re-asserting HPD makes the source re-negotiate the link; the
-			// encoder has nothing to read until it does. Hold the activation
-			// open across that so the first viewer's first frame lands on a
-			// live link instead of tripping the "No image captured" path. The
-			// original 20ms was three orders of magnitude short of what an
-			// HDMI source needs after a hot-plug.
-			time.Sleep(hdmiSettle)
-		}
-	})
+	vision.SetHDMI(false)
+	time.Sleep(10 * time.Millisecond)
+	if !utils.IsHdmiDisabled() {
+		vision.SetHDMI(true)
+	}
 
 	// S03usbdev decides whether to export the drive at S03, before the server
 	// that writes the image has run. Re-check now that it exists, so the drive
