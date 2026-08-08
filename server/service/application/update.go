@@ -422,16 +422,7 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	// here can't strand a half-installed app, and a bundle without them (an
 	// older release) simply skips this.
 	installInitScripts(bundleDir)
-	// Release the drive image BEFORE the updater can replace it. The gadget has
-	// this exact path open as its backing store, and swapping the inode under a
-	// live LUN is what makes a host report "USB device not recognized" — the
-	// detach turns it into an ordinary media-removed event instead. Re-attached
-	// unconditionally below, including when the install was a no-op.
-	detached := storage.DetachDriveBacking()
 	installUsbDisk(bundleDir)
-	if detached {
-		storage.ReattachDriveBacking()
-	}
 	MigrateUsbNetworkFlag()
 	return swapDaemon, nil
 }
@@ -624,6 +615,21 @@ func installUsbDisk(bundleDir string) bool {
 		log.Warnf("update: usb drive: %s", err)
 		return false
 	}
+	// Release the drive from the gadget BEFORE replacing it, and re-attach after.
+	// The gadget has this exact path open as its backing store, so the rename
+	// below would swap the inode underneath a live LUN and leave the host
+	// mid-transaction with a block device whose identity changed — which is what
+	// surfaces as "USB device not recognized".
+	//
+	// This lives HERE, not at the call sites, because there is more than one and
+	// the first version of this fix bracketed only the update path. The reconcile
+	// path (installReleaseFromBundle) is the one that actually runs on the first
+	// boot of a new version, so it was still swapping the image out from under a
+	// live gadget. A guard a caller can forget is not a guard.
+	if storage.DetachDriveBacking() {
+		defer storage.ReattachDriveBacking()
+	}
+
 	// Stage and rename, so an interrupted write can never become the drive —
 	// the failure mode this whole change exists to remove.
 	stage := dst + ".new"
