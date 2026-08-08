@@ -22,20 +22,45 @@ then
         then
                 if [ ! -e /etc/kvm.disk0 ]
                 then
-                        touch /etc/kvm.disk0
                         # use all sdcard free space for data
                         parted -s /dev/mmcblk0 "mkpart primary 8193MB 100%"
                         sleep 1
-                        # resize data filesystem
-                        (mkfs.exfat /dev/mmcblk0p3) &
-                        sleep 1
+                        # WAIT for the format. This used to background mkfs.exfat
+                        # and fall through to the mount after `sleep 1`, which on
+                        # a multi-gigabyte partition on this board is nowhere
+                        # near enough: the mount below then raced a filesystem
+                        # that did not exist yet, /data stayed unmounted, and
+                        # S03usbdev — two scripts later — found no
+                        # /data/usbdisk.img and exported no drive at all. That is
+                        # the intermittent "USB failure, no drive" report, and it
+                        # is sticky: nothing recomposes the gadget afterwards.
+                        #
+                        # The marker is also written only on SUCCESS now. It used
+                        # to be written first, so a format that failed or was cut
+                        # short by a reboot was never retried — the device was
+                        # left permanently without a data partition and the
+                        # marker said the job was done.
+                        if mkfs.exfat /dev/mmcblk0p3
+                        then
+                                touch /etc/kvm.disk0
+                        else
+                                echo "fs: mkfs.exfat failed; will retry next boot"
+                        fi
                 fi
         fi
 
         if [ -e /dev/mmcblk0p3 ]
         then
                 mkdir -p /data
-                mount /dev/mmcblk0p3 /data
+                # Say so when it fails. A silent failure here leaves every /data
+                # write landing on the root filesystem instead — the mesh
+                # identity, the fleet key and the USB drive image all quietly in
+                # the wrong place, with nothing in the log to explain why the
+                # drive never appears.
+                if ! mount /dev/mmcblk0p3 /data
+                then
+                        echo "fs: FAILED to mount /dev/mmcblk0p3 on /data"
+                fi
         fi
 
         echo "OK"
