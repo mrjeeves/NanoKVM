@@ -73,7 +73,26 @@ start() {
     wpa_passphrase "$ssid" "$pass" >>/etc/wpa_supplicant.conf
     wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
     if [ ! -e /boot/wifi.nodhcp ]; then
-        (udhcpc -i wlan0 -t 10 -T 1 -A 5 -b -p /run/udhcpc.wlan0.pid) &
+        # Wait for association before asking for a lease. udhcpc used to start
+        # the instant wpa_supplicant was backgrounded, so its whole first burst
+        # of DISCOVERs (-t 10 -T 1, ten seconds) went out over a link that had
+        # not finished associating. It does recover on the -A retry, but only
+        # after the device has spent the opening stretch of every boot with no
+        # address at all — and on a KVM whose other NIC is unplugged, that is
+        # the whole of its reachability.
+        #
+        # carrier, not wpa_cli: the flag is set by the driver on association
+        # and needs no control socket, so this works even on an image that
+        # ships wpa_supplicant without its client.
+        (
+            i=0
+            while [ "$i" -lt 20 ] && \
+                [ "$(cat /sys/class/net/wlan0/carrier 2>/dev/null)" != "1" ]; do
+                sleep 1
+                i=$((i + 1))
+            done
+            udhcpc -i wlan0 -t 10 -T 1 -A 5 -b -p /run/udhcpc.wlan0.pid
+        ) &
     fi
 }
 
