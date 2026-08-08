@@ -293,6 +293,14 @@ daemon:
 daemon-rev:
     @cat .myownmesh-rev
 
+# Build the customer-facing USB drive image (the volume the attached machine
+# sees). One build step, shared with release CI — see scripts/build-usbdisk.sh
+# for why the two must not drift.
+[doc("Build the USB drive image (autorun + icon + the CEC Support launcher).")]
+usbdisk OUT="kvmapp/usbdisk.img.gz":
+    @./scripts/build-usbdisk.sh {{OUT}}
+
+
 # ── Download-only path: deploy a release with NO local build (no Docker) ───────
 #
 # `just install <device-ip>` fetches the prebuilt device bundle (server + the
@@ -388,11 +396,7 @@ deploy ip:
     # without them still gets a working deploy, just no drive until the next
     # over-the-air update installs the released one.
     if command -v mkfs.vfat >/dev/null 2>&1 && command -v mcopy >/dev/null 2>&1; then
-      dd if=/dev/zero of="$p/usbdisk.img" bs=1M count=0 seek=64 2>/dev/null
-      mkfs.vfat -n "CEC KVM" "$p/usbdisk.img" >/dev/null
-      MTOOLS_SKIP_CHECK=1 mcopy -i "$p/usbdisk.img" support/usbdisk/autorun.inf ::/autorun.inf
-      MTOOLS_SKIP_CHECK=1 mcopy -i "$p/usbdisk.img" support/usbdisk/cec.ico     ::/cec.ico
-      gzip -9 -f "$p/usbdisk.img"
+      ./scripts/build-usbdisk.sh "$p/usbdisk.img.gz"
     else
       echo "note: dosfstools/mtools not found — skipping the USB drive image"
     fi
