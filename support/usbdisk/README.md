@@ -74,13 +74,15 @@ is the kind of bug nobody finds until a customer is on the phone.
 It fails if any expected file did not land, for the same reason the device
 checks the FAT signature before exporting the drive.
 
-## This does not reach devices already in the field
+## Reaching devices already in the field
 
-`installUsbDisk` (server/service/application/update.go) never replaces a drive
-that is already formatted — it is the customer's drive, their files are theirs,
-and an update that silently emptied it would be a worse bug than any it fixed.
-So the launcher reaches devices provisioned from this release onward, plus any
-whose drive is missing or unformatted. Getting it onto a drive already out there
-needs a deliberate, customer-initiated re-provision, which does not exist yet —
-a "restore the KVM drive" action in the web UI is the obvious shape, since
-wiping is then their choice rather than an update's side effect.
+The drive is a managed artifact, not the customer's scratch space — its whole
+purpose is to put our files in front of the attached machine. So `installUsbDisk`
+refreshes it whenever the release ships a different one, keyed on a stamp holding
+the sha256 of the packed image the current drive was written from. An unchanged
+release is a byte-identical compare and no SD-card write; a fixed launcher
+reaches every device on its next update.
+
+It used to refuse to touch a drive that was already formatted, which meant a
+device provisioned once kept its original drive for good and every fix stopped
+at the factory.

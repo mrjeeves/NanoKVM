@@ -538,7 +538,14 @@ func installInitScripts(bundleDir string) int {
 // /boot/usb.disk0 is empty. Indirected for tests.
 const usbDiskImage = "/data/usbdisk.img"
 
-var usbDiskImageForTest = usbDiskImage
+// usbDiskStamp records which build the drive on this device was written from.
+// See installUsbDisk for why the drive is refreshed rather than preserved.
+const usbDiskStamp = "/data/.usbdisk.stamp"
+
+var (
+	usbDiskImageForTest = usbDiskImage
+	usbDiskStampForTest = usbDiskStamp
+)
 
 // looksFormatted reports whether an image carries a FAT boot signature.
 //
@@ -573,11 +580,17 @@ func looksFormatted(path string) bool {
 // and building it once somewhere with a real toolchain also lets it carry the
 // autorun.inf that gives the drive our icon and the name "CEC KVM".
 //
-// **A formatted image already on the device is never replaced.** It is the
-// customer's drive; whatever they have put on it is theirs, and an update that
-// silently emptied it would be a worse bug than the one this fixes. Only a
-// missing image — or one that isn't a filesystem, which is exactly the broken
-// state described on looksFormatted — is written.
+// **The drive is a managed artifact, not the customer's scratch space.** Its
+// whole purpose is to put OUR files in front of the attached machine, so an
+// update that ships a fixed launcher has to reach a device that was already
+// provisioned — the earlier "never replace a formatted drive" rule meant a
+// device provisioned once kept its original drive for good, and every fix to
+// anything on it stopped at the factory.
+//
+// The usbDiskStamp records the sha256 of the PACKED image the current drive was
+// written from: that is the artifact the bundle actually carries, so an
+// unchanged release is a byte-identical compare over a ~90 KB file and costs no
+// decompression and no SD-card write.
 //
 // Best-effort: a failure here leaves the device without a USB drive, which is
 // a missing convenience, not a broken KVM, and must never fail an update that
@@ -587,9 +600,15 @@ func installUsbDisk(bundleDir string) bool {
 	if !isFile(src) {
 		return false // a bundle from an older release
 	}
+	want, err := sha256File(src)
+	if err != nil {
+		log.Warnf("update: usb drive: hash bundle image: %s", err)
+		return false
+	}
 	dst := usbDiskImageForTest
-	if looksFormatted(dst) {
-		return false // the customer's drive, with the customer's files on it
+	if current, err := os.ReadFile(usbDiskStampForTest); err == nil &&
+		string(current) == want && isFile(dst) {
+		return false // already this build
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		log.Warnf("update: usb drive: %s", err)
@@ -612,6 +631,12 @@ func installUsbDisk(bundleDir string) bool {
 		_ = os.Remove(stage)
 		log.Warnf("update: usb drive: %s", err)
 		return false
+	}
+	// Stamp last: a crash between the rename and this leaves a good drive with
+	// a stale stamp, so the next update rewrites it. The reverse order would
+	// leave a stamp claiming a drive that was never written.
+	if err := os.WriteFile(usbDiskStampForTest, []byte(want), 0o644); err != nil {
+		log.Warnf("update: usb drive: write stamp: %s", err)
 	}
 	log.Infof("update: installed the USB drive image (takes effect on the next boot)")
 	return true

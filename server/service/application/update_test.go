@@ -509,33 +509,55 @@ func TestInstallUsbDiskCreatesAMissingImage(t *testing.T) {
 	}
 }
 
-// The drive is the CUSTOMER'S. Whatever they've put on it is theirs, and an
-// update that silently emptied it would be a worse bug than the one this fixes.
-func TestInstallUsbDiskLeavesAFormattedDriveAlone(t *testing.T) {
+// An unchanged release must not rewrite the drive: that is an SD-card write on
+// every routine update for no reason.
+func TestInstallUsbDiskSkipsAnUnchangedBuild(t *testing.T) {
 	bundle := t.TempDir()
 	gzipFile(t, filepath.Join(bundle, "usbdisk.img.gz"), fatImage())
 
-	dst := filepath.Join(t.TempDir(), "usbdisk.img")
-	theirs := fatImage()
-	copy(theirs[0:11], []byte("THEIR STUFF"))
-	if err := os.WriteFile(dst, theirs, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	orig := usbDiskImageForTest
-	usbDiskImageForTest = dst
-	defer func() { usbDiskImageForTest = orig }()
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "usbdisk.img")
+	origI, origS := usbDiskImageForTest, usbDiskStampForTest
+	usbDiskImageForTest, usbDiskStampForTest = dst, filepath.Join(dir, ".usbdisk.stamp")
+	defer func() { usbDiskImageForTest, usbDiskStampForTest = origI, origS }()
 
-	if installUsbDisk(bundle) {
-		t.Fatal("a formatted drive was overwritten")
+	if !installUsbDisk(bundle) {
+		t.Fatal("first install should write the drive")
 	}
-	got, err := os.ReadFile(dst)
-	if err != nil || !bytes.Equal(got, theirs) {
-		t.Fatalf("the customer's drive was modified (%v)", err)
+	if installUsbDisk(bundle) {
+		t.Fatal("the same build was written twice")
 	}
 }
 
-// A bundle from an older release carries no image — a quiet no-op, never
-// something that fails an update which already swapped in a working server.
+// The whole reason the stamp exists: a device provisioned once must still pick
+// up a fixed launcher, instead of keeping its original drive for good.
+func TestInstallUsbDiskRefreshesWhenTheBuildChanges(t *testing.T) {
+	bundle := t.TempDir()
+	gzipFile(t, filepath.Join(bundle, "usbdisk.img.gz"), fatImage())
+
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "usbdisk.img")
+	origI, origS := usbDiskImageForTest, usbDiskStampForTest
+	usbDiskImageForTest, usbDiskStampForTest = dst, filepath.Join(dir, ".usbdisk.stamp")
+	defer func() { usbDiskImageForTest, usbDiskStampForTest = origI, origS }()
+
+	if !installUsbDisk(bundle) {
+		t.Fatal("first install should write the drive")
+	}
+	next := fatImage()
+	copy(next[0:9], []byte("BUILD-TWO"))
+	gzipFile(t, filepath.Join(bundle, "usbdisk.img.gz"), next)
+	if !installUsbDisk(bundle) {
+		t.Fatal("a changed build should rewrite the drive")
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got[0:9]) != "BUILD-TWO" {
+		t.Fatalf("drive still holds the old build: %q", got[0:9])
+	}
+}
 func TestInstallUsbDiskIgnoresBundleWithout(t *testing.T) {
 	if installUsbDisk(t.TempDir()) {
 		t.Fatal("claimed to install from a bundle with no image")
