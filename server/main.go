@@ -20,7 +20,6 @@ import (
 	"NanoKVM-Server/service/button"
 	"NanoKVM-Server/service/mesh"
 	"NanoKVM-Server/service/mesh/glue"
-	"NanoKVM-Server/service/storage"
 	"NanoKVM-Server/service/vm"
 	"NanoKVM-Server/service/vm/jiggler"
 	"NanoKVM-Server/utils"
@@ -60,11 +59,6 @@ func initialize() {
 	if !utils.IsHdmiDisabled() {
 		vision.SetHDMI(true)
 	}
-
-	// S03usbdev decides whether to export the drive at S03, before the server
-	// that writes the image has run. Re-check now that it exists, so the drive
-	// appears on the boot the image lands rather than the one after.
-	storage.EnsureDriveExported()
 
 	// run mouse jiggler
 	jiggler.GetJiggler().Run()
