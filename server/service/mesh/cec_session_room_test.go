@@ -103,3 +103,80 @@ func TestSessionRoomIsEmptyBeforeIdentity(t *testing.T) {
 		t.Fatalf("session room = %q before identity, want empty", got)
 	}
 }
+
+// The follow-on bug: the room was joined and cec.control subscribed, so the
+// handshake completed — and then the technician's app refused to wire anything
+// with "isn't running AllMyStuff". Capability adverts are PER NETWORK, and the
+// first cut of the session-room join skipped joinPlanes, so the KVM sat in the
+// room advertising nothing and read as a bare mesh endpoint.
+//
+// Being a full participant means all three: the AllMyStuff planes (CEC screen
+// and input ride those, not cec.media), the capability advert, and cec.control.
+func TestSessionRoomIsJoinedAsAFullParticipant(t *testing.T) {
+	f := startFakeDaemon(t)
+
+	events, err := Dial(f.sock)
+	if err != nil {
+		t.Fatalf("dial events: %v", err)
+	}
+	defer events.Close()
+	ctl, err := Dial(f.sock)
+	if err != nil {
+		t.Fatalf("dial ctl: %v", err)
+	}
+	defer ctl.Close()
+	if err := events.Subscribe(nil, nil, nil); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	b := &Bridge{
+		conf:   &config.Config{},
+		mesh:   config.Mesh{NetworkId: "cec-backend-client-mesh"},
+		state:  LoadState(t.TempDir()),
+		events: events,
+		ctl:    ctl,
+		nodeID: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+	}
+	room := b.cecSessionNetworkID()
+
+	if err := b.RaiseHand(); err != nil {
+		t.Fatalf("RaiseHand: %v", err)
+	}
+
+	// The capability advert — the thing the technician reads to decide we are
+	// an AllMyStuff node at all.
+	advertised := false
+	for _, req := range f.requests("capabilities_set") {
+		if net, _ := req["network"].(string); net == room {
+			advertised = true
+			caps, _ := req["capabilities"].(map[string]interface{})
+			tags, _ := caps["tags"].([]interface{})
+			found := false
+			for _, tag := range tags {
+				if s, _ := tag.(string); s == CapTagAllMyStuff {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("advert on %s carries tags %v, want one of them %q", room, tags, CapTagAllMyStuff)
+			}
+		}
+	}
+	if !advertised {
+		t.Fatalf("no capability advert on %s — the technician reads this KVM as a bare mesh endpoint", room)
+	}
+
+	// And the planes CEC screen/input actually ride.
+	planes := map[string]bool{}
+	for _, req := range f.requests("channel_subscribe") {
+		if net, _ := req["network"].(string); net == room {
+			ch, _ := req["channel"].(string)
+			planes[ch] = true
+		}
+	}
+	for _, ch := range []string{ChannelPresence, ChannelControl, ChannelMedia, CecChannelControl} {
+		if !planes[ch] {
+			t.Errorf("channel %q not subscribed on %s; got %v", ch, room, planes)
+		}
+	}
+}
