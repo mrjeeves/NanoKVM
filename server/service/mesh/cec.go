@@ -148,6 +148,19 @@ func (b *Bridge) joinCecSessionRoomLocked() error {
 	if err := b.networkAdd(b.cecSessionNetworkConfig(id)); err != nil {
 		return fmt.Errorf("join cec session room: %w", err)
 	}
+	// Become a FULL participant here, exactly as we do on the support area.
+	// joinPlanes subscribes the AllMyStuff presence/control/media planes — CEC
+	// screen and input ride those, not cec.media — and advertises our
+	// capability tags on this network.
+	//
+	// Both halves are load-bearing and the advert is the one that bites first:
+	// capabilities are per-network, so a KVM that joined this room without
+	// advertising reads to the technician as a bare mesh endpoint, and their
+	// app refuses to wire anything to it with "isn't running AllMyStuff" —
+	// after the handshake has otherwise succeeded.
+	if err := b.joinPlanes(id); err != nil {
+		return fmt.Errorf("join cec session room planes: %w", err)
+	}
 	if err := b.subscribeCecControlOn(id); err != nil {
 		return fmt.Errorf("subscribe cec control on session room: %w", err)
 	}
