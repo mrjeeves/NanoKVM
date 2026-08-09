@@ -78,7 +78,11 @@ const (
 type helpState struct {
 	mu     sync.Mutex
 	asking bool
-	joined bool // whether we've joined the support area this run (idempotent join)
+	// joined notes that CecOnline has taken residence on THIS daemon
+	// connection (area + session room + their subscribes). Cleared by
+	// resetHelpRun on every reconnect, because the subscribes name an event
+	// stream client id the reconnect throws away.
+	joined bool
 	// migrated notes the once-per-run area re-create that heals a room a
 	// beacon-era build persisted as `open` (the network kind is governed
 	// state bootstrapped at first attach — a config update can't flip it, so
@@ -98,30 +102,11 @@ func (b *Bridge) RaiseHand() error {
 	if b.help.asking {
 		return nil
 	}
-	if !b.help.joined {
-		if err := b.ensureSilentHelpAreaLocked(); err != nil {
-			return fmt.Errorf("join help mesh: %w", err)
-		}
-		// Become a full participant so a technician who answers can actually
-		// reach us. joinPlanes subscribes the AllMyStuff control/media planes —
-		// CEC screen+input ride those, not cec.media — and advertises our
-		// capabilities; then we also subscribe the CEC control channel so the
-		// connect-request itself arrives.
-		if err := b.joinPlanes(CecHelpNetworkID); err != nil {
-			return fmt.Errorf("join help planes: %w", err)
-		}
-		if err := b.subscribeCecControl(); err != nil {
-			return fmt.Errorf("subscribe cec control: %w", err)
-		}
-		// And the room the technician actually dials into. Without this the
-		// hand goes up, a technician answers, and their connect Request is
-		// sent to a room we are not in — so it is never delivered, we never
-		// auto-approve, and their session sits at "requested" forever. The
-		// support area above is discovery only; this is the transport.
-		if err := b.joinCecSessionRoomLocked(); err != nil {
-			return err
-		}
-		b.help.joined = true
+	// Idempotent, and a self-heal: bring-up already took residence, but a hand
+	// raised before the first CecOnline (or after a manual mesh removal) still
+	// needs it. Mirrors AllMyStuff's cec_ask_help, which opens the same way.
+	if err := b.cecOnlineLocked(); err != nil {
+		return err
 	}
 	// Join the asking room before committing to "asking", so a dead daemon
 	// surfaces as an error to the caller instead of a silently-raised hand.
@@ -132,6 +117,84 @@ func (b *Bridge) RaiseHand() error {
 	b.help.asking = true
 	log.Infof("mesh: CEC hand raised (support id %s)", b.SupportID())
 	return nil
+}
+
+// CecOnline takes this device's standing CEC residence: the discovery area and
+// its own private session room, both as a full participant. Called once per
+// daemon connection, and never a request for help — residency is being
+// reachable for help that was *already* agreed. Mirrors AllMyStuff's
+// node/src/mesh.rs cec_online, which a customer likewise runs at bring-up
+// rather than when raising a hand.
+//
+// Why bring-up and not just RaiseHand. A technician's dial is PINNED
+// (NetworkConnectPeer{pin: true}), so their daemon redials this KVM on every
+// announce for as long as their 3-hour grant lasts — across a reboot, an
+// update, a power blip. The grant survives that (cecAdmit reads it back and
+// re-admits with no human), but until this ran at bring-up the transport did
+// not: the KVM came back with its hand down and therefore outside the very
+// room the technician was still dialing, and the reconnect could never land.
+// Residency also restores dial-by-number, which resolves digits against the
+// area's membership — a rebooted KVM was un-diallable until someone pressed
+// the button on it, which is the one thing a remote customer cannot do.
+//
+// Non-fatal by construction for the caller: CEC is one plane of many, and a
+// support area that won't attach is no reason to fail the whole bridge.
+func (b *Bridge) CecOnline() error {
+	b.help.mu.Lock()
+	defer b.help.mu.Unlock()
+	return b.cecOnlineLocked()
+}
+
+// cecOnlineLocked is CecOnline's body. Callers hold b.help.mu.
+//
+// `joined` is per daemon connection, not per process: every subscribe here
+// names the CURRENT event stream's client id, so a reconnect has to redo all
+// of it — see resetHelpRun.
+func (b *Bridge) cecOnlineLocked() error {
+	if b.help.joined {
+		return nil
+	}
+	if err := b.ensureSilentHelpAreaLocked(); err != nil {
+		return fmt.Errorf("join help mesh: %w", err)
+	}
+	// Become a full participant so a technician who answers can actually reach
+	// us. joinPlanes subscribes the AllMyStuff control/media planes — CEC
+	// screen+input ride those, not cec.media — and advertises our capabilities;
+	// then we also subscribe the CEC control channel so the connect-request
+	// itself arrives.
+	if err := b.joinPlanes(CecHelpNetworkID); err != nil {
+		return fmt.Errorf("join help planes: %w", err)
+	}
+	if err := b.subscribeCecControl(); err != nil {
+		return fmt.Errorf("subscribe cec control: %w", err)
+	}
+	// And the room a technician actually dials into. Without this a hand goes
+	// up, a technician answers, and their connect Request is sent to a room we
+	// are not in — never delivered, never auto-approved, their session stuck at
+	// "requested" forever. The support area above is discovery only; this is
+	// the transport.
+	if err := b.joinCecSessionRoomLocked(); err != nil {
+		return err
+	}
+	b.help.joined = true
+	log.Infof("mesh: CEC online — discoverable on %s, hosting %s (support id %s)",
+		CecHelpNetworkID, b.cecSessionNetworkID(), b.SupportID())
+	return nil
+}
+
+// resetHelpRun clears the per-connection CEC bookkeeping, which is `joined`
+// alone: its subscribes are bound to the event stream's client id, and a
+// reconnect throws that stream away.
+//
+// Deliberately NOT `migrated`. That one heals a room a beacon-era build
+// persisted as `open` by re-creating it, which purges the room — a once-per-
+// process repair, not something to redo every time the daemon socket blips.
+// And NOT `asking`: the hand is the operator's state, so a KVM whose daemon
+// blipped mid-ask comes back with its hand still up.
+func (b *Bridge) resetHelpRun() {
+	b.help.mu.Lock()
+	b.help.joined = false
+	b.help.mu.Unlock()
 }
 
 // joinCecSessionRoomLocked joins this device's private support room and
@@ -176,6 +239,10 @@ func (b *Bridge) joinCecSessionRoomLocked() error {
 // and purges the roster of strangers the open era gossiped in. Checked at
 // most once per run; a room already silent (or an unreadable kind — never
 // churn the room on a guess) is joined as-is. Callers hold b.help.mu.
+//
+// The kind check is what makes this safe to run at bring-up: an unconditional
+// re-create would purge the area's roster on every boot, not just the one that
+// heals a beacon-era room.
 func (b *Bridge) ensureSilentHelpAreaLocked() error {
 	if !b.help.migrated {
 		b.help.migrated = true

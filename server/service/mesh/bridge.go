@@ -298,11 +298,24 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	// read it: the OLED app polls this file into the screen's IP rotation.
 	writeJoiningMeshFile(joining)
 
+	// Every CEC subscribe below names this event stream's client id, and the
+	// stream is brand new — so the previous connection's "already joined" must
+	// not suppress the work. The hand itself is not touched: `asking` is
+	// operator state and rides through a reconnect.
+	b.resetHelpRun()
+
 	// 3. Reconcile network membership with the claim state (unclaimed → the
 	// joining mesh; claimed → the fleet mesh; owner-added meshes kept) and
 	// subscribe the planes + advertise capabilities on every one of them.
 	if err := b.ensureMemberships(); err != nil {
 		return err
+	}
+
+	// 3b. Take standing CEC residence — after the membership reconcile, whose
+	// unclaimed branch sheds everything it doesn't recognise. Non-fatal: a
+	// support area that won't attach must not cost the device its mesh.
+	if err := b.CecOnline(); err != nil {
+		log.Warnf("mesh: CEC residence: %s", err)
 	}
 
 	// 4. Keep the daemon identity label in step with the display label
@@ -591,6 +604,7 @@ func (b *Bridge) ensureMemberships() error {
 	defer b.membershipMu.Unlock()
 
 	joining := b.joiningMeshID()
+	cecSessionNetwork := b.cecSessionNetworkID()
 	nets, err := b.ctlNetworksList()
 	if err != nil {
 		return err
@@ -700,7 +714,19 @@ func (b *Bridge) ensureMemberships() error {
 		// that died mid-teardown (or an old fleet). Shedding them on connect
 		// makes the unclaim reset convergent no matter where it was
 		// interrupted.
-		keep := map[string]bool{joining: true, localClaimMesh: true}
+		// The CEC support rooms are not claim state and never were: they are
+		// how a customer reaches a technician, which an unclaimed device needs
+		// at least as much as a claimed one. Shedding them here would make
+		// every reconnect a remove/re-add churn against CecOnline below —
+		// and networkRemove is a deliberate FORGET, so it would also purge the
+		// session room's pins under a technician mid-session.
+		keep := map[string]bool{
+			joining:           true,
+			localClaimMesh:    true,
+			CecHelpNetworkID:  true,
+			CecAskNetworkID:   true,
+			cecSessionNetwork: true,
+		}
 		codeNet := ""
 		if public {
 			codeNet = claimCodeNetworkID(b.state.EnsureClaimCode())
