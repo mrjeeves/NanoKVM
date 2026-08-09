@@ -49,6 +49,9 @@ const (
 	// (allmystuff-cec-protocol::ASK_NETWORK_ID). Joined only while the hand
 	// is up; membership is the entire signal.
 	CecAskNetworkID = "cecsupport-asking"
+	// cecNetworkPrefix prefixes a device's private support room
+	// (allmystuff-cec-protocol CEC_NETWORK_PREFIX).
+	cecNetworkPrefix = "cec-"
 	// CecChannelControl carries the point-to-point connect handshake
 	// (allmystuff-cec-protocol::CHANNEL_CONTROL) — a technician's connect
 	// Request and our Approve reply.
@@ -110,6 +113,14 @@ func (b *Bridge) RaiseHand() error {
 		if err := b.subscribeCecControl(); err != nil {
 			return fmt.Errorf("subscribe cec control: %w", err)
 		}
+		// And the room the technician actually dials into. Without this the
+		// hand goes up, a technician answers, and their connect Request is
+		// sent to a room we are not in — so it is never delivered, we never
+		// auto-approve, and their session sits at "requested" forever. The
+		// support area above is discovery only; this is the transport.
+		if err := b.joinCecSessionRoomLocked(); err != nil {
+			return err
+		}
 		b.help.joined = true
 	}
 	// Join the asking room before committing to "asking", so a dead daemon
@@ -120,6 +131,27 @@ func (b *Bridge) RaiseHand() error {
 
 	b.help.asking = true
 	log.Infof("mesh: CEC hand raised (support id %s)", b.SupportID())
+	return nil
+}
+
+// joinCecSessionRoomLocked joins this device's private support room and
+// subscribes the CEC control channel on it. Callers hold b.help.mu.
+//
+// Both halves matter: being IN the room is what lets the technician's dial
+// reach us at all, and the subscribe is what delivers the connect Request to
+// this process once it does.
+func (b *Bridge) joinCecSessionRoomLocked() error {
+	id := b.cecSessionNetworkID()
+	if id == "" {
+		return fmt.Errorf("cec session room: no device identity yet")
+	}
+	if err := b.networkAdd(b.cecSessionNetworkConfig(id)); err != nil {
+		return fmt.Errorf("join cec session room: %w", err)
+	}
+	if err := b.subscribeCecControlOn(id); err != nil {
+		return fmt.Errorf("subscribe cec control on session room: %w", err)
+	}
+	log.Infof("mesh: CEC session room %s joined (support id %s)", id, b.SupportID())
 	return nil
 }
 
@@ -226,13 +258,21 @@ func (b *Bridge) channelSendTo(network, channel, peer string, payload interface{
 // subscribeCecControl subscribes our event stream to the CEC control channel on
 // the help mesh, so a technician's connect Request is delivered to us.
 func (b *Bridge) subscribeCecControl() error {
+	return b.subscribeCecControlOn(CecHelpNetworkID)
+}
+
+// subscribeCecControlOn subscribes our event stream to cec.control on one
+// network. The support area and the private session room both carry it: the
+// area so a directory-era technician is not silently ignored, the room because
+// that is where the handshake really happens.
+func (b *Bridge) subscribeCecControlOn(networkID string) error {
 	b.mu.Lock()
 	ctl, events := b.ctl, b.events
 	b.mu.Unlock()
 	if ctl == nil || events == nil {
 		return fmt.Errorf("cec: subscribe before connect")
 	}
-	return ctl.ChannelSubscribe(events.ClientID(), CecHelpNetworkID, CecChannelControl)
+	return ctl.ChannelSubscribe(events.ClientID(), networkID, CecChannelControl)
 }
 
 // cecConnect is the flat view of a ControlMessage::Connect(ConnectControl) frame
@@ -432,6 +472,40 @@ func cecHelpNetworkConfig() map[string]interface{} {
 // the help queue itself. Mirrors AllMyStuff node/src/cec.rs
 // ask_network_config: Silent like the area, joined only while the hand is up;
 // membership is the entire signal.
+// cecSessionNetworkID is this device's PRIVATE support room —
+// allmystuff-cec-protocol's network_id_for_device: "cec-" + the 9-digit
+// support number. The support area is discovery only; this is where the
+// connect handshake and every session actually happens, which is why the
+// technician's dial joins exactly this room.
+//
+// Empty before identity_show has run, since the number derives from the
+// device id. Callers must treat that as "not ready yet" rather than joining
+// a room called "cec-".
+func (b *Bridge) cecSessionNetworkID() string {
+	number := b.SupportID()
+	if number == "" {
+		return ""
+	}
+	// The Rust side runs the number through normalize_input first; a
+	// SupportID is already nine ASCII digits, for which that is the identity.
+	return cecNetworkPrefix + number
+}
+
+// cecSessionNetworkConfig builds the daemon config for that room. Same shape as
+// the asking room and as node/src/cec.rs session_network_config: silent, so it
+// is never gossiped, and auto_approve, because the technician's deliberate dial
+// is what opens the transport — human access is still gated by cecAdmit.
+func (b *Bridge) cecSessionNetworkConfig(id string) map[string]interface{} {
+	return map[string]interface{}{
+		"id":           id,
+		"network_id":   id,
+		"label":        fmt.Sprintf("CEC Support %s", b.SupportID()),
+		"kind":         "silent",
+		"auto_approve": true,
+		"signaling":    map[string]interface{}{"strategy": "nostr", "mdns": true},
+	}
+}
+
 func cecAskNetworkConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"id":           CecAskNetworkID,
