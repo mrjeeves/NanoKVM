@@ -93,7 +93,7 @@ jobs:
           CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 \
             CC=riscv64-unknown-linux-musl-gcc \
             CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" \
-            go build -o NanoKVM-Server -v
+            go build -trimpath -ldflags="-s -w" -o NanoKVM-Server -v
           patchelf --force-rpath --set-rpath '$ORIGIN/dl_lib' NanoKVM-Server
           file NanoKVM-Server
           readelf -d NanoKVM-Server | grep -iE 'RPATH|RUNPATH' || true
@@ -126,6 +126,9 @@ jobs:
           cp kvmapp/system/init.d/S31usbnet  bundle/init.d/S31usbnet
           cp kvmapp/system/init.d/S32usbdhcp bundle/init.d/S32usbdhcp
           cp kvmapp/system/init.d/S03usbdev  bundle/init.d/S03usbdev
+          cp kvmapp/system/init.d/S04fuse    bundle/init.d/S04fuse
+          mkdir -p bundle/ko
+          cp kvmapp/system/ko/fuse.ko bundle/ko/fuse.ko
           chmod +x bundle/init.d/*
 
           # The customer-facing USB drive. Built by the SAME script `just deploy`
@@ -145,7 +148,7 @@ jobs:
         run: |
           set -e
           NAME="nanokvm-mesh-riscv64"
-          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh web init.d usbdisk.img.gz
+          tar -czf "${NAME}.tar.gz" -C bundle NanoKVM-Server myownmesh web init.d ko usbdisk.img.gz
           sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
           ls -la "${NAME}.tar.gz"*
 

@@ -32,7 +32,7 @@ DOCKER_RUN_BASE := docker run --platform=$(PLATFORM) -e UID=$(UID) -e GID=$(GID)
 #   * \$$ORIGIN: make turns $$ into $, leaving \$ORIGIN in the recipe; inside the
 #     `bash -c '…'` the backslash keeps bash from expanding $ORIGIN to empty, so
 #     the literal $ORIGIN reaches the linker.
-GO_BUILD_CMD := cd /home/build/NanoKVM/server && go mod tidy && CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 CC=riscv64-unknown-linux-musl-gcc CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" go build -ldflags=-extldflags=-Wl,--disable-new-dtags,-rpath,\$$ORIGIN/dl_lib
+GO_BUILD_CMD := cd /home/build/NanoKVM/server && go mod tidy && CGO_ENABLED=1 GOOS=linux GOARCH=riscv64 CC=riscv64-unknown-linux-musl-gcc CGO_CFLAGS="-mcpu=c906fdv -march=rv64imafdcv0p7xthead -mcmodel=medany -mabi=lp64d" go build -ldflags="-s -w -extldflags=-Wl,--disable-new-dtags,-rpath,\$$ORIGIN/dl_lib"
 SUPPORT_BUILD_CMD := . ./home/build/MaixCDK/bin/activate && cd /home/build/NanoKVM/support/sg2002 && ./build kvm_system && ./build kvm_system add_to_kvmapp
 
 .PHONY: help check-root builder-image full-image rebuild-image check-image shell app support all clean
@@ -111,12 +111,12 @@ shell: check-root full-image
 # Build Go application (lean server image — no MaixCDK needed)
 app: check-root builder-image
 	@echo "Building app..."
-	@$(DOCKER_RUN_BASE) -it $(IMAGE_NAME) /bin/bash -c '$(GO_BUILD_CMD)'
+	@$(DOCKER_RUN_BASE) -i $(IMAGE_NAME) /bin/bash -c '$(GO_BUILD_CMD)'
 
 # Build hardware support libraries (full image — regenerates libkvm)
 support: check-root full-image
 	@echo "Building support..."
-	@$(DOCKER_RUN_BASE) -it $(FULL_IMAGE) /bin/bash -c '$(SUPPORT_BUILD_CMD)'
+	@$(DOCKER_RUN_BASE) -i $(FULL_IMAGE) /bin/bash -c '$(SUPPORT_BUILD_CMD)'
 
 # Clean build artifacts
 clean:

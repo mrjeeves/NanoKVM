@@ -16,4 +16,10 @@ func storageRouter(r *gin.Engine) {
 	api.POST("/storage/image/mount", service.MountImage)       // mount image
 	api.GET("/storage/cdrom", service.GetCdRom)                // get CD-ROM flag
 	api.POST("/storage/image/delete", service.DeleteImage)     // delete image
+	api.GET("/storage/remote-media/enabled", service.RemoteMediaEnabled)
+	api.GET("/storage/remote-media", service.RemoteMedia)
+	api.POST("/storage/remote-media/session", service.RemoteMediaPollOpen)
+	api.GET("/storage/remote-media/session/next", service.RemoteMediaPollNext)
+	api.POST("/storage/remote-media/session/reply", service.RemoteMediaPollReply)
+	api.DELETE("/storage/remote-media/session", service.RemoteMediaPollClose)
 }
