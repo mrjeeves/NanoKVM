@@ -422,6 +422,7 @@ func installBundle(bundleDir, appDir string) (bool, error) {
 	// here can't strand a half-installed app, and a bundle without them (an
 	// older release) simply skips this.
 	installInitScripts(bundleDir)
+	installKernelModules(bundleDir, appDir)
 	installUsbDisk(bundleDir)
 	MigrateUsbNetworkFlag()
 	return swapDaemon, nil
@@ -532,6 +533,37 @@ func installInitScripts(bundleDir string) int {
 		changed++
 	}
 	return changed
+}
+
+// installKernelModules copies optional compatibility modules from a release
+// bundle into the persistent application tree. They are loaded by the bundled
+// init scripts at the next boot; updating a module never mutates the running
+// kernel underneath an active console.
+func installKernelModules(bundleDir, appDir string) int {
+	srcDir := filepath.Join(bundleDir, "ko")
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return 0 // bundles predating kernel compatibility modules are valid
+	}
+	dstDir := filepath.Join(appDir, "system", "ko")
+	installed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".ko" {
+			continue
+		}
+		src := filepath.Join(srcDir, entry.Name())
+		dst := filepath.Join(dstDir, entry.Name())
+		differs, compareErr := filesDiffer(src, dst)
+		if compareErr != nil || !differs {
+			continue
+		}
+		if err := atomicSwapFile(src, dst); err != nil {
+			log.Warnf("update: kernel module %s: %s", entry.Name(), err)
+			continue
+		}
+		installed++
+	}
+	return installed
 }
 
 // usbDiskImage backs the customer-facing USB drive: a filesystem of its own,

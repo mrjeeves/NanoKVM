@@ -1,0 +1,107 @@
+From: AllMyStuff contributors
+Subject: fuse: allow building without POSIX ACL support
+
+The NanoKVM 5.10.4-tag- kernel was built without CONFIG_FS_POSIX_ACL.
+FUSE normally selects that option unconditionally, which changes kernel data
+structure layouts and leaves fuse.ko referring to symbols absent from the
+shipping kernel. Remote media only needs read-only regular files, so make
+the ACL integration conditional and preserve the device kernel ABI.
+
+--- a/fs/fuse/Kconfig
++++ b/fs/fuse/Kconfig
+@@ -1,7 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ config FUSE_FS
+ 	tristate "FUSE (Filesystem in Userspace) support"
+-	select FS_POSIX_ACL
+ 	help
+ 	  With FUSE it is possible to implement a fully functional filesystem
+ 	  in a userspace program.
+--- a/fs/fuse/Makefile
++++ b/fs/fuse/Makefile
+@@ -7,7 +7,8 @@ obj-$(CONFIG_FUSE_FS) += fuse.o
+ obj-$(CONFIG_CUSE) += cuse.o
+ obj-$(CONFIG_VIRTIO_FS) += virtiofs.o
+ 
+-fuse-y := dev.o dir.o file.o inode.o control.o xattr.o acl.o readdir.o
++fuse-y := dev.o dir.o file.o inode.o control.o xattr.o readdir.o
++fuse-$(CONFIG_FS_POSIX_ACL) += acl.o
+ fuse-$(CONFIG_FUSE_DAX) += dax.o
+ 
+ virtiofs-y := virtio_fs.o
+--- a/fs/fuse/dir.c
++++ b/fs/fuse/dir.c
+@@ -1816,8 +1816,10 @@ static const struct inode_operations fuse_dir_inode_operations = {
+ 	.permission	= fuse_permission,
+ 	.getattr	= fuse_getattr,
+ 	.listxattr	= fuse_listxattr,
++#ifdef CONFIG_FS_POSIX_ACL
+ 	.get_acl	= fuse_get_acl,
+ 	.set_acl	= fuse_set_acl,
++#endif
+ };
+ 
+ static const struct file_operations fuse_dir_operations = {
+@@ -1836,8 +1838,10 @@ static const struct inode_operations fuse_common_inode_operations = {
+ 	.permission	= fuse_permission,
+ 	.getattr	= fuse_getattr,
+ 	.listxattr	= fuse_listxattr,
++#ifdef CONFIG_FS_POSIX_ACL
+ 	.get_acl	= fuse_get_acl,
+ 	.set_acl	= fuse_set_acl,
++#endif
+ };
+ 
+ static const struct inode_operations fuse_symlink_inode_operations = {
+--- a/fs/fuse/fuse_i.h
++++ b/fs/fuse/fuse_i.h
+@@ -1172,12 +1172,16 @@ ssize_t fuse_getxattr(struct inode *inode, const char *name, void *value,
+ ssize_t fuse_listxattr(struct dentry *entry, char *list, size_t size);
+ int fuse_removexattr(struct inode *inode, const char *name);
+ extern const struct xattr_handler *fuse_xattr_handlers[];
++#ifdef CONFIG_FS_POSIX_ACL
+ extern const struct xattr_handler *fuse_acl_xattr_handlers[];
++#endif
+ extern const struct xattr_handler *fuse_no_acl_xattr_handlers[];
+ 
++#ifdef CONFIG_FS_POSIX_ACL
+ struct posix_acl;
+ struct posix_acl *fuse_get_acl(struct inode *inode, int type);
+ int fuse_set_acl(struct inode *inode, struct posix_acl *acl, int type);
++#endif
+ 
+ 
+ /* readdir.c */
+--- a/fs/fuse/inode.c
++++ b/fs/fuse/inode.c
+@@ -1037,9 +1037,13 @@ static void process_init_reply(struct fuse_mount *fm, struct fuse_args *args,
+ 			if (arg->time_gran && arg->time_gran <= 1000000000)
+ 				fm->sb->s_time_gran = arg->time_gran;
+ 			if ((arg->flags & FUSE_POSIX_ACL)) {
++#ifdef CONFIG_FS_POSIX_ACL
+ 				fc->default_permissions = 1;
+ 				fc->posix_acl = 1;
+ 				fm->sb->s_xattr = fuse_acl_xattr_handlers;
++#else
++				fc->posix_acl = 0;
++#endif
+ 			}
+ 			if (arg->flags & FUSE_CACHE_SYMLINKS)
+ 				fc->cache_symlinks = 1;
+--- a/fs/fuse/xattr.c
++++ b/fs/fuse/xattr.c
+@@ -223,12 +223,14 @@ const struct xattr_handler *fuse_xattr_handlers[] = {
+ 	NULL
+ };
+ 
++#ifdef CONFIG_FS_POSIX_ACL
+ const struct xattr_handler *fuse_acl_xattr_handlers[] = {
+ 	&posix_acl_access_xattr_handler,
+ 	&posix_acl_default_xattr_handler,
+ 	&fuse_xattr_handler,
+ 	NULL
+ };
++#endif
+ 
+ static const struct xattr_handler fuse_no_acl_access_xattr_handler = {
+ 	.name  = XATTR_NAME_POSIX_ACL_ACCESS,

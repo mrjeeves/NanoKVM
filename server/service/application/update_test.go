@@ -370,6 +370,47 @@ func TestInstallInitScriptsIgnoresBundleWithout(t *testing.T) {
 	}
 }
 
+// FUSE is not in the shipping kernel, so the exact module is as essential as
+// the server that uses it. OTA and startup reconciliation must both be able to
+// place or repair it without rewriting an identical module on every boot.
+func TestInstallKernelModulesPlacesBundledModule(t *testing.T) {
+	bundle := t.TempDir()
+	koDir := filepath.Join(bundle, "ko")
+	if err := os.MkdirAll(koDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(koDir, "fuse.ko")
+	if err := os.WriteFile(source, []byte("exact-kernel-module"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(t.TempDir(), "kvmapp")
+	if n := installKernelModules(bundle, appDir); n != 1 {
+		t.Fatalf("installed %d modules, want 1", n)
+	}
+	destination := filepath.Join(appDir, "system", "ko", "fuse.ko")
+	if got := read(t, destination); got != "exact-kernel-module" {
+		t.Fatalf("installed module = %q", got)
+	}
+	if n := installKernelModules(bundle, appDir); n != 0 {
+		t.Fatalf("re-installed %d unchanged modules, want 0", n)
+	}
+	if err := os.WriteFile(source, []byte("replacement-module"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n := installKernelModules(bundle, appDir); n != 1 {
+		t.Fatalf("installed %d changed modules, want 1", n)
+	}
+	if got := read(t, destination); got != "replacement-module" {
+		t.Fatalf("replacement module = %q", got)
+	}
+}
+
+func TestInstallKernelModulesIgnoresOlderBundle(t *testing.T) {
+	if n := installKernelModules(t.TempDir(), t.TempDir()); n != 0 {
+		t.Fatalf("installed %d modules from a bundle without ko/", n)
+	}
+}
+
 // RNDIS cannot work on any current host — Windows 11 ships no in-box driver and
 // macOS never had one — so a device carrying that flag has a USB link that is up
 // at every layer except the one that matters. An update migrates it rather than

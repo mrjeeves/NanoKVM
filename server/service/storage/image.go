@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,8 @@ import (
 	"NanoKVM-Server/proto"
 	"NanoKVM-Server/service/hid"
 )
+
+var imageMountMu sync.Mutex
 
 const (
 	imageDirectory       = "/data"
@@ -85,13 +88,35 @@ func (s *Service) MountImage(c *gin.Context) {
 		return
 	}
 
+	// A direct mount/unmount is an explicit replacement for any lazy provider.
+	// Its shutdown performs this requested mount in the same gadget reset, then
+	// tears FUSE down only after the kernel no longer has the virtual file open.
+	handled, err := s.remote.replaceActive(req)
+	if !handled {
+		err = mountImage(req)
+	}
+	if err != nil {
+		log.Errorf("mount image %s failed: %s", req.File, err)
+		rsp.ErrRsp(c, -2, err.Error())
+		return
+	}
+
+	if !handled {
+		persistVirtualMedia(req)
+	}
+	rsp.OkRsp(c)
+	log.Debugf("mount image %s success", req.File)
+}
+
+func mountImage(req proto.MountImageReq) error {
+	imageMountMu.Lock()
+	defer imageMountMu.Unlock()
+
 	// The gadget flags are only writable while the previous backing file is
 	// detached. Do this for every mount, not just CD-ROM images: a raw USB disk
 	// arriving after an ISO must clear cdrom while remaining read-only.
 	if err := os.WriteFile(mountDevice, []byte("\n"), 0o666); err != nil {
-		log.Errorf("unmount file failed: %s", err)
-		rsp.ErrRsp(c, -2, "unmount image failed")
-		return
+		return fmt.Errorf("unmount image failed: %w", err)
 	}
 	ro := "0"
 	if req.File != "" && (req.Cdrom || req.ReadOnly) {
@@ -102,14 +127,10 @@ func (s *Service) MountImage(c *gin.Context) {
 		cdrom = "1"
 	}
 	if err := os.WriteFile(roFlag, []byte(ro), 0o666); err != nil {
-		log.Errorf("set ro flag failed: %s", err)
-		rsp.ErrRsp(c, -2, "set ro flag failed")
-		return
+		return fmt.Errorf("set ro flag failed: %w", err)
 	}
 	if err := os.WriteFile(cdromFlag, []byte(cdrom), 0o666); err != nil {
-		log.Errorf("set cdrom flag failed: %s", err)
-		rsp.ErrRsp(c, -2, "set cdrom flag failed")
-		return
+		return fmt.Errorf("set cdrom flag failed: %w", err)
 	}
 
 	inquiryVen := "NanoKVM"
@@ -121,9 +142,7 @@ func (s *Service) MountImage(c *gin.Context) {
 	inquiryData := fmt.Sprintf("%-8s%-16s%04x", inquiryVen, inquiryPrd, inquiryVer)
 
 	if err := os.WriteFile(inquiryString, []byte(inquiryData), 0o666); err != nil {
-		log.Errorf("set inquiry %s failed: %s", inquiryData, err)
-		rsp.ErrRsp(c, -2, "set inquiry failed")
-		return
+		return fmt.Errorf("set inquiry failed: %w", err)
 	}
 
 	// mount
@@ -133,9 +152,7 @@ func (s *Service) MountImage(c *gin.Context) {
 	}
 
 	if err := os.WriteFile(mountDevice, []byte(image), 0o666); err != nil {
-		log.Errorf("mount file %s failed: %s", image, err)
-		rsp.ErrRsp(c, -2, "mount image failed")
-		return
+		return fmt.Errorf("mount image failed: %w", err)
 	}
 
 	h := hid.GetHid()
@@ -155,15 +172,11 @@ func (s *Service) MountImage(c *gin.Context) {
 	for _, command := range commands {
 		err := exec.Command("sh", "-c", command).Run()
 		if err != nil {
-			rsp.ErrRsp(c, -2, "execute command failed")
-			return
+			return fmt.Errorf("reset USB gadget failed: %w", err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-
-	persistVirtualMedia(req)
-	rsp.OkRsp(c)
-	log.Debugf("mount image %s success", req.File)
+	return nil
 }
 
 func (s *Service) GetMountedImage(c *gin.Context) {

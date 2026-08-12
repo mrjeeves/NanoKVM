@@ -1,0 +1,31 @@
+#!/bin/sh
+
+case "$1" in
+  start)
+    [ -c /dev/fuse ] && exit 0
+
+    module="/kvmapp/system/ko/fuse.ko"
+    [ -f "$module" ] || module="/mnt/system/ko/fuse.ko"
+    if [ ! -f "$module" ]; then
+      echo "FUSE module not installed; remote boot media is unavailable" >&2
+      exit 0
+    fi
+
+    if ! insmod "$module"; then
+      echo "Could not load the FUSE module; remote boot media is unavailable" >&2
+      exit 0
+    fi
+    [ -c /dev/fuse ] || {
+      echo "FUSE loaded without creating /dev/fuse" >&2
+      exit 1
+    }
+    ;;
+  stop)
+    # Remote media may still be mounted. Keep the module loaded until reboot.
+    ;;
+  *)
+    echo "Usage: $0 {start|stop}"
+    exit 1
+    ;;
+esac
+
