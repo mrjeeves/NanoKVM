@@ -295,6 +295,32 @@ func TestControlMessageRouteOfferAndAccept(t *testing.T) {
 	}
 }
 
+func TestScopedSiteRouteDetection(t *testing.T) {
+	tests := []struct {
+		name string
+		from string
+		want bool
+	}{
+		{name: "legacy", from: "peer:site", want: true},
+		{name: "scoped", from: "peer:site:tcp:80", want: true},
+		{name: "highest port", from: "peer:site:tcp:65535", want: true},
+		{name: "missing port", from: "peer:site:tcp:", want: false},
+		{name: "zero port", from: "peer:site:tcp:0", want: false},
+		{name: "signed port", from: "peer:site:tcp:+80", want: false},
+		{name: "invalid port", from: "peer:site:tcp:web", want: false},
+		{name: "overflowing port", from: "peer:site:tcp:65536", want: false},
+		{name: "unrelated generic route", from: "peer:files", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := Route{From: tt.from, Media: "generic"}
+			if got := route.IsSiteRoute(); got != tt.want {
+				t.Fatalf("IsSiteRoute(%q) = %v, want %v", tt.from, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestControlMessageForwardCompatUnknown(t *testing.T) {
 	// An unknown outer tag and an unknown nested kind must both decode without
 	// error (never failing the control channel).

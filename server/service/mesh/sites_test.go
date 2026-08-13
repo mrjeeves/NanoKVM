@@ -193,8 +193,13 @@ func TestSiteHostOpenAllowListAndDataRoundTrip(t *testing.T) {
 	// HTTP; we just confirm the conn exists and receives Data, then Close).
 	h.handleFrame(peer, NewSiteOpen(route, 0, 2, allowed))
 	conn := waitForConn(t, h, route, 2)
+	h.handleFrame(peer, NewSiteOpen(route, 0, 2, allowed))
+	if got := h.lookup(route, 2); got != conn {
+		t.Fatalf("duplicate Open replaced the live connection")
+	}
 
 	// Data is fed to the conn's inbound; a Read returns it.
+	h.handleFrame(peer, NewSiteData(route, 1, 2, []byte("PING")))
 	h.handleFrame(peer, NewSiteData(route, 1, 2, []byte("PING")))
 	buf := make([]byte, 8)
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
@@ -205,8 +210,15 @@ func TestSiteHostOpenAllowListAndDataRoundTrip(t *testing.T) {
 	if string(buf[:n]) != "PING" {
 		t.Fatalf("conn got %q, want PING", buf[:n])
 	}
+	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatalf("duplicate Data was delivered twice")
+	} else if ne, ok := err.(interface{ Timeout() bool }); !ok || !ne.Timeout() {
+		t.Fatalf("waiting after duplicate Data: got %v, want timeout", err)
+	}
 
 	// Close from the peer → the conn sees EOF on the next read.
+	h.handleFrame(peer, NewSiteClose(route, 2, 2))
 	h.handleFrame(peer, NewSiteClose(route, 2, 2))
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := conn.Read(buf); err != io.EOF {

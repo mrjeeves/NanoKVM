@@ -47,6 +47,11 @@ type siteHost struct {
 	// route id, so entries here can go stale; they're small, and a reject on
 	// the next stray frame (see nack) settles the peer's side.
 	activeRoutes map[string]siteRoute // route id -> offer network + peer
+	// seenFrames makes channel delivery idempotent. A daemon can briefly retain
+	// more than one event subscription across reconnects, delivering the exact
+	// same Open/Data/Close frame more than once. Without deduplication a repeated
+	// Open replaces the live conn and repeated Data corrupts its byte stream.
+	seenFrames map[string]*siteFrameWindow
 	// lastNack rate-limits per-route Reject replies: a viewer draining a full
 	// pipe onto a dead route must produce one reject, not one per frame.
 	lastNack map[string]time.Time
@@ -57,6 +62,19 @@ type siteRoute struct {
 	peer    string
 }
 
+type siteFrameKey struct {
+	seq  uint64
+	conn uint64
+	kind SiteEventKind
+}
+
+type siteFrameWindow struct {
+	seen  map[siteFrameKey]struct{}
+	order []siteFrameKey
+}
+
+const siteFrameDedupWindow = 512
+
 func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(network, peer string, frame SiteFrame) error) *siteHost {
 	h := &siteHost{
 		engine:       engine,
@@ -64,6 +82,7 @@ func newSiteHost(engine *gin.Engine, allowedPort uint16, send func(network, peer
 		send:         send,
 		conns:        make(map[string]map[uint64]*meshConn),
 		activeRoutes: make(map[string]siteRoute),
+		seenFrames:   make(map[string]*siteFrameWindow),
 		lastNack:     make(map[string]time.Time),
 	}
 	h.serveConn = h.serveHTTP
@@ -85,6 +104,7 @@ func (h *siteHost) tearDownRoute(route string) {
 	conns := h.conns[route]
 	delete(h.conns, route)
 	delete(h.activeRoutes, route)
+	delete(h.seenFrames, route)
 	h.mu.Unlock()
 	for _, c := range conns {
 		_ = c.Close()
@@ -107,6 +127,7 @@ func (h *siteHost) tearDownPeer(pubkey string) {
 		}
 		delete(h.conns, route)
 		delete(h.activeRoutes, route)
+		delete(h.seenFrames, route)
 	}
 	h.mu.Unlock()
 	for _, c := range closing {
@@ -122,6 +143,7 @@ func (h *siteHost) tearDownAll() {
 	conns := h.conns
 	h.conns = make(map[string]map[uint64]*meshConn)
 	h.activeRoutes = make(map[string]siteRoute)
+	h.seenFrames = make(map[string]*siteFrameWindow)
 	h.mu.Unlock()
 	for _, byConn := range conns {
 		for _, c := range byConn {
@@ -147,6 +169,31 @@ func (h *siteHost) routeTarget(route string) (siteRoute, bool) {
 	defer h.mu.Unlock()
 	target, ok := h.activeRoutes[route]
 	return target, ok
+}
+
+// duplicateFrame reports whether this exact frame was already delivered on
+// the route. The bounded arrival-order window tolerates interleaving across
+// connections without assuming sequence numbers arrive strictly in order.
+func (h *siteHost) duplicateFrame(route string, f SiteFrame) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	window := h.seenFrames[route]
+	if window == nil {
+		window = &siteFrameWindow{seen: make(map[siteFrameKey]struct{})}
+		h.seenFrames[route] = window
+	}
+	key := siteFrameKey{seq: f.Seq, conn: f.Conn, kind: f.Kind}
+	if _, exists := window.seen[key]; exists {
+		return true
+	}
+	window.seen[key] = struct{}{}
+	window.order = append(window.order, key)
+	if len(window.order) > siteFrameDedupWindow {
+		oldest := window.order[0]
+		window.order = window.order[1:]
+		delete(window.seen, oldest)
+	}
+	return false
 }
 
 // nackCooldown bounds how often one dead route is NACKed; a viewer draining a
@@ -187,6 +234,9 @@ func (h *siteHost) handleFrame(peer string, f SiteFrame) {
 	if !active || target.peer != peer {
 		log.Debugf("mesh: dropping site frame on inactive/foreign route %s", f.Route)
 		h.nackDeadRoute(peer, f.Route)
+		return
+	}
+	if h.duplicateFrame(f.Route, f) {
 		return
 	}
 

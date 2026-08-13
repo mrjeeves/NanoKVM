@@ -20,7 +20,11 @@
 // failing — so a newer peer's message never breaks an older NanoKVM.
 package mesh
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+)
 
 // ---- constants (mirror allmystuff-protocol/src/app.rs) ----------------------
 
@@ -145,9 +149,10 @@ type Capability struct {
 }
 
 // Route is a live connection between two capabilities. A site route is
-// identified by Media == "generic" and From ending in ":site"; a display route
-// by Media == "display" (KVM = video source); an input route by Media ==
-// "input" (KVM = keyboard/mouse sink).
+// identified by Media == "generic" and a legacy ":site" or scoped
+// ":site:tcp:<port>" source; a display route by Media == "display" (KVM =
+// video source); an input route by Media == "input" (KVM = keyboard/mouse
+// sink).
 type Route struct {
 	ID    string `json:"id"`
 	From  string `json:"from"`
@@ -165,10 +170,32 @@ const (
 	capSuffixControl = ":control" // the KVM's input capability id
 )
 
-// IsSiteRoute reports whether r is an AllMyStuff "sites" plane route — generic
-// media whose source capability id ends in ":site".
+// IsSiteRoute reports whether r is an AllMyStuff "sites" plane route. Current
+// peers scope the source to the exact shared service as ":site:tcp:<port>";
+// older peers used the unscoped ":site" suffix.
 func (r Route) IsSiteRoute() bool {
-	return r.Media == "generic" && endsWith(r.From, ":site")
+	if r.Media != "generic" {
+		return false
+	}
+	if endsWith(r.From, ":site") {
+		return true
+	}
+	const marker = ":site:tcp:"
+	i := strings.LastIndex(r.From, marker)
+	if i < 0 {
+		return false
+	}
+	port := r.From[i+len(marker):]
+	if port == "" {
+		return false
+	}
+	for _, c := range port {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && n != 0
 }
 
 // IsDisplayRoute reports whether r streams this KVM's captured screen (the KVM
