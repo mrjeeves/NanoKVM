@@ -711,16 +711,14 @@ func (s *remoteSession) start() error {
 	s.server = server
 	s.file = filepath.Join(remoteMediaMount, s.manifest.Name)
 
-	// Prime both ends before USB enumeration. Hybrid GPT images may be inspected
-	// at LBA 0 and at the final LBA immediately; neither read may see a hole.
+	// Prime the firmware-visible boot layout before USB enumeration. Reporting a
+	// mounted LUN while El Torito/GPT reads still depend on a live mesh round trip
+	// makes valid media disappear from firmware boot menus.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	last := (s.image.size - 1) / s.image.chunkSize
-	for _, index := range []int64{0, 1, last} {
-		if _, err := s.image.getChunk(ctx, index); err != nil {
-			_ = server.Unmount()
-			return fmt.Errorf("prime remote media: %w", err)
-		}
+	if err := s.image.primeBootMedia(ctx, s.manifest.Cdrom); err != nil {
+		_ = server.Unmount()
+		return fmt.Errorf("prime remote boot media: %w", err)
 	}
 	if err := mountImage(proto.MountImageReq{
 		File: s.file, Cdrom: s.manifest.Cdrom, ReadOnly: true,
