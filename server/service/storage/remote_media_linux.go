@@ -681,6 +681,14 @@ func (f *remoteFile) Read(ctx context.Context, _ fs.FileHandle, dest []byte, off
 }
 
 func (s *remoteSession) start() error {
+	// A server update/restart kills the userspace FUSE process without giving it
+	// a chance to unmount. The kernel then retains a dead mount that returns
+	// ENOTCONN, and RemoveAll cannot repair it. Detach that stale mount before
+	// constructing the next session; EINVAL/ENOENT simply mean there was none.
+	if err := syscall.Unmount(remoteMediaMount, syscall.MNT_DETACH); err != nil &&
+		!errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOENT) {
+		return fmt.Errorf("detach stale remote-media mount: %w", err)
+	}
 	if err := os.RemoveAll(remoteMediaMount); err != nil {
 		return err
 	}
@@ -745,6 +753,14 @@ func (s *remoteSession) closeWith(replacement proto.MountImageReq) error {
 		closeErr = mountImage(replacement)
 		if closeErr == nil {
 			persistVirtualMedia(replacement)
+		} else {
+			// The previous backing file belongs to this FUSE server and cannot be
+			// retained once it is unmounted below. A rejected replacement must
+			// therefore fall back to the KVM's safe local drive, never leave a
+			// dead FUSE path (or a half-mutated/unbound USB gadget) behind.
+			if fallbackErr := mountImage(proto.MountImageReq{}); fallbackErr != nil {
+				closeErr = fmt.Errorf("%v; restore default USB media: %w", closeErr, fallbackErr)
+			}
 		}
 		if s.server != nil {
 			if err := s.server.Unmount(); closeErr == nil && err != nil {

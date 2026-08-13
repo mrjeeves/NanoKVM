@@ -13,6 +13,14 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## Unreleased
 
+- **A failed or interrupted install-media mount can no longer take down USB.**
+  Media changes are transactional now: the prior LUN state is restored on an
+  error, UDC rebinding is retried, and keyboard/mouse handles are reopened only
+  after the composite gadget is live. Unmounting remote media returns to the
+  validated `/data/usbdisk.img` instead of exporting the raw `/data` partition.
+  Server restarts also detach dead FUSE mounts left by an interrupted stream, so
+  the next remote-media session can start normally.
+
 - **The USB drive comes formatted, named "CEC KVM", and carrying our icon.** It
   is built in CI now (`support/usbdisk/`) and shipped in the release bundle,
   rather than being made on the device at first boot. Building it there was

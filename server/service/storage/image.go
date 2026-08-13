@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,13 +21,22 @@ var imageMountMu sync.Mutex
 
 const (
 	imageDirectory       = "/data"
-	imageNone            = "/dev/mmcblk0p3"
+	imageNone            = kvmDriveImage
 	cdromFlag            = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/cdrom"
 	mountDevice          = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/file"
 	inquiryString        = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/inquiry_string"
 	roFlag               = "/sys/kernel/config/usb_gadget/g0/functions/mass_storage.disk0/lun.0/ro"
 	virtualMediaMetadata = "/data/.allmystuff-virtual-media.json"
+	usbGadgetUDC         = "/sys/kernel/config/usb_gadget/g0/UDC"
+	usbUDCClass          = "/sys/class/udc"
 )
+
+type lunState struct {
+	file     string
+	readOnly string
+	cdrom    string
+	inquiry  string
+}
 
 type virtualMediaState struct {
 	Source string `json:"source"`
@@ -108,16 +116,35 @@ func (s *Service) MountImage(c *gin.Context) {
 	log.Debugf("mount image %s success", req.File)
 }
 
-func mountImage(req proto.MountImageReq) error {
+func mountImage(req proto.MountImageReq) (retErr error) {
 	imageMountMu.Lock()
 	defer imageMountMu.Unlock()
+	hidNeedsRecovery := false
 
-	// The gadget flags are only writable while the previous backing file is
-	// detached. Do this for every mount, not just CD-ROM images: a raw USB disk
-	// arriving after an ISO must clear cdrom while remaining read-only.
-	if err := os.WriteFile(mountDevice, []byte("\n"), 0o666); err != nil {
-		return fmt.Errorf("unmount image failed: %w", err)
+	previous, err := readLUNState()
+	if err != nil {
+		return fmt.Errorf("read current USB media state: %w", err)
 	}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if err := writeLUNState(previous); err != nil {
+			retErr = fmt.Errorf("%v; restore previous USB media: %w", retErr, err)
+		}
+		if err := ensureUSBGadgetBound(); err != nil {
+			retErr = fmt.Errorf("%v; recover USB gadget: %w", retErr, err)
+		}
+		if hidNeedsRecovery {
+			h := hid.GetHid()
+			h.Lock()
+			if err := h.OpenNoLockWithRetry(2*time.Second, 100*time.Millisecond); err != nil {
+				retErr = fmt.Errorf("%v; recover USB input devices: %w", retErr, err)
+			}
+			h.Unlock()
+		}
+	}()
+
 	ro := "0"
 	if req.File != "" && (req.Cdrom || req.ReadOnly) {
 		ro = "1"
@@ -126,13 +153,6 @@ func mountImage(req proto.MountImageReq) error {
 	if req.File != "" && req.Cdrom {
 		cdrom = "1"
 	}
-	if err := os.WriteFile(roFlag, []byte(ro), 0o666); err != nil {
-		return fmt.Errorf("set ro flag failed: %w", err)
-	}
-	if err := os.WriteFile(cdromFlag, []byte(cdrom), 0o666); err != nil {
-		return fmt.Errorf("set cdrom flag failed: %w", err)
-	}
-
 	inquiryVen := "NanoKVM"
 	inquiryPrd := "USB Mass Storage"
 	inquiryVer := 0x0520
@@ -141,42 +161,131 @@ func mountImage(req proto.MountImageReq) error {
 	}
 	inquiryData := fmt.Sprintf("%-8s%-16s%04x", inquiryVen, inquiryPrd, inquiryVer)
 
-	if err := os.WriteFile(inquiryString, []byte(inquiryData), 0o666); err != nil {
-		return fmt.Errorf("set inquiry failed: %w", err)
-	}
-
-	// mount
 	image := req.File
-	if image == "" {
+	if image == "" && driveImageReady(imageNone) {
 		image = imageNone
 	}
-
-	if err := os.WriteFile(mountDevice, []byte(image), 0o666); err != nil {
-		return fmt.Errorf("mount image failed: %w", err)
+	target := lunState{file: image, readOnly: ro, cdrom: cdrom, inquiry: inquiryData}
+	if err := writeLUNState(target); err != nil {
+		return err
 	}
 
 	h := hid.GetHid()
 	h.Lock()
 	h.CloseNoLock()
-	defer func() {
-		h.OpenNoLock()
-		h.Unlock()
-	}()
-
-	// reset usb
-	commands := []string{
-		"echo > /sys/kernel/config/usb_gadget/g0/UDC",
-		"ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC",
+	hidNeedsRecovery = true
+	resetErr := resetUSBGadget()
+	openErr := h.OpenNoLockWithRetry(2*time.Second, 100*time.Millisecond)
+	if openErr == nil {
+		hidNeedsRecovery = false
 	}
+	h.Unlock()
+	if resetErr != nil {
+		return fmt.Errorf("reset USB gadget failed: %w", resetErr)
+	}
+	if openErr != nil {
+		return fmt.Errorf("reopen USB input devices: %w", openErr)
+	}
+	return nil
+}
 
-	for _, command := range commands {
-		err := exec.Command("sh", "-c", command).Run()
-		if err != nil {
-			return fmt.Errorf("reset USB gadget failed: %w", err)
+func readLUNState() (lunState, error) {
+	read := func(path string) (string, error) {
+		data, err := os.ReadFile(path)
+		return strings.TrimSpace(string(data)), err
+	}
+	state := lunState{}
+	var err error
+	if state.file, err = read(mountDevice); err != nil {
+		return state, err
+	}
+	if state.readOnly, err = read(roFlag); err != nil {
+		return state, err
+	}
+	if state.cdrom, err = read(cdromFlag); err != nil {
+		return state, err
+	}
+	if state.inquiry, err = read(inquiryString); err != nil {
+		return state, err
+	}
+	return state, nil
+}
+
+func writeLUNState(state lunState) error {
+	if err := os.WriteFile(mountDevice, []byte("\n"), 0o666); err != nil {
+		return fmt.Errorf("detach USB media: %w", err)
+	}
+	if err := os.WriteFile(roFlag, []byte(state.readOnly), 0o666); err != nil {
+		return fmt.Errorf("set ro flag: %w", err)
+	}
+	if err := os.WriteFile(cdromFlag, []byte(state.cdrom), 0o666); err != nil {
+		return fmt.Errorf("set cdrom flag: %w", err)
+	}
+	if err := os.WriteFile(inquiryString, []byte(state.inquiry), 0o666); err != nil {
+		return fmt.Errorf("set inquiry: %w", err)
+	}
+	if state.file != "" {
+		if err := os.WriteFile(mountDevice, []byte(state.file), 0o666); err != nil {
+			return fmt.Errorf("attach USB media: %w", err)
+		}
+	}
+	return nil
+}
+
+func resetUSBGadget() error {
+	controller, err := usbController()
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(usbGadgetUDC, []byte("\n"), 0o666); err != nil {
+		return fmt.Errorf("unbind USB gadget: %w", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	return bindUSBGadget(controller)
+}
+
+func ensureUSBGadgetBound() error {
+	data, err := os.ReadFile(usbGadgetUDC)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(data)) != "" {
+		return nil
+	}
+	controller, err := usbController()
+	if err != nil {
+		return err
+	}
+	return bindUSBGadget(controller)
+}
+
+func usbController() (string, error) {
+	if data, err := os.ReadFile(usbGadgetUDC); err == nil {
+		if controller := strings.TrimSpace(string(data)); controller != "" {
+			return controller, nil
+		}
+	}
+	controllers, err := os.ReadDir(usbUDCClass)
+	if err != nil {
+		return "", fmt.Errorf("list USB controllers: %w", err)
+	}
+	if len(controllers) == 0 {
+		return "", fmt.Errorf("no USB device controller is available")
+	}
+	return controllers[0].Name(), nil
+}
+
+func bindUSBGadget(controller string) error {
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		if err := os.WriteFile(usbGadgetUDC, []byte(controller), 0o666); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return nil
+	return fmt.Errorf("bind USB gadget to %s: %w", controller, lastErr)
 }
 
 func (s *Service) GetMountedImage(c *gin.Context) {
