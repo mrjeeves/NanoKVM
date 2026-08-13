@@ -5,6 +5,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"sync"
 	"testing"
 )
@@ -14,6 +15,73 @@ type memoryRangeProvider struct {
 	done  chan struct{}
 	mu    sync.Mutex
 	reads map[int64]int
+}
+
+func TestPrimeBootMediaFetchesElToritoBootImages(t *testing.T) {
+	data := make([]byte, remoteChunkSize*24)
+	descriptor := data[17*isoSectorSize : 18*isoSectorSize]
+	descriptor[0] = 0
+	copy(descriptor[1:6], "CD001")
+	copy(descriptor[7:39], "EL TORITO SPECIFICATION")
+	catalogOffset := int64(remoteChunkSize * 4)
+	binary.LittleEndian.PutUint32(descriptor[71:75], uint32(catalogOffset/isoSectorSize))
+
+	catalog := data[catalogOffset : catalogOffset+isoSectorSize]
+	catalog[0], catalog[30], catalog[31] = 1, 0x55, 0xaa
+	catalog[32] = 0x88
+	binary.LittleEndian.PutUint16(catalog[38:40], 4)
+	biosOffset := int64(remoteChunkSize * 6)
+	binary.LittleEndian.PutUint32(catalog[40:44], uint32(biosOffset/isoSectorSize))
+	catalog[64], catalog[65] = 0x91, 0xef
+	binary.LittleEndian.PutUint16(catalog[66:68], 1)
+	catalog[96] = 0x88
+	binary.LittleEndian.PutUint16(catalog[102:104], uint16(remoteChunkSize/diskSectorSize))
+	efiOffset := int64(remoteChunkSize * 16)
+	binary.LittleEndian.PutUint32(catalog[104:108], uint32(efiOffset/isoSectorSize))
+
+	provider := newMemoryRangeProvider(data)
+	image := &pagedImage{
+		size: int64(len(data)), chunkSize: remoteChunkSize, cacheDir: t.TempDir(),
+		provider: provider, flights: make(map[int64]*chunkFlight), cached: make(map[int64]uint64),
+	}
+	if err := image.primeBootMedia(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	for _, offset := range []int64{catalogOffset, biosOffset, efiOffset} {
+		if provider.reads[offset] == 0 {
+			t.Fatalf("boot-critical chunk at %d was not fetched", offset)
+		}
+	}
+}
+
+func TestPrimeBootMediaFetchesGPTESP(t *testing.T) {
+	data := make([]byte, remoteChunkSize*10)
+	header := data[diskSectorSize : 2*diskSectorSize]
+	copy(header[:8], "EFI PART")
+	binary.LittleEndian.PutUint64(header[72:80], 2)
+	binary.LittleEndian.PutUint32(header[80:84], 1)
+	binary.LittleEndian.PutUint32(header[84:88], 128)
+	entry := data[2*diskSectorSize : 2*diskSectorSize+128]
+	copy(entry[:16], efiSystemPartitionGUID)
+	espOffset := int64(remoteChunkSize * 5)
+	binary.LittleEndian.PutUint64(entry[32:40], uint64(espOffset/diskSectorSize))
+	binary.LittleEndian.PutUint64(entry[40:48], uint64(espOffset/diskSectorSize+31))
+
+	provider := newMemoryRangeProvider(data)
+	image := &pagedImage{
+		size: int64(len(data)), chunkSize: remoteChunkSize, cacheDir: t.TempDir(),
+		provider: provider, flights: make(map[int64]*chunkFlight), cached: make(map[int64]uint64),
+	}
+	if err := image.primeBootMedia(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	if provider.reads[espOffset] == 0 {
+		t.Fatalf("EFI system partition chunk at %d was not fetched", espOffset)
+	}
 }
 
 func newMemoryRangeProvider(data []byte) *memoryRangeProvider {
