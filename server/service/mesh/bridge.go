@@ -1323,7 +1323,37 @@ func (b *Bridge) networkAdd(cfg map[string]interface{}) error {
 	if ctl == nil {
 		return fmt.Errorf("network_add: bridge not connected")
 	}
-	return ctl.NetworkAdd(cfg)
+	if err := ctl.NetworkAdd(cfg); err != nil {
+		// MyOwnMesh persists joined networks and restores them before this
+		// process reconnects. network_add deliberately rejects that duplicate,
+		// but a new bridge event stream must still re-subscribe its channels.
+		// Only absorb the refusal after the daemon proves that this exact local
+		// config id already names this exact wire network; a real id collision
+		// must remain visible.
+		configID, _ := cfg["id"].(string)
+		networkID, _ := cfg["network_id"].(string)
+		if configID == "" || networkID == "" {
+			return err
+		}
+		networks, listErr := ctl.NetworksList()
+		if listErr != nil {
+			return err
+		}
+		for _, network := range networks {
+			if network.ConfigID != configID || network.NetworkID != networkID {
+				continue
+			}
+			// Match AllMyStuff's duplicate-join healing: push the current
+			// mutable config over the restored copy, but do not turn a harmless
+			// older-daemon update failure back into a failed rejoin.
+			if updateErr := ctl.NetworkUpdate(cfg); updateErr != nil {
+				log.Debugf("mesh: refresh restored network %s: %s", networkID, updateErr)
+			}
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // networkRemove leaves a network, purging its persisted state — every leave

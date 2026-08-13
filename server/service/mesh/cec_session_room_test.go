@@ -284,6 +284,54 @@ func TestCecResidenceIsRedoneOnEachDaemonConnection(t *testing.T) {
 	}
 }
 
+// MyOwnMesh restores persisted rooms before the KVM server reconnects. Its
+// network_add is intentionally not idempotent, so the bridge must recognise an
+// exact config-id/network-id match as the room already being ready, refresh its
+// mutable config, and continue with the new event stream's subscriptions. This
+// is the field failure that surfaced as "cec-support-clients is already in use"
+// when a user tried to raise the KVM's hand after a restart.
+func TestRaiseHandReusesDaemonRestoredCecRooms(t *testing.T) {
+	f := startFakeDaemon(t)
+	b := cecBridge(t, f)
+	room := b.cecSessionNetworkID()
+
+	f.respondWith("network_add", `{"ok":false,"error":"config id already in use"}`)
+	f.respondWith("networks_list", networksListLine(CecHelpNetworkID, room, CecAskNetworkID))
+
+	if err := b.RaiseHand(); err != nil {
+		t.Fatalf("RaiseHand with restored rooms: %v", err)
+	}
+	if !b.HelpAsking() {
+		t.Fatal("restored asking-room join did not raise the hand")
+	}
+	planes := subscribedChannels(f)[room]
+	for _, ch := range []string{ChannelPresence, ChannelControl, ChannelMedia, CecChannelControl} {
+		if !planes[ch] {
+			t.Errorf("channel %q not re-subscribed on restored room %s; got %v", ch, room, planes)
+		}
+	}
+	if got := len(f.requests("network_update")); got != 3 {
+		t.Errorf("restored CEC rooms refreshed %d times, want 3", got)
+	}
+}
+
+// A duplicate is harmless only when both daemon keys identify the requested
+// room. Sharing the wire network under some other local config is a genuine
+// collision and must keep failing instead of being mistaken for a restart.
+func TestNetworkAddKeepsRealCollision(t *testing.T) {
+	f := startFakeDaemon(t)
+	b := cecBridge(t, f)
+	f.respondWith("network_add", `{"ok":false,"error":"network id already joined under a different config"}`)
+	f.respondWith("networks_list", `{"ok":true,"data":{"networks":[{"config_id":"some-other-config","network_id":"cecsupport-clients"}]}}`)
+
+	if err := b.networkAdd(cecHelpNetworkConfig()); err == nil {
+		t.Fatal("different-config collision was treated as an idempotent rejoin")
+	}
+	if got := len(f.requests("network_update")); got != 0 {
+		t.Fatalf("different-config collision attempted %d network updates, want 0", got)
+	}
+}
+
 // An unclaimed device sheds every mesh it doesn't recognise, which is what
 // makes an interrupted unclaim converge. The CEC rooms are not claim state:
 // they are how a customer reaches a technician, which an unclaimed device needs

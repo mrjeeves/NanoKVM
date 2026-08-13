@@ -400,6 +400,15 @@ func (s *Socket) NetworkAdd(config map[string]interface{}) error {
 	return err
 }
 
+// NetworkUpdate refreshes an already-joined network's mutable config in
+// place. The daemon may restart the transport when transport-defining fields
+// changed; the CEC rejoin path only uses this after verifying the same config
+// id and network id are already resident.
+func (s *Socket) NetworkUpdate(config map[string]interface{}) error {
+	_, err := s.request(request{"op": "network_update", "config": config})
+	return err
+}
+
 // NetworkRemove leaves a network. purge additionally deletes the network's
 // persisted governance state + roster — a genuine forget (leaving a fleet or
 // walking off a mesh for good), not just unloading it for this run. Idempotent
