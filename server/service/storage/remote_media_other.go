@@ -11,6 +11,8 @@ import (
 
 type remoteMediaManager struct{}
 
+func recoverUSBAtStartup() {}
+
 func newRemoteMediaManager() *remoteMediaManager { return &remoteMediaManager{} }
 
 func (m *remoteMediaManager) replaceActive(proto.MountImageReq) (bool, error) {

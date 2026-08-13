@@ -5,5 +5,6 @@ type Service struct {
 }
 
 func NewService() *Service {
+	recoverUSBAtStartup()
 	return &Service{remote: newRemoteMediaManager()}
 }

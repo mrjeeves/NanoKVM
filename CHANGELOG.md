@@ -18,8 +18,9 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
   error, UDC rebinding is retried, and keyboard/mouse handles are reopened only
   after the composite gadget is live. Unmounting remote media returns to the
   validated `/data/usbdisk.img` instead of exporting the raw `/data` partition.
-  Server restarts also detach dead FUSE mounts left by an interrupted stream, so
-  the next remote-media session can start normally.
+  Server startup also rebinds a blank UDC and ejects dead FUSE media left by an
+  interrupted stream, so installing this update repairs a KVM that an older
+  build already left without USB.
 
 - **The USB drive comes formatted, named "CEC KVM", and carrying our icon.** It
   is built in CI now (`support/usbdisk/`) and shipped in the release bundle,
