@@ -29,6 +29,13 @@ const (
 	virtualMediaMetadata = "/data/.allmystuff-virtual-media.json"
 	usbGadgetUDC         = "/sys/kernel/config/usb_gadget/g0/UDC"
 	usbUDCClass          = "/sys/class/udc"
+	usbOTGRole           = "/proc/cviusb/otg_role"
+)
+
+var (
+	usbReadFile  = os.ReadFile
+	usbWriteFile = os.WriteFile
+	usbSleep     = time.Sleep
 )
 
 type lunState struct {
@@ -237,30 +244,58 @@ func resetUSBGadget() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(usbGadgetUDC, []byte("\n"), 0o666); err != nil {
+	if err := usbWriteFile(usbGadgetUDC, []byte("\n"), 0o666); err != nil {
 		return fmt.Errorf("unbind USB gadget: %w", err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	if err := switchUSBToDeviceRole(); err != nil {
+		return err
+	}
+	usbSleep(100 * time.Millisecond)
 	return bindUSBGadget(controller)
 }
 
 func ensureUSBGadgetBound() error {
-	data, err := os.ReadFile(usbGadgetUDC)
+	data, err := usbReadFile(usbGadgetUDC)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(data)) != "" {
-		return nil
-	}
+	boundController := strings.TrimSpace(string(data))
 	controller, err := usbController()
 	if err != nil {
 		return err
 	}
+	if boundController != "" {
+		peripheral, readErr := usbReadFile(filepath.Join(usbUDCClass, controller, "is_a_peripheral"))
+		if readErr != nil {
+			return fmt.Errorf("read USB controller mode: %w", readErr)
+		}
+		if strings.TrimSpace(string(peripheral)) == "1" {
+			return nil
+		}
+		// A controller name in UDC only means configfs considers the gadget
+		// bound. The CVI controller can still be in host mode, where the host
+		// sees no keyboard, mouse, network, or storage functions. Never change
+		// otg_role while bound: that transition can wedge the controller.
+		if err := usbWriteFile(usbGadgetUDC, []byte("\n"), 0o666); err != nil {
+			return fmt.Errorf("unbind USB gadget before changing role: %w", err)
+		}
+	}
+	if err := switchUSBToDeviceRole(); err != nil {
+		return err
+	}
+	usbSleep(100 * time.Millisecond)
 	return bindUSBGadget(controller)
 }
 
+func switchUSBToDeviceRole() error {
+	if err := usbWriteFile(usbOTGRole, []byte("device\n"), 0o666); err != nil {
+		return fmt.Errorf("switch USB controller to device role: %w", err)
+	}
+	return nil
+}
+
 func usbController() (string, error) {
-	if data, err := os.ReadFile(usbGadgetUDC); err == nil {
+	if data, err := usbReadFile(usbGadgetUDC); err == nil {
 		if controller := strings.TrimSpace(string(data)); controller != "" {
 			return controller, nil
 		}
@@ -278,12 +313,12 @@ func usbController() (string, error) {
 func bindUSBGadget(controller string) error {
 	var lastErr error
 	for attempt := 0; attempt < 10; attempt++ {
-		if err := os.WriteFile(usbGadgetUDC, []byte(controller), 0o666); err == nil {
+		if err := usbWriteFile(usbGadgetUDC, []byte(controller), 0o666); err == nil {
 			return nil
 		} else {
 			lastErr = err
 		}
-		time.Sleep(100 * time.Millisecond)
+		usbSleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("bind USB gadget to %s: %w", controller, lastErr)
 }

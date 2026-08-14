@@ -189,8 +189,11 @@ start_usb_dev(){
             fi
     fi
 
-    ls /sys/class/udc/ | cat > UDC
+    # The CVI controller must be in peripheral mode before configfs binds the
+    # gadget. Reversing these writes can leave UDC populated but not attached.
     echo device > /proc/cviusb/otg_role
+    sleep 1
+    ls /sys/class/udc/ | cat > UDC
 }
 
 start_usb_host(){
@@ -200,6 +203,7 @@ start_usb_host(){
 
 restart_usb_dev(){
     echo > /sys/kernel/config/usb_gadget/g0/UDC
+    echo device > /proc/cviusb/otg_role
     sleep 1
     ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC
     echo "USB Restart OK!"
