@@ -37,6 +37,9 @@ const (
 var (
 	mountNetworkCommands = []string{
 		"touch /boot/usb.ncm",
+		// S03usbdev stop disconnects configfs but deliberately remains in USB
+		// device mode. This port is physically connected to another host; it
+		// must never enter host mode while the composite is being rebuilt.
 		"/etc/init.d/S03usbdev stop",
 		"/etc/init.d/S03usbdev start",
 		// Hand the tethered host an address. Without this the gadget comes up
@@ -229,11 +232,11 @@ func EnsureUsbNetworkForClaim(claimed bool, stateDir string) {
 		on, _ = isDeviceExist(virtualNetworkRndis)
 	}
 	if !on {
-		// Write the flag ONLY. S03usbdev's "stop" is start_usb_host — it
-		// unbinds the UDC and flips the OTG role, and deliberately leaves the
-		// configfs tree standing. So a "stop; start" against a running gadget
-		// doesn't rebuild it: every mkdir fails File exists, every descriptor
-		// write fails Resource busy, and the composite is mutated in place
+		// Write the flag ONLY. S03usbdev's "stop" unbinds the UDC and
+		// deliberately leaves the configfs tree standing. So a "stop; start"
+		// against a running gadget doesn't rebuild it: every mkdir fails File
+		// exists, every descriptor write fails Resource busy, and the composite
+		// is mutated in place
 		// under a host that is actively using it. Doing that here took the
 		// keyboard and mouse out on a live device — breaking the KVM's whole
 		// reason for existing to enable a convenience.

@@ -196,9 +196,14 @@ start_usb_dev(){
     ls /sys/class/udc/ | cat > UDC
 }
 
-start_usb_host(){
-    echo '' > /sys/kernel/config/usb_gadget/g0/UDC
-    echo host > /proc/cviusb/otg_role
+stop_usb_dev(){
+    # `stop` is used while recomposing the gadget (adding/removing network or
+    # storage functions). The cable is still connected to a computer, so this
+    # must only disconnect the gadget. Switching the OTG controller to host
+    # mode here puts two USB hosts on the same cable and can strand the PHY and
+    # every HID function after virtual-media operations.
+    echo > /sys/kernel/config/usb_gadget/g0/UDC
+    echo device > /proc/cviusb/otg_role
 }
 
 restart_usb_dev(){
@@ -217,17 +222,21 @@ case "$1" in
     restart_usb_dev
   ;;
   stop)
-    start_usb_host
+    stop_usb_dev
   ;;
   stop_start)
-    start_usb_host
+    stop_usb_dev
     start_usb_dev
   ;;
    restart_phy)
+    # Disconnect configfs before removing its controller. Recreate the UDC in
+    # peripheral mode only; never drive VBUS toward the attached computer.
+    stop_usb_dev
     echo "4340000.usb" > /sys/bus/platform/drivers/dwc2/unbind
     sleep 1
     echo "4340000.usb" > /sys/bus/platform/drivers/dwc2/bind
-    start_usb_host
-    start_usb_dev
+    echo device > /proc/cviusb/otg_role
+    sleep 1
+    ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC
   ;;
 esac

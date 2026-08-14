@@ -58,6 +58,40 @@ func TestUSBInitScriptSelectsDeviceRoleBeforeBinding(t *testing.T) {
 			t.Fatalf("%s must select device role before binding UDC", name)
 		}
 	}
-	assertOrder("start_usb_dev", "start_usb_dev(){", "start_usb_host(){")
+	assertOrder("start_usb_dev", "start_usb_dev(){", "stop_usb_dev(){")
 	assertOrder("restart_usb_dev", "restart_usb_dev(){", "case \"$1\" in")
+}
+
+func TestUSBInitScriptNeverEntersHostModeForGadgetLifecycle(t *testing.T) {
+	script, err := os.ReadFile("../../../kvmapp/system/init.d/S03usbdev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	if strings.Contains(text, "echo host > /proc/cviusb/otg_role") {
+		t.Fatal("gadget lifecycle must not switch the KVM port to host mode while attached to a computer")
+	}
+
+	stop := strings.Index(text, "stop_usb_dev(){")
+	restart := strings.Index(text, "restart_usb_dev(){")
+	if stop < 0 || restart < 0 || stop > restart {
+		t.Fatal("could not locate stop_usb_dev")
+	}
+	stopBody := text[stop:restart]
+	unbind := strings.Index(stopBody, "echo > /sys/kernel/config/usb_gadget/g0/UDC")
+	device := strings.Index(stopBody, "echo device > /proc/cviusb/otg_role")
+	if unbind < 0 || device < 0 || unbind > device {
+		t.Fatal("stop_usb_dev must unbind configfs before reaffirming device role")
+	}
+
+	restartPHY := strings.Index(text, "restart_phy)")
+	if restartPHY < 0 {
+		t.Fatal("could not locate restart_phy")
+	}
+	restartBody := text[restartPHY:]
+	stopCall := strings.Index(restartBody, "stop_usb_dev")
+	driverUnbind := strings.Index(restartBody, "/sys/bus/platform/drivers/dwc2/unbind")
+	if stopCall < 0 || driverUnbind < 0 || stopCall > driverUnbind {
+		t.Fatal("restart_phy must disconnect configfs before unbinding the DWC2 controller")
+	}
 }
