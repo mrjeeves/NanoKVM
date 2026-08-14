@@ -8,7 +8,51 @@ import (
 	"encoding/binary"
 	"sync"
 	"testing"
+
+	"NanoKVM-Server/proto"
 )
+
+func TestRecoverUSBAtStartupReplacesDeadRemoteMedia(t *testing.T) {
+	oldRead, oldMount, oldEnsure := startupReadFile, startupMountImage, startupEnsureBound
+	defer func() { startupReadFile, startupMountImage, startupEnsureBound = oldRead, oldMount, oldEnsure }()
+
+	startupReadFile = func(string) ([]byte, error) { return []byte(remoteMediaMount + "/windows.iso\n"), nil }
+	mounted := false
+	startupMountImage = func(req proto.MountImageReq) error {
+		mounted = true
+		if req.File != "" {
+			t.Fatalf("startup replacement file = %q, want default media", req.File)
+		}
+		return nil
+	}
+	startupEnsureBound = func() error {
+		t.Fatal("startup recovery only bound the gadget instead of replacing dead FUSE media")
+		return nil
+	}
+
+	recoverUSBAtStartup()
+	if !mounted {
+		t.Fatal("startup did not replace dead remote media")
+	}
+}
+
+func TestRecoverUSBAtStartupEnsuresGadgetIsBound(t *testing.T) {
+	oldRead, oldMount, oldEnsure := startupReadFile, startupMountImage, startupEnsureBound
+	defer func() { startupReadFile, startupMountImage, startupEnsureBound = oldRead, oldMount, oldEnsure }()
+
+	startupReadFile = func(string) ([]byte, error) { return []byte(kvmDriveImage + "\n"), nil }
+	startupMountImage = func(proto.MountImageReq) error {
+		t.Fatal("healthy local media was replaced at startup")
+		return nil
+	}
+	bound := false
+	startupEnsureBound = func() error { bound = true; return nil }
+
+	recoverUSBAtStartup()
+	if !bound {
+		t.Fatal("startup did not ensure that the USB gadget was bound")
+	}
+}
 
 type memoryRangeProvider struct {
 	data  []byte

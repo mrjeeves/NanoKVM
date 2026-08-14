@@ -43,6 +43,33 @@ type remoteMediaManager struct {
 	active *remoteSession
 }
 
+var (
+	startupReadFile    = os.ReadFile
+	startupMountImage  = mountImage
+	startupEnsureBound = ensureUSBGadgetBound
+)
+
+// recoverUSBAtStartup repairs the two persistent states an interrupted server
+// can leave behind. A blank UDC means every USB function is composed but none
+// is exposed to the host; a LUN under remoteMediaMount belongs to the previous
+// process's now-dead FUSE server. This runs once while the storage service is
+// constructed, so merely installing/restarting a fixed server heals an already
+// broken KVM without waiting for another media request or a device reboot.
+func recoverUSBAtStartup() {
+	current, err := startupReadFile(mountDevice)
+	if err == nil && strings.HasPrefix(strings.TrimSpace(string(current)), remoteMediaMount+string(os.PathSeparator)) {
+		if err := startupMountImage(proto.MountImageReq{}); err != nil {
+			log.Errorf("usb startup recovery: replace stale remote media: %s", err)
+		} else {
+			log.Infof("usb startup recovery: restored the KVM drive after an interrupted remote-media session")
+		}
+		return
+	}
+	if err := startupEnsureBound(); err != nil {
+		log.Errorf("usb startup recovery: %s", err)
+	}
+}
+
 type remoteManifest struct {
 	Session string `json:"session"`
 	Name    string `json:"name"`
