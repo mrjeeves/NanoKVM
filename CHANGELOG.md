@@ -13,6 +13,12 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## Unreleased
 
+- **Server startup no longer resets a healthy USB gadget.** The CVI driver's
+  `is_a_peripheral` file reads `0` on working, host-visible NanoKVMs, so it is
+  not a valid health check. Startup now trusts configfs' populated `UDC`
+  binding and repairs only an actually unbound gadget. This keeps keyboard,
+  mouse, network, and storage enumerated across an app update or restart.
+
 - **A failed or interrupted install-media mount can no longer take down USB.**
   Media changes are transactional now: the prior LUN state is restored on an
   error, UDC rebinding is retried, and keyboard/mouse handles are reopened only

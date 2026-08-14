@@ -2,64 +2,36 @@ package storage
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-func TestEnsureUSBGadgetRepairsBoundControllerInHostMode(t *testing.T) {
-	oldRead, oldWrite, oldSleep := usbReadFile, usbWriteFile, usbSleep
-	defer func() { usbReadFile, usbWriteFile, usbSleep = oldRead, oldWrite, oldSleep }()
-
-	usbReadFile = func(path string) ([]byte, error) {
-		switch path {
-		case usbGadgetUDC:
-			return []byte("4340000.usb\n"), nil
-		case filepath.Join(usbUDCClass, "4340000.usb", "is_a_peripheral"):
-			return []byte("0\n"), nil
-		default:
-			t.Fatalf("unexpected read %q", path)
-			return nil, nil
-		}
-	}
-	var writes []string
-	usbWriteFile = func(path string, data []byte, _ os.FileMode) error {
-		writes = append(writes, path+"="+strings.TrimSpace(string(data)))
-		return nil
-	}
-	usbSleep = func(time.Duration) {}
-
-	if err := ensureUSBGadgetBound(); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		usbGadgetUDC + "=",
-		usbOTGRole + "=device",
-		usbGadgetUDC + "=4340000.usb",
-	}
-	if strings.Join(writes, "|") != strings.Join(want, "|") {
-		t.Fatalf("USB recovery writes = %q, want safe order %q", writes, want)
-	}
-}
-
-func TestEnsureUSBGadgetLeavesHealthyPeripheralBound(t *testing.T) {
+func TestEnsureUSBGadgetLeavesBoundControllerAloneWhenPeripheralFlagIsZero(t *testing.T) {
 	oldRead, oldWrite := usbReadFile, usbWriteFile
 	defer func() { usbReadFile, usbWriteFile = oldRead, oldWrite }()
 
+	peripheralFlagRead := false
 	usbReadFile = func(path string) ([]byte, error) {
 		if path == usbGadgetUDC {
 			return []byte("4340000.usb\n"), nil
 		}
-		return []byte("1\n"), nil
+		if strings.HasSuffix(path, "is_a_peripheral") {
+			peripheralFlagRead = true
+			return []byte("0\n"), nil
+		}
+		t.Fatalf("unexpected USB health read %q", path)
+		return nil, nil
 	}
 	usbWriteFile = func(string, []byte, os.FileMode) error {
-		t.Fatal("healthy USB gadget was modified")
+		t.Fatal("bound USB gadget was modified")
 		return nil
 	}
 
 	if err := ensureUSBGadgetBound(); err != nil {
 		t.Fatal(err)
+	}
+	if peripheralFlagRead {
+		t.Fatal("bound gadget health consulted the unreliable is_a_peripheral flag")
 	}
 }
 

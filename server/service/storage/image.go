@@ -260,25 +260,17 @@ func ensureUSBGadgetBound() error {
 		return err
 	}
 	boundController := strings.TrimSpace(string(data))
+	// UDC is configfs' authoritative binding state. On the CVI controller,
+	// is_a_peripheral reports 0 on healthy, host-visible NanoKVMs as well, so it
+	// cannot be used as a role/health signal. Resetting a gadget because of that
+	// value disconnects every composed function (HID, network, and storage) at
+	// each server start and can leave the controller unenumerated.
+	if boundController != "" {
+		return nil
+	}
 	controller, err := usbController()
 	if err != nil {
 		return err
-	}
-	if boundController != "" {
-		peripheral, readErr := usbReadFile(filepath.Join(usbUDCClass, controller, "is_a_peripheral"))
-		if readErr != nil {
-			return fmt.Errorf("read USB controller mode: %w", readErr)
-		}
-		if strings.TrimSpace(string(peripheral)) == "1" {
-			return nil
-		}
-		// A controller name in UDC only means configfs considers the gadget
-		// bound. The CVI controller can still be in host mode, where the host
-		// sees no keyboard, mouse, network, or storage functions. Never change
-		// otg_role while bound: that transition can wedge the controller.
-		if err := usbWriteFile(usbGadgetUDC, []byte("\n"), 0o666); err != nil {
-			return fmt.Errorf("unbind USB gadget before changing role: %w", err)
-		}
 	}
 	if err := switchUSBToDeviceRole(); err != nil {
 		return err
