@@ -13,6 +13,14 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## Unreleased
 
+- **Virtual-device and install-media changes no longer switch the KVM's USB
+  port into host mode while it is connected to a computer.** `S03usbdev stop`
+  is the live gadget-recomposition path, not an instruction to make the KVM a
+  USB host. It now disconnects configfs while remaining in peripheral mode,
+  and PHY recovery disconnects the gadget before resetting DWC2. This prevents
+  disk/network toggles and recovery from putting two USB hosts on one cable and
+  stranding keyboard, mouse, network, and media together.
+
 - **Server startup no longer resets a healthy USB gadget.** The CVI driver's
   `is_a_peripheral` file reads `0` on working, host-visible NanoKVMs, so it is
   not a valid health check. Startup now trusts configfs' populated `UDC`
