@@ -200,8 +200,9 @@ stop_usb_dev(){
     # `stop` is used while recomposing the gadget (adding/removing network or
     # storage functions). The cable is still connected to a computer, so this
     # must only disconnect the gadget. Switching the OTG controller to host
-    # mode here puts two USB hosts on the same cable and can strand the PHY and
-    # every HID function after virtual-media operations.
+    # mode here applies host signaling and termination to a data pair wired to
+    # another host and can strand every HID function after virtual-media
+    # operations.
     echo > /sys/kernel/config/usb_gadget/g0/UDC
     echo device > /proc/cviusb/otg_role
 }
@@ -230,7 +231,8 @@ case "$1" in
   ;;
    restart_phy)
     # Disconnect configfs before removing its controller. Recreate the UDC in
-    # peripheral mode only; never drive VBUS toward the attached computer.
+    # peripheral mode only; never apply host signaling toward the attached
+    # computer.
     stop_usb_dev
     echo "4340000.usb" > /sys/bus/platform/drivers/dwc2/unbind
     sleep 1
