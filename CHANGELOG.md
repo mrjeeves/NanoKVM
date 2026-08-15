@@ -18,8 +18,9 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
   is the live gadget-recomposition path, not an instruction to make the KVM a
   USB host. It now disconnects configfs while remaining in peripheral mode,
   and PHY recovery disconnects the gadget before resetting DWC2. This prevents
-  disk/network toggles and recovery from putting two USB hosts on one cable and
-  stranding keyboard, mouse, network, and media together.
+  disk/network toggles and recovery from applying host signaling and
+  termination to a port physically wired to another host, which can strand
+  keyboard, mouse, network, and media together.
 
 - **Server startup no longer resets a healthy USB gadget.** The CVI driver's
   `is_a_peripheral` file reads `0` on working, host-visible NanoKVMs, so it is
