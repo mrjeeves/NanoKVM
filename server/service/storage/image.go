@@ -128,6 +128,15 @@ func mountImage(req proto.MountImageReq) (retErr error) {
 	defer imageMountMu.Unlock()
 	hidNeedsRecovery := false
 
+	// This function unbinds and rebinds the UDC as a matter of course. Tell the
+	// watchdog, or the "not attached" it sees mid-mount is indistinguishable
+	// from the dead link it exists to repair — and it would recover a gadget
+	// that is being deliberately rebuilt underneath it. Marked again on the way
+	// out, so the settle window covers the re-enumeration too, not just the
+	// teardown.
+	noteUSBGadgetMutated()
+	defer noteUSBGadgetMutated()
+
 	previous, err := readLUNState()
 	if err != nil {
 		return fmt.Errorf("read current USB media state: %w", err)

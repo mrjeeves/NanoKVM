@@ -53,7 +53,11 @@ func TestUSBInitScriptSelectsDeviceRoleBeforeBinding(t *testing.T) {
 		}
 		body := text[start : start+len(block)+end]
 		role := strings.Index(body, "echo device > /proc/cviusb/otg_role")
-		bind := strings.Index(body, "ls /sys/class/udc/")
+		// Binding goes through bind_udc now — the raw `ls ... > UDC` it
+		// replaced had no read-back and no retry. The ordering invariant is
+		// unchanged: role first, or the UDC can end up populated but not
+		// attached.
+		bind := strings.Index(body, "bind_udc ")
 		if role < 0 || bind < 0 || role > bind {
 			t.Fatalf("%s must select device role before binding UDC", name)
 		}
@@ -93,5 +97,38 @@ func TestUSBInitScriptNeverEntersHostModeForGadgetLifecycle(t *testing.T) {
 	driverUnbind := strings.Index(restartBody, "/sys/bus/platform/drivers/dwc2/unbind")
 	if stopCall < 0 || driverUnbind < 0 || stopCall > driverUnbind {
 		t.Fatal("restart_phy must disconnect configfs before unbinding the DWC2 controller")
+	}
+}
+
+// bind_udc's BEHAVIOUR is covered by usb_bind_script_test.go, which sources the
+// function and runs it against a fake sysfs — including the case that matters,
+// a write that reports success and does not stick. Asserting on the loop's text
+// here as well only pinned an implementation detail, and broke the moment the
+// retry count became configurable so the executable test could drive it.
+
+// stop_start could not do what its name promised: `stop` leaves the configfs
+// tree standing, so the `start` after it rebuilt nothing and instead mutated a
+// live composite under an attached host, taking keyboard and mouse out. It must
+// not come back, and calling it must fail loudly rather than appear to work.
+func TestUSBInitScriptHasNoStopStart(t *testing.T) {
+	script, err := os.ReadFile("../../../kvmapp/system/init.d/S03usbdev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+
+	idx := strings.Index(text, "stop_start)")
+	if idx < 0 {
+		return // removed outright, which is also fine
+	}
+	body := text[idx:]
+	if end := strings.Index(body, ";;"); end > 0 {
+		body = body[:end]
+	}
+	if strings.Contains(body, "start_usb_dev") {
+		t.Fatal("stop_start still calls start_usb_dev — that mutates a live gadget rather than rebuilding it")
+	}
+	if !strings.Contains(body, "exit") {
+		t.Error("stop_start must fail rather than silently do nothing")
 	}
 }
