@@ -288,6 +288,12 @@ func (h *Hid) writeHID(device hidDevice, data []byte) error {
 
 	if err := writeWithTimeout(file, data, hidWriteTimeout); err != nil {
 		h.closeDeviceNoLock(device)
+		// Record before classifying: recordWriteFault decides for itself what
+		// counts, and it must see the raw error. On a gadget the interesting
+		// one is ESHUTDOWN — the descriptor is fine and the report went
+		// nowhere, because no host is enumerated. Closing and reopening cannot
+		// fix that; only the USB supervisor can, and this is how it finds out.
+		recordWriteFault(err)
 		switch {
 		case errors.Is(err, os.ErrClosed):
 			return fmt.Errorf("hid already closed: %w", err)
@@ -298,6 +304,7 @@ func (h *Hid) writeHID(device hidDevice, data []byte) error {
 		}
 	}
 
+	clearWriteFaults()
 	log.Debugf("write to %s: %v", device.path, data)
 	return nil
 }

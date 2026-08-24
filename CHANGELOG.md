@@ -13,6 +13,55 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## Unreleased
 
+- **The USB gadget is supervised now, not just repaired at startup.** Recovery
+  used to run at exactly two moments — once when the server started, and
+  whenever a media change touched the gadget — so a link that died at any other
+  time stayed dead until somebody restarted the KVM or unplugged the cable.
+  Nothing was watching. A new supervisor samples
+  `/sys/class/udc/<udc>/state` every two seconds, which is the gadget
+  framework's own view of the LINK and which nothing here read before: configfs'
+  `g0/UDC` is a *binding* record and stays populated across a dead link, so the
+  "is UDC non-empty" test everything else used cannot see this failure at all.
+  A link that reads `not attached` past a debounce is rebound; if that doesn't
+  bring it back, `restart_phy` follows.
+
+- **The supervisor is deliberately reluctant, because a healthy KVM in a
+  switched-off computer reads exactly the same as a wedged one.** A link that
+  has been seen working and then dies waits 15 s; one never seen working since
+  boot waits 3 minutes, because that is also what an idle powered-off host looks
+  like. Attempts back off from 30 s to 15 min and reset the moment the link
+  returns, and a media change suppresses the watchdog entirely for 10 s so it
+  can never race the mount path it would otherwise mistake for a fault.
+
+- **Failed keystrokes are evidence now, instead of just log lines.** A write to
+  `/dev/hidg*` fails with `ESHUTDOWN` when the gadget isn't enumerated — the
+  descriptor opens fine and every report goes nowhere — and the entire response
+  was one error line per keystroke. Those failures are counted and exposed to
+  the supervisor, which uses them to resolve the ambiguity above: somebody
+  driving a KVM whose input goes nowhere is not an idle powered-off host, so
+  sustained HID faults collapse the 3-minute wait to 15 seconds. Timeouts and
+  back-pressure are deliberately not counted — a busy host must never have its
+  gadget rebound underneath an interactive user.
+
+- **The boot-time bind checks whether it worked.** `S03usbdev` ended with
+  `sleep 1; ls /sys/class/udc/ | cat > UDC`: one unverified second, one
+  unchecked write, no retry, and no message. If the controller wasn't ready the
+  write failed, the script carried on, and the device finished booting with a
+  fully composed gadget bound to nothing — every function present, `/dev/hidg*`
+  openable, not one byte reaching the host, and no complaint anywhere. It now
+  retries ten times and **reads the UDC back**, because a successful write to
+  configfs is not proof the binding stuck, and it says so loudly when it gives
+  up. The Go side has had this retry loop for a while; the shell path that
+  actually runs at every boot had none.
+
+- **`S03usbdev stop_start` is removed.** It could not do what its name
+  promised: `stop` leaves the configfs tree standing, so the `start` after it
+  built nothing — every `mkdir` failed *File exists*, every descriptor write
+  failed *Resource busy* — and what the caller got was the old composite mutated
+  in place under an attached host. On a live device that took the keyboard and
+  mouse out. Calling it now fails loudly and points at `restart`,
+  `restart_phy`, or the reboot-with-a-flag path, which are the whole vocabulary.
+
 - **MyOwnMesh daemon pinned to v0.3.9** (`.myownmesh-rev`, was `v0.3.3`) — six
   releases of connection work reach the device. TURN now falls back to TCP and
   TLS when a network blocks plain UDP relay, mDNS endpoint dialing backs off

@@ -192,8 +192,51 @@ start_usb_dev(){
     # The CVI controller must be in peripheral mode before configfs binds the
     # gadget. Reversing these writes can leave UDC populated but not attached.
     echo device > /proc/cviusb/otg_role
-    sleep 1
-    ls /sys/class/udc/ | cat > UDC
+    bind_udc /sys/kernel/config/usb_gadget/g0/UDC
+}
+
+# bind_udc — write the controller name into a gadget's UDC and CHECK IT TOOK.
+#
+# What this replaces was `sleep 1; ls /sys/class/udc/ | cat > UDC`: one
+# unverified second, one unchecked write, no retry, no message. If the
+# controller was not ready yet the write failed, the script carried on, and the
+# device finished booting with a fully composed gadget bound to nothing — every
+# function present, /dev/hidg* openable, and not one byte reaching the host.
+# Nothing on the device noticed, because "is UDC populated" was the only health
+# test anything made and this is precisely the case where it is empty.
+#
+# The Go side has had a retry loop around this same write for a while
+# (bindUSBGadget, 10 attempts). The shell path that actually runs at every boot
+# had none. This is that loop, with a read-back, because a successful write to
+# configfs is not proof the binding stuck.
+# UDC_CLASS_DIR is overridable so this function can be exercised off-device
+# against a fake sysfs. It is the real path everywhere else.
+UDC_CLASS_DIR="${UDC_CLASS_DIR:-/sys/class/udc}"
+BIND_UDC_RETRIES="${BIND_UDC_RETRIES:-10}"
+BIND_UDC_DELAY="${BIND_UDC_DELAY:-1}"
+
+bind_udc() {
+    _udc_file="$1"
+    _i=0
+    while [ "$_i" -lt "$BIND_UDC_RETRIES" ]; do
+        _controller=$(ls "$UDC_CLASS_DIR" 2>/dev/null | head -n 1)
+        if [ -n "$_controller" ]; then
+            echo "$_controller" > "$_udc_file" 2>/dev/null
+            # Read back: this is the actual test. The write above can report
+            # success and still leave the gadget unbound.
+            if [ -n "$(cat "$_udc_file" 2>/dev/null)" ]; then
+                [ "$_i" -gt 0 ] && echo "usb: gadget bound to $_controller after $_i retr(ies)"
+                return 0
+            fi
+        fi
+        _i=$((_i + 1))
+        sleep "$BIND_UDC_DELAY"
+    done
+    # Loud on purpose. This is a KVM with no keyboard, mouse or storage, and
+    # the previous silence here is why that arrived as a mystery in the field.
+    echo "usb: FAILED to bind the gadget after $BIND_UDC_RETRIES attempts (controller='${_controller:-none}')" >&2
+    echo "usb: the device has a composed gadget attached to no controller — the host will see nothing" >&2
+    return 1
 }
 
 stop_usb_dev(){
@@ -210,9 +253,12 @@ stop_usb_dev(){
 restart_usb_dev(){
     echo > /sys/kernel/config/usb_gadget/g0/UDC
     echo device > /proc/cviusb/otg_role
-    sleep 1
-    ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC
-    echo "USB Restart OK!"
+    if bind_udc /sys/kernel/config/usb_gadget/g0/UDC; then
+        echo "USB Restart OK!"
+    else
+        echo "USB Restart FAILED" >&2
+        return 1
+    fi
 }
 
 case "$1" in
@@ -226,8 +272,25 @@ case "$1" in
     stop_usb_dev
   ;;
   stop_start)
-    stop_usb_dev
-    start_usb_dev
+    # REMOVED — this never rebuilt the gadget, it corrupted one.
+    #
+    # `stop` unbinds the UDC and deliberately leaves the configfs tree standing,
+    # so the `start` that follows does not build anything: every mkdir fails
+    # "File exists", every descriptor write fails "Resource busy", and what the
+    # caller gets is the OLD composite, mutated in place, under a host actively
+    # using it. On a live device that took the keyboard and mouse out — breaking
+    # the KVM's entire reason for existing.
+    #
+    # There is no in-place rebuild to offer instead. The gadget is composed once
+    # per boot from the flags in /boot, so changing its shape means writing a
+    # flag and rebooting; changing its MEDIA means the LUN file, which the
+    # server does directly. `restart` re-arms what is already composed, and
+    # `restart_phy` goes further. Those are the whole vocabulary.
+    echo "S03usbdev: stop_start is removed — it mutated a live gadget instead of rebuilding it." >&2
+    echo "  To re-arm the current gadget:      $0 restart" >&2
+    echo "  To reset the controller as well:   $0 restart_phy" >&2
+    echo "  To change which functions exist:   write the /boot flag and reboot." >&2
+    exit 64
   ;;
    restart_phy)
     # Disconnect configfs before removing its controller. Recreate the UDC in
@@ -238,7 +301,9 @@ case "$1" in
     sleep 1
     echo "4340000.usb" > /sys/bus/platform/drivers/dwc2/bind
     echo device > /proc/cviusb/otg_role
-    sleep 1
-    ls /sys/class/udc/ | cat > /sys/kernel/config/usb_gadget/g0/UDC
+    # A rebound controller takes a moment to reappear under /sys/class/udc, so
+    # bind_udc's retry loop matters more here than anywhere: the first look is
+    # expected to come up empty.
+    bind_udc /sys/kernel/config/usb_gadget/g0/UDC
   ;;
 esac
