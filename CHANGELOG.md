@@ -13,6 +13,35 @@ verbatim in [`CHANGELOG.upstream.md`](CHANGELOG.upstream.md).
 
 ## Unreleased
 
+- **MyOwnMesh daemon pinned to v0.3.9** (`.myownmesh-rev`, was `v0.3.3`) — six
+  releases of connection work reach the device. TURN now falls back to TCP and
+  TLS when a network blocks plain UDP relay, mDNS endpoint dialing backs off
+  instead of hammering LAN candidates that never answer, relay admission and
+  reconnect no longer flap a peer between rescued and dropped, and signaling
+  identity is re-verified on recovery. The daemon also silences upstream's
+  stale-TURN `ChannelData` error storm at source — a restarted public relay
+  could otherwise fill `/var/log/myownmesh.log` with it while relaying was
+  perfectly healthy.
+
+- **Remote viewers pick up the new TURN fallbacks with no bridge change.** The
+  venue ICE union (`server/service/mesh/venue.go`) is a deliberately defensive
+  subset of the daemon's config schema, so the added
+  `turn:…?transport=tcp` and `turns:…:5349?transport=tcp` URLs flow straight
+  through `config_show` into the browser's `RTCIceServer` list. The bridge
+  keeps omitting `stun_servers`/`turn_servers` on network add, which is what
+  lets a daemon-side default change like this one apply at all.
+
+- **The daemon's config schema migrates v2 → v3 on first start**, rewriting the
+  built-in reference relay into the three-URL UDP/TCP/TLS set. Automatic and
+  idempotent, and it touches only that exact old default: the LAN-only claim
+  mesh's explicit `turn_servers: []` opt-out and any operator-supplied relay
+  are left alone. **Downgrade caveat:** a v3 config is rejected outright by a
+  daemon older than v0.3.5 (`config version 3 is from a newer build`), and
+  `serve` exits on that error, so installing a KVM build pinned at ≤ v0.3.4
+  after this one leaves the supervised daemon crash-looping until
+  `/data/myownmesh/config.json` is deleted (`S94myownmesh` writes a fresh
+  minimal one, and the bridge re-adds its networks on the next handshake).
+
 - **Virtual-device and install-media changes no longer switch the KVM's USB
   port into host mode while it is connected to a computer.** `S03usbdev stop`
   is the live gadget-recomposition path, not an instruction to make the KVM a
