@@ -114,9 +114,8 @@ type Bridge struct {
 	// persisted help grants so one flow can never shorten or revoke the other.
 	delegatedTechs map[string]time.Time
 
-	// help owns the CEC "hand raise" state (see cec.go): whether this device
-	// currently has its hand up on the cecsupport-clients mesh, and the
-	// re-beacon goroutine. Self-guarded, independent of b.mu.
+	// Pending support requests, the one-request approval window, and room
+	// subscriptions have their own mutex, independent of b.mu.
 	help helpState
 
 	// ---- native screen/HID streaming (Slice 1), all guarded by b.mu --------
@@ -294,14 +293,14 @@ func (b *Bridge) connectAndRun(stop <-chan struct{}) error {
 	b.identityLabel = id.Label
 	b.mu.Unlock()
 	log.Infof("mesh: node id %s, joining mesh %s", id.DeviceID, joining)
-	// Surface the joining mesh where a human standing at the hardware can
-	// read it: the OLED app polls this file into the screen's IP rotation.
-	writeJoiningMeshFile(joining)
+	// The hardware display identifies the device for support. Keep the legacy
+	// display file path so installed screen firmware picks up the number too.
+	writeSupportNumberFile(b.SupportID())
 
 	// Every CEC subscribe below names this event stream's client id, and the
 	// stream is brand new — so the previous connection's "already joined" must
-	// not suppress the work. The hand itself is not touched: `asking` is
-	// operator state and rides through a reconnect.
+	// not suppress the work. Pending consent and the approval window survive
+	// reconnects without extending their deadlines.
 	b.resetHelpRun()
 
 	// 3. Reconcile network membership with the claim state (unclaimed → the
@@ -623,16 +622,12 @@ func (b *Bridge) ensureMemberships() error {
 		}
 	}
 
-	// CEC hygiene: the daemon persists the asking room and auto-rejoins it,
-	// so a crash mid-ask would leave this KVM sitting in the help queue —
-	// reading as a raised hand to every watching technician — with nobody
-	// actually asking. A fresh bridge run starts with the hand down, so a
-	// persisted membership without a live ask is always stale.
-	if present[CecAskNetworkID] && !b.HelpAsking() {
+	// Retire any queue membership persisted by an older firmware.
+	if present[CecAskNetworkID] {
 		if err := b.networkRemove(CecAskNetworkID); err != nil {
 			log.Warnf("mesh: leave stale CEC asking room: %s", err)
 		} else {
-			log.Infof("mesh: left stale CEC asking room (no live ask)")
+			log.Infof("mesh: removed legacy CEC queue membership")
 			delete(present, CecAskNetworkID)
 		}
 	}
@@ -931,9 +926,7 @@ func (b *Bridge) unclaim(from string) {
 	for key := range cecTechs {
 		b.evictTech(key)
 	}
-	if err := b.LowerHand(); err != nil {
-		log.Debugf("mesh: lower hand on reset: %s", err)
-	}
+	b.clearCecRequests()
 
 	b.membershipMu.Lock()
 	defer b.membershipMu.Unlock()
@@ -1448,21 +1441,38 @@ func (b *Bridge) peerLabel(peer string) string {
 	return b.peerLabels[pubkeyPart(peer)]
 }
 
-// joiningMeshFile is where the bridge publishes the joining mesh id for the
-// OLED app — kvm_system polls small files under /kvmapp/kvm, the established
-// Go→C IPC on this device — so the screen can show the name a claimer needs.
-const joiningMeshFile = "/kvmapp/kvm/mesh_name"
+// The file name is an existing Go-to-display ABI: old screen firmware reads
+// mesh_name too, so changing its contents updates already-installed displays.
+const supportNumberFile = "/kvmapp/kvm/mesh_name"
 
-// writeJoiningMeshFile publishes the joining mesh id for the OLED. Best-effort:
-// on a dev host the directory usually doesn't exist, and the screen is the
-// only consumer.
-func writeJoiningMeshFile(id string) {
-	if err := os.MkdirAll(filepath.Dir(joiningMeshFile), 0o755); err != nil {
-		return
+func supportNumberDisplay(number string) string {
+	if len(number) != 9 {
+		return ""
 	}
-	if err := os.WriteFile(joiningMeshFile, []byte(id+"\n"), 0o644); err != nil {
-		log.Debugf("mesh: write %s: %s", joiningMeshFile, err)
+	for _, digit := range number {
+		if digit < '0' || digit > '9' {
+			return ""
+		}
 	}
+	return number[:3] + " " + number[3:6] + " " + number[6:]
+}
+
+// Publish atomically so the screen cannot read a partly written number.
+func writeSupportNumberFile(number string) {
+	if err := publishSupportNumber(supportNumberFile, number); err != nil {
+		log.Debugf("mesh: write support number: %s", err)
+	}
+}
+
+func publishSupportNumber(path, number string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, []byte(supportNumberDisplay(number)+"\n"), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
 }
 
 // joinPlanes subscribes the event-stream client to presence/control/media on a
@@ -1528,7 +1538,7 @@ func (b *Bridge) advertiseCapabilities(networkID string) error {
 func (b *Bridge) onChannelInbound(ci ChannelInbound) {
 	switch ci.Channel {
 	case CecChannelControl:
-		// The CEC connect handshake (a technician answering our raised hand).
+		// The CEC connect handshake (a technician requesting access by support number).
 		b.handleCecControl(ci.Network, ci.From, ci.Payload)
 	case ChannelControl:
 		msg, err := DecodeControlMessage(ci.Payload)

@@ -349,18 +349,18 @@ void kvm_update_hdmi_res(void)
 	kvm_sys_state.hdmi_height = atoi((char*)RW_Data);
 }
 
-void kvm_update_mesh_name(void)
+void kvm_update_support_number(void)
 {
 	FILE *fp;
 	int file_size;
 	char RW_Data[32];
 	memset( RW_Data, 0, sizeof( RW_Data ) );
 
-	// mesh name
+	// CEC support number; mesh_name is the legacy Go-to-display file ABI.
 	fp = fopen("/kvmapp/kvm/mesh_name", "r");
 	if(fp == NULL){
-		// missing file -> no mesh name
-		kvm_sys_state.mesh_name[0] = 0;
+		// Missing file: the support number is not available yet.
+		kvm_sys_state.support_number[0] = 0;
 		return;
 	}
 	fseek(fp, 0, SEEK_END);
@@ -378,7 +378,7 @@ void kvm_update_mesh_name(void)
 			break;
 		}
 	}
-	strcpy(kvm_sys_state.mesh_name, RW_Data);
+	strcpy(kvm_sys_state.support_number, RW_Data);
 }
 
 void kvm_update_eth_state(void)

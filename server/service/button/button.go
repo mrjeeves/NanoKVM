@@ -1,5 +1,5 @@
 // Package button watches the device's physical user button — the BOOT button on
-// the PCIe NanoKVM, the USR button on the Pro — and drives the CEC hand raise
+// the PCIe NanoKVM, the USR button on the Pro — and drives the CEC support approval
 // from it.
 //
 // The button is an evdev node (default /dev/input/event0) that emits EV_KEY
@@ -7,18 +7,18 @@
 // app) also reads this node and, out of the box, reacts to presses: a short
 // press cycles the OLED, a long press (>=1.5s) toggles a WiFi hotspot, and a
 // very-long press (>=9s) resets the account. To make the button do ONE obvious
-// thing — raise a hand — we take exclusive ownership of the node with EVIOCGRAB
+// thing — approve support — we take exclusive ownership of the node with EVIOCGRAB
 // (Config.Grab), so the firmware stops seeing presses, and this watcher becomes
 // the sole handler:
 //
-//	tap  (< tapMax)     → toggle the CEC hand raise
+//	tap  (< tapMax)     → approve the current or next support request
 //	hold (>= resetHold) → OnFactoryReset (we re-implement the firmware's own
 //	                      hold-to-reset, since the grab took it away)
 //	anything in between → ignored
 //
 // The OLED *display* keeps working (that's a separate firmware thread); only the
 // button's firmware gestures are suppressed. If the grab fails we fall back to
-// co-reading: hand raise still works, but the firmware gestures fire too.
+// co-reading: support approval still works, but the firmware gestures fire too.
 package button
 
 import (
@@ -52,16 +52,16 @@ const (
 // so the button keeps the same feel: a quick tap is a tap, and the familiar
 // long hold still resets.
 const (
-	tapMax        = 1500 * time.Millisecond // <= this on release → hand raise
+	tapMax        = 1500 * time.Millisecond // <= this on release → support approval
 	resetHold     = 9 * time.Second         // >= this on release → factory reset
 	reopenBackoff = 5 * time.Second
 )
 
-// Toggler is the hand-raise action a tap drives. *mesh.Bridge satisfies it
-// (ToggleHand); kept as an interface so this package doesn't import mesh and
+// Approver is the support-approval action a tap drives. *mesh.Bridge satisfies it
+// (AuthorizeSupport); kept as an interface so this package doesn't import mesh and
 // stays trivially testable.
-type Toggler interface {
-	ToggleHand() (raised bool, err error)
+type Approver interface {
+	AuthorizeSupport() error
 }
 
 // Config controls the watcher.
@@ -74,7 +74,7 @@ type Config struct {
 	KeyCode int
 	// Grab takes exclusive ownership of the node (EVIOCGRAB) so the on-device
 	// firmware stops reacting to the button and this watcher becomes its sole
-	// handler. Best-effort: on failure we co-read instead (hand raise still
+	// handler. Best-effort: on failure we co-read instead (support approval still
 	// works; the firmware gestures also still fire).
 	Grab bool
 	// OnFactoryReset, if set, runs when the button is held >= resetHold. Wire it
@@ -85,35 +85,35 @@ type Config struct {
 // Watch starts the button watcher in a background goroutine and returns
 // immediately. It is a no-op when disabled or misconfigured, so callers can
 // invoke it unconditionally.
-func Watch(cfg Config, toggler Toggler) {
+func Watch(cfg Config, approver Approver) {
 	if !cfg.Enabled {
-		log.Info("button: hand-raise button disabled")
+		log.Info("button: support-approval button disabled")
 		return
 	}
 	if cfg.Device == "" {
-		log.Warn("button: hand-raise enabled but no input device configured; not watching")
+		log.Warn("button: support-approval enabled but no input device configured; not watching")
 		return
 	}
-	if toggler == nil {
-		log.Warn("button: no hand-raise handler; not watching")
+	if approver == nil {
+		log.Warn("button: no support-approval handler; not watching")
 		return
 	}
-	go run(cfg, toggler)
+	go run(cfg, approver)
 }
 
 // run reads the evdev node, reopening it with backoff if it disappears (e.g. the
 // input driver comes up after us at boot).
-func run(cfg Config, toggler Toggler) {
-	log.Infof("button: watching %s (tap = hand raise, hold %s = factory reset)", cfg.Device, resetHold)
+func run(cfg Config, approver Approver) {
+	log.Infof("button: watching %s (tap = support approval, hold %s = factory reset)", cfg.Device, resetHold)
 	for {
-		watchOnce(cfg, toggler)
+		watchOnce(cfg, approver)
 		time.Sleep(reopenBackoff)
 	}
 }
 
 // watchOnce opens (and optionally grabs) the device and reads events until an
 // error, then returns so the caller retries after a backoff.
-func watchOnce(cfg Config, toggler Toggler) {
+func watchOnce(cfg Config, approver Approver) {
 	f, err := os.Open(cfg.Device)
 	if err != nil {
 		log.Warnf("button: open %s: %s (will retry)", cfg.Device, err)
@@ -147,13 +147,11 @@ func watchOnce(cfg Config, toggler Toggler) {
 		}
 		switch det.feed(value, time.Now()) {
 		case gestureTap:
-			raised, err := toggler.ToggleHand()
+			err := approver.AuthorizeSupport()
 			if err != nil {
-				log.Errorf("button: hand-raise toggle failed: %s", err)
-			} else if raised {
-				log.Info("button: hand raised")
+				log.Errorf("button: support approval failed: %s", err)
 			} else {
-				log.Info("button: hand lowered")
+				log.Info("button: current or next support request approved")
 			}
 		case gestureReset:
 			if cfg.OnFactoryReset != nil {

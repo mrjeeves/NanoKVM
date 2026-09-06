@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"sync"
@@ -320,7 +321,8 @@ func (h *siteHost) serveHTTP(c *meshConn) {
 	defer h.drop(c.route, c.conn)
 	defer c.Close()
 
-	handler := meshAuthHandler{engine: h.engine}
+	peer, _ := h.routePeer(c.route)
+	handler := meshAuthHandler{engine: h.engine, peer: peer}
 	srv := &http.Server{Handler: handler}
 	// http.Serve consumes the listener; oneShotListener returns c once then
 	// blocks until c closes, at which point Accept returns an error and Serve
@@ -331,12 +333,16 @@ func (h *siteHost) serveHTTP(c *meshConn) {
 
 // meshAuthHandler wraps the gin engine, marking every request mesh-authenticated
 // so the token middleware passes without a login cookie.
+type meshPeerKey struct{}
+
 type meshAuthHandler struct {
+	peer   string
 	engine *gin.Engine
 }
 
 func (m meshAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = middleware.WithMeshAuth(r)
+	r = r.WithContext(context.WithValue(r.Context(), meshPeerKey{}, m.peer))
 	if !acceptsGzip(r) {
 		m.engine.ServeHTTP(w, r)
 		return

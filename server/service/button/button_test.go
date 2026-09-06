@@ -16,7 +16,7 @@ func press(d *detector, downAt time.Time, hold time.Duration) gesture {
 	return d.feed(valueUp, downAt.Add(hold))
 }
 
-func TestTapRaisesHand(t *testing.T) {
+func TestTapRequestsSupportApproval(t *testing.T) {
 	d := newDetector()
 	t0 := time.Unix(1_000_000, 0)
 	for i, hold := range []time.Duration{10 * time.Millisecond, 200 * time.Millisecond, tapMax} {

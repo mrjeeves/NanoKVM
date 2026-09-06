@@ -372,13 +372,21 @@ func (b *Bridge) handleSiteOffer(network, from string, rc *RouteControl) {
 // goroutine). With no recorded owner the device is unclaimed and curation is
 // refused (claim first).
 func (b *Bridge) senderMayControl(from string) bool {
-	// A technician we auto-approved on the CEC help mesh drives the KVM like an
-	// owner — answering a raised hand is a full support session, by design.
+	// A support grant permits control but cannot mint or extend consent.
 	if b.cecApprovedTech(from) {
 		return true
 	}
 	if b.delegatedApprovedTech(from) {
 		return true
+	}
+	return b.senderMayApproveSupport(from)
+}
+
+// Consent over a mesh tunnel belongs to the owner/fleet, never a temporary
+// technician or attached-computer delegation. Re-evaluate on every mutation.
+func (b *Bridge) senderMayApproveSupport(from string) bool {
+	if from == "" {
+		return false
 	}
 	owner := b.state.Owner()
 	if owner == "" {

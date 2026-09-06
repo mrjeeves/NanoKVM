@@ -531,7 +531,7 @@ void OLED_ShowKVMStreamState(uint8_t kvm_state_s, void* pdata)
 				}
 			}
         break;
-        case KVM_MESH_NAME:
+        case KVM_SUPPORT_NUMBER:
 			if(kvm_hw_ver != 2)
             	OLED_ShowString(10, 3, "                   ", 8);
 			else
@@ -539,35 +539,30 @@ void OLED_ShowKVMStreamState(uint8_t kvm_state_s, void* pdata)
 			if(*(char*)pdata != 0){
 				if(kvm_hw_ver != 2){
 					// cube: 19 chars * 6px = 114px, right-aligned like the IP
-					char mesh_disp[20];
-					strncpy(mesh_disp, (char*)pdata, sizeof(mesh_disp) - 1);
-					mesh_disp[sizeof(mesh_disp) - 1] = 0;
-					OLED_ShowString_AlignRight(AlignRightEND, 3, mesh_disp, 8);
+					char support_disp[20];
+					strncpy(support_disp, (char*)pdata, sizeof(support_disp) - 1);
+					support_disp[sizeof(support_disp) - 1] = 0;
+					OLED_ShowString_AlignRight(AlignRightEND, 3, support_disp, 8);
 				} else {
-					// pcie: drop the constant "cec-kvm-" prefix to fit 63px (15 chars * 4px)
-					char mesh_disp[16];
-					char *mesh_str = (char*)pdata;
-					if(strncmp(mesh_str, "cec-kvm-", 8) == 0) mesh_str += 8;
-					strncpy(mesh_disp, mesh_str, sizeof(mesh_disp) - 1);
-					mesh_disp[sizeof(mesh_disp) - 1] = 0;
-					// The 8x4 font (oled_asc2_0804) covers only ' '..']' and has
-					// no lowercase glyphs. Uppercase a-z, and clamp anything
-					// outside the table's range to '-' so a config-pinned mesh
-					// id containing '_' (a valid network-id char, 0x5F) can't
-					// index past the font array. The derived default is always
-					// [0-9A-Z-], so this only ever fires on a custom pin.
-					for(int i = 0; mesh_disp[i] != 0; i++){
-						if(mesh_disp[i] >= 'a' && mesh_disp[i] <= 'z') mesh_disp[i] -= 'a' - 'A';
-						if(mesh_disp[i] < ' ' || mesh_disp[i] > ']') mesh_disp[i] = '-';
+					// PCIe: the grouped support number is 11 glyphs (44px), beside CEC (12px).
+					char support_disp[16];
+					char *support_str = (char*)pdata;
+					strncpy(support_disp, support_str, sizeof(support_disp) - 1);
+					support_disp[sizeof(support_disp) - 1] = 0;
+					// The small font only covers ' '..']'. Bound every glyph even
+					// if the display file was written by an older or custom server.
+					for(int i = 0; support_disp[i] != 0; i++){
+						if(support_disp[i] >= 'a' && support_disp[i] <= 'z') support_disp[i] -= 'a' - 'A';
+						if(support_disp[i] < ' ' || support_disp[i] > ']') support_disp[i] = '-';
 					}
-					OLED_ShowString(0, 2, "M", 4);
-					OLED_ShowString_AlignRight(AlignRightEND_P, 2, mesh_disp, 4);
+					OLED_ShowString(0, 2, "CEC", 4);
+					OLED_ShowString_AlignRight(AlignRightEND_P, 2, support_disp, 4);
 				}
 			} else {
 				if(kvm_hw_ver != 2)
 					OLED_ShowString_AlignRight(AlignRightEND, 3, "--", 8);
 				else {
-					OLED_ShowString(0, 2, "M", 4);
+					OLED_ShowString(0, 2, "CEC", 4);
 					OLED_ShowString_AlignRight(AlignRightEND_P, 2, "--", 4);
 				}
 			}

@@ -46,9 +46,9 @@ var defaultConfig = &Config{
 		// (the Go zero value; spelled out here for self-documentation).
 		PublicClaims: false,
 		DaemonBin:    "/kvmapp/system/bin/myownmesh",
-		// The BOOT button raises a hand out of the box: it's the device's
+		// The BOOT button approves a support request out of the box: it's the device's
 		// single user button and is already exposed as /dev/input/event0.
-		HandRaise: HandRaise{
+		SupportApproval: SupportApproval{
 			ButtonEnabled: true,
 			InputDevice:   "/dev/input/event0",
 			KeyCode:       0,

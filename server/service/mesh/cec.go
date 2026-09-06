@@ -1,31 +1,8 @@
 package mesh
 
-// CEC "hand raise" (Ask-for-help) support.
-//
-// A KVM raises its hand exactly the way a CEC Support customer does: it lives
-// on the one well-known **Silent** support area (`cecsupport-clients`) and
-// raises its hand by **joining the asking room** (`cecsupport-asking`) — a
-// second Silent mesh whose signaling membership IS the technicians' queue.
-// MyOwnMesh is a mesh signaling system for direct WebRTC peer-to-peer
-// connections, and a Silent room uses only that half: co-present devices see
-// each other's announces, nothing ever connects on its own, and nothing is
-// routed through anything (the only data-path fallback anywhere is WebRTC's
-// own TURN relay when NAT rules out a direct pair). Lowering the hand is
-// leaving the room. A technician answers by dialing this device directly on
-// the standing area; the KVM's own consent/route gating (control.go,
-// native.go) guards any actual session.
-//
-// This replaces the `cec.presence` channel beacons: those rode data channels,
-// which a Silent area rightly never opens on its own — the exact deadlock
-// that once forced the area Open (auto-connecting every customer to every
-// stranger).
-//
-// This is a NEW, additive plane: the KVM's normal presence lives on the
-// AllMyStuff graph (allmystuff-cloud-mesh-v1, see protocol.go), whereas a hand
-// raise rides the CEC plane. The two never mix. Everything here mirrors
-// AllMyStuff's node/src/mesh.rs (cec_ask_help / cec_help_watch),
-// node/src/cec.rs (help_network_config / ask_network_config), and the wire
-// contract in crates/allmystuff-cec-protocol (lib.rs, ids.rs support_id).
+// CEC support-number connections. The appliance stays discoverable and hosts
+// its private session room. A new technician needs an explicit web/app approval
+// or the one-request window armed by the physical button. Grants last 3 hours.
 
 import (
 	"crypto/sha256"
@@ -45,9 +22,7 @@ const (
 	// number resolves to a device), and connected to nobody until a
 	// technician deliberately dials.
 	CecHelpNetworkID = "cecsupport-clients"
-	// CecAskNetworkID is the asking room — the help queue itself
-	// (allmystuff-cec-protocol::ASK_NETWORK_ID). Joined only while the hand
-	// is up; membership is the entire signal.
+	// CecAskNetworkID is retained only to remove legacy queue membership.
 	CecAskNetworkID = "cecsupport-asking"
 	// cecNetworkPrefix prefixes a device's private support room
 	// (allmystuff-cec-protocol CEC_NETWORK_PREFIX).
@@ -60,7 +35,7 @@ const (
 	// (allmystuff-cec-protocol::ApprovalScope::ThreeHours, serialised
 	// internally-tagged as {"kind":"three_hours"}).
 	cecScopeThreeHours = "three_hours"
-	// cecGrantWindow is how long an answered hand-raise authorises a technician
+	// cecGrantWindow is how long explicit approval authorises a technician
 	// for. An appliance has nobody standing at it to tap "that's enough", so the
 	// authorisation has to end by itself — this is the whole reason the grant is
 	// time-boxed rather than the Forever an unattended device would otherwise be
@@ -72,12 +47,12 @@ const (
 	cecGrantSweep = 2 * time.Second
 )
 
-// helpState tracks whether this device currently has its hand up (asking-room
-// membership) and the per-run area bookkeeping. Guarded by its own mutex so a
-// raise/lower never contends with the bridge's membership or presence locks.
+// helpState holds pending consent and per-connection support bookkeeping.
 type helpState struct {
-	mu     sync.Mutex
-	asking bool
+	mu         sync.Mutex
+	pending    map[string]CecSupportRequest
+	denied     map[string]cecDeniedRequest
+	armedUntil time.Time
 	// joined notes that CecOnline has taken residence on THIS daemon
 	// connection (area + session room + their subscribes). Cleared by
 	// resetHelpRun on every reconnect, because the subscribes name an event
@@ -90,55 +65,8 @@ type helpState struct {
 	migrated bool
 }
 
-// RaiseHand puts this device's hand up: it takes residence on the (Silent)
-// support area (once), then **joins the asking room** — whose signaling
-// membership is the entire "I need help" signal every watching technician
-// reads. No beacons, no wires: the engine's own room announce carries the
-// hand. Idempotent — a raise while already asking is a no-op.
-func (b *Bridge) RaiseHand() error {
-	b.help.mu.Lock()
-	defer b.help.mu.Unlock()
-
-	if b.help.asking {
-		return nil
-	}
-	// Idempotent, and a self-heal: bring-up already took residence, but a hand
-	// raised before the first CecOnline (or after a manual mesh removal) still
-	// needs it. Mirrors AllMyStuff's cec_ask_help, which opens the same way.
-	if err := b.cecOnlineLocked(); err != nil {
-		return err
-	}
-	// Join the asking room before committing to "asking", so a dead daemon
-	// surfaces as an error to the caller instead of a silently-raised hand.
-	if err := b.networkAdd(cecAskNetworkConfig()); err != nil {
-		return fmt.Errorf("join asking room: %w", err)
-	}
-
-	b.help.asking = true
-	log.Infof("mesh: CEC hand raised (support id %s)", b.SupportID())
-	return nil
-}
-
-// CecOnline takes this device's standing CEC residence: the discovery area and
-// its own private session room, both as a full participant. Called once per
-// daemon connection, and never a request for help — residency is being
-// reachable for help that was *already* agreed. Mirrors AllMyStuff's
-// node/src/mesh.rs cec_online, which a customer likewise runs at bring-up
-// rather than when raising a hand.
-//
-// Why bring-up and not just RaiseHand. A technician's dial is PINNED
-// (NetworkConnectPeer{pin: true}), so their daemon redials this KVM on every
-// announce for as long as their 3-hour grant lasts — across a reboot, an
-// update, a power blip. The grant survives that (cecAdmit reads it back and
-// re-admits with no human), but until this ran at bring-up the transport did
-// not: the KVM came back with its hand down and therefore outside the very
-// room the technician was still dialing, and the reconnect could never land.
-// Residency also restores dial-by-number, which resolves digits against the
-// area's membership — a rebooted KVM was un-diallable until someone pressed
-// the button on it, which is the one thing a remote customer cannot do.
-//
-// Non-fatal by construction for the caller: CEC is one plane of many, and a
-// support area that won't attach is no reason to fail the whole bridge.
+// CecOnline publishes this number and joins its private session room at
+// bring-up and reconnect. This never authorizes a technician.
 func (b *Bridge) CecOnline() error {
 	b.help.mu.Lock()
 	defer b.help.mu.Unlock()
@@ -168,11 +96,7 @@ func (b *Bridge) cecOnlineLocked() error {
 	if err := b.subscribeCecControl(); err != nil {
 		return fmt.Errorf("subscribe cec control: %w", err)
 	}
-	// And the room a technician actually dials into. Without this a hand goes
-	// up, a technician answers, and their connect Request is sent to a room we
-	// are not in — never delivered, never auto-approved, their session stuck at
-	// "requested" forever. The support area above is discovery only; this is
-	// the transport.
+	// The directory is discovery only; number dials use this private room.
 	if err := b.joinCecSessionRoomLocked(); err != nil {
 		return err
 	}
@@ -182,15 +106,7 @@ func (b *Bridge) cecOnlineLocked() error {
 	return nil
 }
 
-// resetHelpRun clears the per-connection CEC bookkeeping, which is `joined`
-// alone: its subscribes are bound to the event stream's client id, and a
-// reconnect throws that stream away.
-//
-// Deliberately NOT `migrated`. That one heals a room a beacon-era build
-// persisted as `open` by re-creating it, which purges the room — a once-per-
-// process repair, not something to redo every time the daemon socket blips.
-// And NOT `asking`: the hand is the operator's state, so a KVM whose daemon
-// blipped mid-ask comes back with its hand still up.
+// resetHelpRun redoes subscriptions after a daemon connection changes.
 func (b *Bridge) resetHelpRun() {
 	b.help.mu.Lock()
 	b.help.joined = false
@@ -272,48 +188,8 @@ func (b *Bridge) governanceKind(networkID string) string {
 	return kind
 }
 
-// LowerHand takes this device's hand down: it **leaves the asking room**,
-// which removes it from every watching technician's queue at once (the
-// daemon broadcasts a signaling Leave; a crash instead ages out with the
-// room's presence). Idempotent — lowering an already-down hand is a no-op.
-// We do NOT leave the support area; matching AllMyStuff, the node stays a
-// resident so reconnects and the next raise are instant.
-func (b *Bridge) LowerHand() error {
-	b.help.mu.Lock()
-	if !b.help.asking {
-		b.help.mu.Unlock()
-		return nil
-	}
-	b.help.asking = false
-	b.help.mu.Unlock()
-
-	if err := b.networkRemove(CecAskNetworkID); err != nil {
-		return fmt.Errorf("leave asking room: %w", err)
-	}
-	log.Infof("mesh: CEC hand lowered")
-	return nil
-}
-
-// ToggleHand raises the hand if it's down and lowers it if it's up, returning
-// the new raised state. This is the one-shot the physical user button and the
-// web UI both drive.
-func (b *Bridge) ToggleHand() (raised bool, err error) {
-	if b.HelpAsking() {
-		return false, b.LowerHand()
-	}
-	return true, b.RaiseHand()
-}
-
-// HelpAsking reports whether this device currently has its hand up.
-func (b *Bridge) HelpAsking() bool {
-	b.help.mu.Lock()
-	defer b.help.mu.Unlock()
-	return b.help.asking
-}
-
 // SupportID is this device's 9-digit CEC support number (derived from the
-// daemon device id) — the phone-readable fallback a customer reads out when the
-// queue is crowded. Empty until the bridge has a node id.
+// daemon device id) — the number the customer shares with their technician. Empty until the bridge has a node id.
 func (b *Bridge) SupportID() string {
 	b.mu.Lock()
 	nodeID := b.nodeID
@@ -359,50 +235,30 @@ func (b *Bridge) subscribeCecControlOn(networkID string) error {
 // on cec.control. The Rust enums are internally tagged (outer "t", inner
 // "kind"), so both tags plus the union of fields land in one flat struct.
 type cecConnect struct {
-	T         string `json:"t"`
-	Kind      string `json:"kind"`
-	SessionID string `json:"session_id"`
+	T           string `json:"t"`
+	Kind        string `json:"kind"`
+	SessionID   string `json:"session_id"`
+	AgentName   string `json:"agent_name"`
+	WantControl bool   `json:"want_control"`
 }
 
-// handleCecControl processes an inbound cec.control frame. A KVM is an
-// unattended help-seeker: when a technician answers our raised hand with a
-// connect Request, we auto-approve (there's no human here to tap "approve") and
-// remember the technician so their screen/input routes are accepted.
+// handleCecControl accepts requests only on this KVM's support transports.
 func (b *Bridge) handleCecControl(network, from string, payload []byte) {
-	var m cecConnect
-	if err := json.Unmarshal(payload, &m); err != nil {
-		log.Debugf("mesh: bad CEC control from %s: %s", pubkeyPart(from), err)
+	room := b.cecSessionNetworkID()
+	if network != CecHelpNetworkID && (room == "" || network != room) {
 		return
 	}
-	if m.T != "connect" {
+	var m cecConnect
+	if json.Unmarshal(payload, &m) != nil || m.T != "connect" || m.SessionID == "" || len(m.SessionID) > 256 || from == "" {
 		return
 	}
 	switch m.Kind {
 	case "request":
-		// Auto-approve — there's no human here to tap "approve". A NEW technician
-		// is admitted only while we're actually asking for help, so a KVM that
-		// isn't requesting help can't be driven off the open support mesh. An
-		// already-approved technician is always re-acked: its Request retransmits
-		// until the data channel is up, and each beat is our cue to re-send the
-		// (possibly dropped) Approve. The technician ignores the scope.
-		admit, lower := b.cecAdmit(from)
-		if !admit {
-			log.Infof("mesh: CEC connect-request from %s ignored (not asking for help)", pubkeyPart(from))
-			return
-		}
-		if err := b.channelSendTo(network, CecChannelControl, from, cecApprovePayload(m.SessionID)); err != nil {
-			log.Warnf("mesh: CEC auto-approve to %s failed: %s", pubkeyPart(from), err)
-			return
-		}
-		log.Infof("mesh: CEC auto-approved technician %s (session %s)", pubkeyPart(from), m.SessionID)
-		if lower {
-			// Help has arrived — drop out of the queue (available:false),
-			// matching the CEC customer flow.
-			go func() { _ = b.LowerHand() }()
-		}
+		b.receiveCecRequest(network, from, m)
 	case "end":
+		b.cancelCecRequest(from, m.SessionID)
 		b.unapproveTech(from)
-		log.Infof("mesh: CEC session ended by technician %s", pubkeyPart(from))
+		b.evictTech(pubkeyPart(from))
 	}
 }
 
@@ -410,7 +266,7 @@ func (b *Bridge) handleCecControl(network, from string, payload []byte) {
 // shape mirrors the internally-tagged Rust wire form exactly:
 // {"t":"connect","kind":"approve","session_id":…,"scope":{"kind":"three_hours"}}.
 //
-// The scope is what the device actually enforces (see cecAdmit): the technician
+// The scope is what the device actually enforces (see support_requests.go): the technician
 // side treats an Approve as "session active" whatever the scope says, so the
 // deadline is ours to keep, not theirs to honour. Sending ThreeHours rather than
 // Forever keeps the wire honest about the grant we've really made.
@@ -421,32 +277,6 @@ func cecApprovePayload(sessionID string) map[string]interface{} {
 		"session_id": sessionID,
 		"scope":      map[string]interface{}{"kind": cecScopeThreeHours},
 	}
-}
-
-// cecAdmit decides whether to auto-approve a connect Request from `from`, and
-// records a cecGrantWindow authorisation when it does.
-//
-// A technician holding a live grant is always re-admitted (their Request
-// retransmits until the data channel is up, and each beat needs an ack) — but
-// re-admission does NOT extend the deadline, or a technician who stayed
-// connected would hold the device forever by simply not disconnecting. A new
-// technician is admitted only while we're actually asking for help, so an idle
-// KVM can't be driven off the open support mesh; `lower` is true exactly for
-// that first admission — the cue to drop our raised hand.
-func (b *Bridge) cecAdmit(from string) (admit, lower bool) {
-	key := pubkeyPart(from)
-	if _, held := b.state.CecTechExpiry(key); held {
-		return true, false
-	}
-	b.help.mu.Lock()
-	asking := b.help.asking
-	b.help.mu.Unlock()
-	if !asking {
-		return false, false
-	}
-	b.state.GrantCecTech(key, cecGrantWindow)
-	log.Infof("mesh: CEC authorised technician %s for %s", key, cecGrantWindow)
-	return true, true
 }
 
 // unapproveTech forgets a technician when their session ends.
@@ -533,25 +363,19 @@ func (b *Bridge) evictTech(key string) {
 // cecHelpNetworkConfig builds the daemon network config for the standing CEC
 // support area. Mirrors AllMyStuff node/src/cec.rs help_network_config: a
 // **Silent** network — signaling-only presence, no auto-dial, no roster
-// gossip, no topology (there are no connections to shape). `auto_approve`
-// keeps the mesh-level handshake unattended when a technician deliberately
-// dials this device; access stays gated by the KVM's own time-boxed CEC
-// grants (cecAdmit).
+// gossip or data links. Actual transports use the private session room;
+// access requires the KVM's own time-limited consent grant.
 func cecHelpNetworkConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"id":           CecHelpNetworkID,
 		"network_id":   CecHelpNetworkID,
 		"label":        "CEC Support",
 		"kind":         "silent",
-		"auto_approve": true,
+		"auto_approve": false,
 		"signaling":    map[string]interface{}{"strategy": "nostr", "mdns": true},
 	}
 }
 
-// cecAskNetworkConfig builds the daemon network config for the asking room —
-// the help queue itself. Mirrors AllMyStuff node/src/cec.rs
-// ask_network_config: Silent like the area, joined only while the hand is up;
-// membership is the entire signal.
 // cecSessionNetworkID is this device's PRIVATE support room —
 // allmystuff-cec-protocol's network_id_for_device: "cec-" + the 9-digit
 // support number. The support area is discovery only; this is where the
@@ -572,25 +396,14 @@ func (b *Bridge) cecSessionNetworkID() string {
 }
 
 // cecSessionNetworkConfig builds the daemon config for that room. Same shape as
-// the asking room and as node/src/cec.rs session_network_config: silent, so it
+// node/src/cec.rs session_network_config: silent, so it
 // is never gossiped, and auto_approve, because the technician's deliberate dial
-// is what opens the transport — human access is still gated by cecAdmit.
+// is what opens the transport — human access is still gated by explicit approval.
 func (b *Bridge) cecSessionNetworkConfig(id string) map[string]interface{} {
 	return map[string]interface{}{
 		"id":           id,
 		"network_id":   id,
 		"label":        fmt.Sprintf("CEC Support %s", b.SupportID()),
-		"kind":         "silent",
-		"auto_approve": true,
-		"signaling":    map[string]interface{}{"strategy": "nostr", "mdns": true},
-	}
-}
-
-func cecAskNetworkConfig() map[string]interface{} {
-	return map[string]interface{}{
-		"id":           CecAskNetworkID,
-		"network_id":   CecAskNetworkID,
-		"label":        "CEC Support — asking",
 		"kind":         "silent",
 		"auto_approve": true,
 		"signaling":    map[string]interface{}{"strategy": "nostr", "mdns": true},
