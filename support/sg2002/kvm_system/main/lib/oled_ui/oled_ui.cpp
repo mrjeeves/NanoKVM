@@ -139,8 +139,8 @@ int qrencode(char *string)
 
 ip_addr_t show_which_ip(void)
 {
-	uint8_t mesh_exist = (kvm_sys_state.mesh_name[0] != 0)? 1:0;
-	if(mesh_exist == 0){
+	uint8_t support_number_exists = (kvm_sys_state.support_number[0] != 0)? 1:0;
+	if(support_number_exists == 0){
 		if(kvm_sys_state.wifi_state == -2) return ETH_IP;
 		if(kvm_oled_state.eth_state == 3 && kvm_oled_state.wifi_state != 1) return ETH_IP;
 		if(kvm_oled_state.eth_state != 3 && kvm_oled_state.wifi_state == 1) return WiFi_IP;
@@ -154,20 +154,20 @@ ip_addr_t show_which_ip(void)
 			case ETH_IP:
 				if(	(kvm_sys_state.wifi_state == -2) ||
 					(kvm_oled_state.eth_state == 3 && kvm_oled_state.wifi_state != 1)){
-					// skip WiFi (only reachable when mesh_exist)
-					ip_type = MESH_NAME;
+					// skip WiFi (only reachable when support_number_exists)
+					ip_type = SUPPORT_NUMBER;
 				} else {
 					ip_type = WiFi_IP;
 				}
 				break;
 			case WiFi_IP:
-				if(mesh_exist){
-					ip_type = MESH_NAME;
+				if(support_number_exists){
+					ip_type = SUPPORT_NUMBER;
 				} else {
 					ip_type = ETH_IP;
 				}
 				break;
-			case MESH_NAME:
+			case SUPPORT_NUMBER:
 				if(kvm_oled_state.eth_state != 3 && kvm_oled_state.wifi_state == 1){
 					// skip ETH
 					ip_type = WiFi_IP;
@@ -205,12 +205,12 @@ uint8_t ip_changed(ip_addr_t ip_type)
 	return ret;
 }
 
-uint8_t mesh_changed(void)
+uint8_t support_number_changed(void)
 {
 	uint8_t ret = 0;
-	if(strcmp(kvm_sys_state.mesh_name, kvm_oled_state.mesh_name) != 0) ret = 1;
+	if(strcmp(kvm_sys_state.support_number, kvm_oled_state.support_number) != 0) ret = 1;
 	if(ret == 1){
-		memcpy(kvm_oled_state.mesh_name, kvm_sys_state.mesh_name, sizeof(kvm_oled_state.mesh_name));
+		memcpy(kvm_oled_state.support_number, kvm_sys_state.support_number, sizeof(kvm_oled_state.support_number));
 	}
 	return ret;
 }
@@ -306,15 +306,15 @@ void kvm_wifi_state_disp(ip_addr_t _ip_type, uint8_t first_disp)
 	}
 }
 
-void kvm_mesh_name_disp(ip_addr_t _ip_type, uint8_t first_disp)
+void kvm_support_number_disp(ip_addr_t _ip_type, uint8_t first_disp)
 {
 	static ip_addr_t _ip_type_old = NULL_IP;
 	if(	(_ip_type_old != _ip_type) ||
-		first_disp || mesh_changed())
+		first_disp || support_number_changed())
 	{
 		_ip_type_old = _ip_type;
-		if(_ip_type == MESH_NAME)
-			OLED_ShowKVMStreamState(KVM_MESH_NAME, kvm_sys_state.mesh_name);
+		if(_ip_type == SUPPORT_NUMBER)
+			OLED_ShowKVMStreamState(KVM_SUPPORT_NUMBER, kvm_sys_state.support_number);
 	}
 }
 
@@ -421,7 +421,7 @@ void kvm_main_ui_disp(uint8_t first_disp, uint8_t subpage_changed)
 		kvm_main_disp(first_disp || subpage_changed);
 		kvm_eth_state_disp(now_ip_type, first_disp || subpage_changed);
 		kvm_wifi_state_disp(now_ip_type, first_disp || subpage_changed);
-		kvm_mesh_name_disp(now_ip_type, first_disp || subpage_changed);
+		kvm_support_number_disp(now_ip_type, first_disp || subpage_changed);
 		kvm_usb_state_disp(first_disp || subpage_changed);
 		kvm_hdmi_state_disp(first_disp || subpage_changed);
 		kvm_fps_disp(first_disp || subpage_changed);

@@ -8,16 +8,13 @@ import (
 	"time"
 )
 
-// A grant handed out by answering a raised hand runs for cecGrantWindow and is
+// A grant handed out by an explicit approval runs for cecGrantWindow and is
 // written down, so the deadline outlives the process that set it.
 func TestCecGrantIsTimeBoxedAndPersisted(t *testing.T) {
 	home := t.TempDir()
 	b := &Bridge{state: LoadState(home)}
-	b.help.asking = true
+	b.state.GrantCecTech("tech-pub", cecGrantWindow)
 
-	if admit, lower := b.cecAdmit("tech-pub-AB12C"); !admit || !lower {
-		t.Fatalf("admit=%v lower=%v, want true/true", admit, lower)
-	}
 	at, held := b.state.CecTechExpiry("tech-pub")
 	if !held {
 		t.Fatal("an admitted technician should hold a grant")
@@ -41,16 +38,17 @@ func TestCecGrantIsTimeBoxedAndPersisted(t *testing.T) {
 // to prevent.
 func TestCecReadmitDoesNotExtendTheWindow(t *testing.T) {
 	b := &Bridge{state: LoadState("")}
-	b.help.asking = true
+	b.state.GrantCecTech("tech-pub", cecGrantWindow)
 
-	if admit, _ := b.cecAdmit("tech-pub"); !admit {
-		t.Fatal("first admit should succeed while asking")
+	if !b.cecApprovedTech("tech-pub") {
+		t.Fatal("first admit should succeed after explicit approval")
 	}
 	first, _ := b.state.CecTechExpiry("tech-pub")
 
 	for i := 0; i < 3; i++ {
-		if admit, lower := b.cecAdmit("tech-pub"); !admit || lower {
-			t.Fatalf("retransmit %d: admit=%v lower=%v, want true/false", i, admit, lower)
+		b.receiveCecRequest(CecHelpNetworkID, "tech-pub", cecConnect{SessionID: "repeat"})
+		if !b.cecApprovedTech("tech-pub") {
+			t.Fatal("live grant lost")
 		}
 	}
 	if again, _ := b.state.CecTechExpiry("tech-pub"); !again.Equal(first) {
@@ -120,9 +118,9 @@ func TestPruneCecGrantsReportsExpired(t *testing.T) {
 // A technician can be cut off before the deadline — the session-end path.
 func TestUnapproveTechDropsGrantImmediately(t *testing.T) {
 	b := &Bridge{state: LoadState("")}
-	b.help.asking = true
-	if admit, _ := b.cecAdmit("tech-pub"); !admit {
-		t.Fatal("admit should succeed while asking")
+	b.state.GrantCecTech("tech-pub", cecGrantWindow)
+	if !b.cecApprovedTech("tech-pub") {
+		t.Fatal("admit should succeed after explicit approval")
 	}
 	b.unapproveTech("tech-pub-AB12C") // suffixed form, same technician
 	if b.cecApprovedTech("tech-pub") {
@@ -132,10 +130,10 @@ func TestUnapproveTechDropsGrantImmediately(t *testing.T) {
 
 // A grant is only handed out to a device that actually asked for help; an idle
 // KVM can't be driven off the open support mesh.
-func TestCecAdmitRefusesWhenNotAsking(t *testing.T) {
+func TestCecRequestRefusesWithoutApproval(t *testing.T) {
 	b := &Bridge{state: LoadState("")}
-	if admit, _ := b.cecAdmit("stranger"); admit {
-		t.Fatal("must not admit a technician when not asking for help")
+	if b.cecApprovedTech("stranger") {
+		t.Fatal("must not admit a technician without explicit approval")
 	}
 	if _, held := b.state.CecTechExpiry("stranger"); held {
 		t.Fatal("a refused technician must not be left holding a grant")

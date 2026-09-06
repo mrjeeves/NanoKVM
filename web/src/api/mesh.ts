@@ -11,14 +11,17 @@ export function rotateClaimCode() {
   return http.post('/api/mesh/claim/code/rotate');
 }
 
-// get CEC hand-raise status (whether a hand is up + the support number)
+// Read support number, pending requests and the one-request approval window.
 export function getHelpStatus() {
   return http.get('/api/mesh/help');
 }
 
-// toggle the CEC hand raise (raise if down, lower if up); returns the new state
-export function toggleHand() {
-  return http.post('/api/mesh/help/toggle');
+// Approve the current request or refresh the five-minute window for one request.
+export function armSupportApproval() {
+  return http.post('/api/mesh/help/arm');
+}
+export function decideSupportRequest(technician: string, sessionId: string, approve: boolean) {
+  return http.post(`/api/mesh/help/${approve ? 'approve' : 'deny'}`, { technician, sessionId });
 }
 
 // reset this device's mesh ownership back to claim mode (forget owner + fleet).

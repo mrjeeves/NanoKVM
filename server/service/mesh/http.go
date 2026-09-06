@@ -7,6 +7,7 @@ package mesh
 // printed on a box.
 
 import (
+	"net/http"
 	"time"
 
 	"NanoKVM-Server/middleware"
@@ -99,29 +100,41 @@ func RegisterRoutes(r *gin.Engine, bridge *Bridge) {
 		rsp.OkRspWithData(c, bridge.StatusSnapshot())
 	})
 
-	// CEC "hand raise" (Ask for help). GET reports current state; the three
-	// POSTs raise / lower / toggle the hand on the cecsupport-clients mesh
-	// (see cec.go). The physical user button drives the same bridge.ToggleHand
-	// in-process; these give the web UI (and scripts) the same control.
+	// Support number, incoming requests and current access.
 	api.GET("/help", func(c *gin.Context) {
 		var rsp proto.Response
 		if bridge == nil {
 			rsp.OkRspWithData(c, HelpStatus{Enabled: false})
 			return
 		}
+		status := bridge.HelpStatus()
+		status.CanApprove = mayApproveSupport(c, bridge)
+		rsp.OkRspWithData(c, status)
+	})
+	api.POST("/help/arm", supportApprovalGate(bridge), func(c *gin.Context) {
+		var rsp proto.Response
+		if bridge == nil {
+			rsp.ErrRsp(c, -1, "mesh disabled")
+			return
+		}
+		if err := bridge.AuthorizeSupport(); err != nil {
+			rsp.ErrRsp(c, -2, err.Error())
+			return
+		}
 		rsp.OkRspWithData(c, bridge.HelpStatus())
 	})
-	api.POST("/help/raise", func(c *gin.Context) { handleHelp(c, bridge, helpRaise) })
-	api.POST("/help/lower", func(c *gin.Context) { handleHelp(c, bridge, helpLower) })
-	api.POST("/help/toggle", func(c *gin.Context) { handleHelp(c, bridge, helpToggle) })
+	api.POST("/help/approve", supportApprovalGate(bridge), func(c *gin.Context) { handleSupportDecision(c, bridge, true) })
+	api.POST("/help/deny", supportApprovalGate(bridge), func(c *gin.Context) { handleSupportDecision(c, bridge, false) })
 }
 
-// HelpStatus is the /api/mesh/help payload: whether a hand is up, this device's
+// HelpStatus is the /api/mesh/help payload: pending requests, this device's
 // dialable support number, and any live support authorisation.
 type HelpStatus struct {
-	Enabled   bool   `json:"enabled"`
-	Asking    bool   `json:"asking"`
-	SupportID string `json:"supportId"`
+	CanApprove               bool                `json:"canApprove"`
+	Enabled                  bool                `json:"enabled"`
+	Pending                  []CecSupportRequest `json:"pending"`
+	ApprovalRemainingSeconds int64               `json:"approvalRemainingSeconds"`
+	SupportID                string              `json:"supportId"`
 	// Authorised reports whether a technician currently holds a grant, and
 	// ExpiresAt is the unix second the longest-running one runs out. Together
 	// they let a viewer show what access is outstanding and how much of it is
@@ -136,21 +149,24 @@ type HelpStatus struct {
 	// authorised without a countdown rather than as no access at all.
 	Authorised bool  `json:"authorised"`
 	ExpiresAt  int64 `json:"expiresAt,omitempty"`
-	// GrantSeconds is the length of the window an answered hand-raise grants,
+	// GrantSeconds is the length of the window an approved request grants,
 	// so a viewer can say "3 hours" without hardcoding it.
 	GrantSeconds int64 `json:"grantSeconds"`
 }
 
-// HelpStatus assembles the current hand-raise snapshot.
+// HelpStatus assembles the current support snapshot.
 func (b *Bridge) HelpStatus() HelpStatus {
 	expires, authorised := b.state.LatestCecGrant(time.Now())
+	pending, remaining := b.cecSupportSnapshot(time.Now())
 	return HelpStatus{
-		Enabled:      true,
-		Asking:       b.HelpAsking(),
-		SupportID:    b.SupportID(),
-		Authorised:   authorised,
-		ExpiresAt:    unixOrZero(expires),
-		GrantSeconds: int64(cecGrantWindow / time.Second),
+		CanApprove:               true,
+		Enabled:                  true,
+		Pending:                  pending,
+		ApprovalRemainingSeconds: remaining,
+		SupportID:                b.SupportID(),
+		Authorised:               authorised,
+		ExpiresAt:                unixOrZero(expires),
+		GrantSeconds:             int64(cecGrantWindow / time.Second),
 	}
 }
 
@@ -163,33 +179,45 @@ func unixOrZero(t time.Time) int64 {
 	return t.Unix()
 }
 
-type helpAction int
+func mayApproveSupport(c *gin.Context, bridge *Bridge) bool {
+	if bridge == nil {
+		return false
+	}
+	// CheckToken already validated the local login.
+	if !middleware.IsMeshAuthed(c.Request) {
+		return true
+	}
+	peer, _ := c.Request.Context().Value(meshPeerKey{}).(string)
+	return bridge.senderMayApproveSupport(peer)
+}
 
-const (
-	helpRaise helpAction = iota
-	helpLower
-	helpToggle
-)
+func supportApprovalGate(bridge *Bridge) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if bridge != nil && !mayApproveSupport(c, bridge) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": -1, "msg": "Support approval requires the local login or the KVM owner/fleet."})
+			return
+		}
+		c.Next()
+	}
+}
 
-// handleHelp runs a hand-raise action and returns the resulting HelpStatus, so
-// a caller (web UI or button) always learns the new state in one round-trip.
-func handleHelp(c *gin.Context, bridge *Bridge, action helpAction) {
+// A decision names both authenticated technician and session, so a stale
+// browser card cannot approve a different connection attempt.
+func handleSupportDecision(c *gin.Context, bridge *Bridge, approve bool) {
 	var rsp proto.Response
 	if bridge == nil {
 		rsp.ErrRsp(c, -1, "mesh disabled")
 		return
 	}
-	var err error
-	switch action {
-	case helpRaise:
-		err = bridge.RaiseHand()
-	case helpLower:
-		err = bridge.LowerHand()
-	case helpToggle:
-		_, err = bridge.ToggleHand()
+	var request struct {
+		Technician string `json:"technician"`
+		SessionID  string `json:"sessionId"`
 	}
-	if err != nil {
-		log.Errorf("mesh: CEC hand-raise action failed: %s", err)
+	if c.ShouldBindJSON(&request) != nil || request.Technician == "" || request.SessionID == "" {
+		rsp.ErrRsp(c, -2, "technician and sessionId are required")
+		return
+	}
+	if err := bridge.DecideCecRequest(request.Technician, request.SessionID, approve); err != nil {
 		rsp.ErrRsp(c, -2, err.Error())
 		return
 	}

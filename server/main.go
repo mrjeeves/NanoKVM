@@ -135,16 +135,15 @@ func run() {
 		// shells out and bounces the USB gadget.
 		go vm.EnsureUsbNetworkForClaim(bridge.Claimed(), conf.Mesh.Home)
 
-		// Wire the physical BOOT button to the CEC hand-raise. We grab the input
+		// Wire the physical BOOT button to the CEC support approval. We grab the input
 		// node so the screen firmware's own gestures (OLED nav, WiFi hotspot)
-		// stop firing and the button does one thing — a tap raises/lowers the
-		// hand. The firmware's hold-to-reset is the one gesture worth keeping, so
+		// stop firing and the button does one thing — a tap approves the current or next support request. The firmware's hold-to-reset is the one gesture worth keeping, so
 		// we re-implement it here (the grab took it from the firmware). Non-fatal
 		// and self-disabling if the input node isn't present.
 		button.Watch(button.Config{
-			Enabled:        conf.Mesh.HandRaise.ButtonEnabled,
-			Device:         conf.Mesh.HandRaise.InputDevice,
-			KeyCode:        conf.Mesh.HandRaise.KeyCode,
+			Enabled:        conf.Mesh.SupportApproval.ButtonEnabled,
+			Device:         conf.Mesh.SupportApproval.InputDevice,
+			KeyCode:        conf.Mesh.SupportApproval.KeyCode,
 			Grab:           true,
 			OnFactoryReset: resetKvmAccount,
 		}, bridge)

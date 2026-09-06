@@ -37,8 +37,8 @@ func TestCecHelpNetworkConfigShape(t *testing.T) {
 	if cfg["kind"] != "silent" {
 		t.Errorf("kind = %v, want silent", cfg["kind"])
 	}
-	if cfg["auto_approve"] != true {
-		t.Errorf("auto_approve = %v, want true", cfg["auto_approve"])
+	if cfg["auto_approve"] != false {
+		t.Errorf("auto_approve = %v, want false", cfg["auto_approve"])
 	}
 	sig, ok := cfg["signaling"].(map[string]interface{})
 	if !ok || sig["strategy"] != "nostr" || sig["mdns"] != true {
@@ -46,24 +46,5 @@ func TestCecHelpNetworkConfigShape(t *testing.T) {
 	}
 	if _, present := cfg["topology"]; present {
 		t.Errorf("signaling-only area must carry no topology: %v", cfg["topology"])
-	}
-}
-
-func TestCecAskNetworkConfigShape(t *testing.T) {
-	// The asking room: same Silent shape under its own well-known id —
-	// membership is the whole raised-hand signal. Mirrors AllMyStuff
-	// ask_network_config.
-	cfg := cecAskNetworkConfig()
-	if cfg["id"] != CecAskNetworkID || cfg["network_id"] != CecAskNetworkID {
-		t.Errorf("network id = %v/%v, want %s", cfg["id"], cfg["network_id"], CecAskNetworkID)
-	}
-	if CecAskNetworkID == CecHelpNetworkID {
-		t.Fatal("the queue must be its own room")
-	}
-	if cfg["kind"] != "silent" {
-		t.Errorf("kind = %v, want silent", cfg["kind"])
-	}
-	if _, present := cfg["topology"]; present {
-		t.Errorf("asking room must carry no topology: %v", cfg["topology"])
 	}
 }

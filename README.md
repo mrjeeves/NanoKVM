@@ -18,12 +18,12 @@
 This fork of [sipeed/NanoKVM](https://github.com/sipeed/NanoKVM) turns the device into **CEC KVM**, a first-class appliance in the [AllMyStuff](https://allmystuff.works) ecosystem. Everything below this section is upstream Sipeed documentation and still applies.
 
 - **CEC branding** — web UI renamed CEC KVM in every locale, the CEC "critical error" mark as the favicon and login logo (`web/public/sipeed.ico` — upstream filename kept, ours bytes), and that mark reduced to a 16×16 glyph on the device OLED (`tools/logo_generator/cec/`). The palette stays AllMyStuff's (deep-violet dark theme, `#f11ea1` magenta accent, Inter font) — CEC is moving to that scheme, so the two match by design rather than by omission.
-- **Pure-Go mesh bridge** (`server/service/mesh/`) paired with a bundled [MyOwnMesh](https://myownmesh.net) daemon (Rust, pinned at `v0.3.9` in `.myownmesh-rev`; riscv64-musl build, supervised by the `S94myownmesh` init.d script).
+- **Pure-Go mesh bridge** (`server/service/mesh/`) paired with a bundled [MyOwnMesh](https://myownmesh.net) daemon (Rust, pinned at `v0.3.18` in `.myownmesh-rev`; riscv64-musl build, supervised by the `S94myownmesh` init.d script).
 - **LAN-first claiming** — an unclaimed device advertises on the mDNS-only `allmystuff-local-claim-v1` rendezvous mesh (no relays, no wall clock needed — works pre-NTP), so a fresh KVM auto-appears in the claim sheet of any AllMyStuff app on the same LAN; WAN claiming stays off unless `publicClaims: true`.
 - **Zero-login access from anywhere** — the web UI tunnels over the mesh "sites" plane (no port forwarding or VPN), and mesh roster membership *is* the authentication for mesh viewers.
 - **Firmware updates from our own channel** — the stock Sipeed update (which would clobber our mesh server build) is removed; **Settings → Update** installs our GitHub-released bundle instead. Reached over the mesh it needs no device password (mesh-roster membership authorizes it); on the LAN the normal KVM login applies. See [`docs/MESH.md`](docs/MESH.md).
 - **Full KVM-node lifecycle** — presence advertising (NodeProfile with `kvm`/`sites` capability tags), fleet membership, attach/detach to the machine it controls (renames itself `KVM-<label>`), owner-curated mesh membership, remote restart, and unclaim (factory-reset of the mesh identity).
-- **CEC hand raise** (`server/service/mesh/cec.go`) — the KVM can raise a hand on the [CEC Support](https://github.com/mrjeeves/CECSupport) help queue (a `SupportPresence` beacon on the `cecsupport-clients` mesh, exactly like a CEC customer), so a technician sees the device needs help along with its 9-digit support number. The technician who answers is **authorised for 3 hours**, not indefinitely — the window is persisted with its expiry (so a repair spanning a reboot isn't cut short, and a lapsed grant can't be forgotten back into an open one), and when it runs out any screen share, input route and tunnel they still hold is torn down. Raise/lower from the web UI's Mesh tab, the `/api/mesh/help/*` endpoints, or the **BOOT button** (`server/service/button/`; on by default, `mesh.handRaise` in `server.yaml`). The watcher takes exclusive ownership of the button (`EVIOCGRAB`), so the stock screen-firmware gestures (OLED nav, WiFi hotspot) no longer fire and the button does one thing: a **quick tap raises/lowers the hand**, while a **~10s hold still factory-resets the account** (re-implemented in the server, since the grab takes it from the firmware). The OLED still shows the mesh name.
+- **CEC support number** — share the number shown in the Mesh tab and approve the incoming request in the web UI, CECSupport, or AllMyStuff. The device button and web approval button approve the current request, or open a five-minute window for exactly one new request. Press again to refresh the window. Approval grants three hours of access; reconnects do not extend it. The countdown, pending requests and active access are shown in the web UI.
 - **usbnet internet sharing** — the KVM NATs its own uplink to the USB-tethered host (`S31usbnet`).
 
 Details in [docs/MESH.md](docs/MESH.md) · companion app: [allmystuff.works](https://allmystuff.works) · mesh tech: [myownmesh.net](https://myownmesh.net)
@@ -177,3 +177,9 @@ Please keep your pull requests small and focused to facilitate easier review and
 ## 📜 License
 
 This project is licensed under the GPL-3.0 License. See [LICENSE](LICENSE) for details.
+
+The PCIe hardware display shows the same grouped CEC support number as the apps
+and web UI. The server publishes it through the existing `mesh_name` display file,
+so an installed display app receives the number with the server update. Rebuilding
+`kvm_system` also changes the row label to `CEC`. Claiming still works through local
+discovery and the web settings; its mesh suffix is no longer the display identity.

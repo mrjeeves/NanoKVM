@@ -89,7 +89,7 @@ func advertisedTags(f *fakeDaemon, network string) ([]string, bool) {
 // only the discovery area and the asking room, so that Request was delivered to
 // nobody, cecAdmit never ran, and the technician's session sat at "requested"
 // forever — first attempt and every attempt.
-func TestRaiseHandJoinsThePrivateSessionRoom(t *testing.T) {
+func TestCecOnlineJoinsThePrivateSessionRoom(t *testing.T) {
 	f := startFakeDaemon(t)
 	b := cecBridge(t, f)
 
@@ -101,8 +101,8 @@ func TestRaiseHandJoinsThePrivateSessionRoom(t *testing.T) {
 		t.Fatalf("session room id = %q, want %d chars", want, len(cecNetworkPrefix)+9)
 	}
 
-	if err := b.RaiseHand(); err != nil {
-		t.Fatalf("RaiseHand: %v", err)
+	if err := b.CecOnline(); err != nil {
+		t.Fatalf("CecOnline: %v", err)
 	}
 
 	// The room must be joined...
@@ -110,8 +110,8 @@ func TestRaiseHandJoinsThePrivateSessionRoom(t *testing.T) {
 	if !joined[want] {
 		t.Fatalf("private session room %s was never joined; joined %v", want, joined)
 	}
-	if !joined[CecAskNetworkID] {
-		t.Errorf("asking room %s was not joined", CecAskNetworkID)
+	if joined[CecAskNetworkID] {
+		t.Errorf("retired queue %s must not be joined", CecAskNetworkID)
 	}
 
 	// ...and cec.control subscribed ON it, or the Request still reaches nobody.
@@ -158,8 +158,8 @@ func TestSessionRoomIsJoinedAsAFullParticipant(t *testing.T) {
 	b := cecBridge(t, f)
 	room := b.cecSessionNetworkID()
 
-	if err := b.RaiseHand(); err != nil {
-		t.Fatalf("RaiseHand: %v", err)
+	if err := b.CecOnline(); err != nil {
+		t.Fatalf("CecOnline: %v", err)
 	}
 
 	// The capability advert — the thing the technician reads to decide we are
@@ -191,11 +191,11 @@ func TestSessionRoomIsJoinedAsAFullParticipant(t *testing.T) {
 // daemon keeps redialing this KVM for the whole 3-hour grant — across the
 // reboot an update causes. The grant survives that (it is persisted, and
 // cecAdmit re-admits with no human); the transport did not, because the rooms
-// were only ever joined by RaiseHand and a rebooted KVM comes back with its
+// were only ever joined by CecOnline and a rebooted KVM comes back with its
 // hand down. Dial-by-number had the same hole: it resolves digits against the
 // support area's membership, so a rebooted KVM was un-diallable until someone
 // physically pressed its button — the one thing a remote customer cannot do.
-func TestCecOnlineTakesResidenceWithTheHandDown(t *testing.T) {
+func TestCecOnlineNeedsNoApprovalWindow(t *testing.T) {
 	f := startFakeDaemon(t)
 	b := cecBridge(t, f)
 	room := b.cecSessionNetworkID()
@@ -216,9 +216,6 @@ func TestCecOnlineTakesResidenceWithTheHandDown(t *testing.T) {
 	// must never put this KVM in the queue.
 	if joined[CecAskNetworkID] {
 		t.Error("bring-up joined the asking room — that raises the hand on every boot")
-	}
-	if b.HelpAsking() {
-		t.Error("bring-up left the hand up")
 	}
 
 	// A technician who reconnects on a live grant needs the same full
@@ -290,7 +287,7 @@ func TestCecResidenceIsRedoneOnEachDaemonConnection(t *testing.T) {
 // mutable config, and continue with the new event stream's subscriptions. This
 // is the field failure that surfaced as "cec-support-clients is already in use"
 // when a user tried to raise the KVM's hand after a restart.
-func TestRaiseHandReusesDaemonRestoredCecRooms(t *testing.T) {
+func TestCecOnlineReusesDaemonRestoredCecRooms(t *testing.T) {
 	f := startFakeDaemon(t)
 	b := cecBridge(t, f)
 	room := b.cecSessionNetworkID()
@@ -298,11 +295,8 @@ func TestRaiseHandReusesDaemonRestoredCecRooms(t *testing.T) {
 	f.respondWith("network_add", `{"ok":false,"error":"config id already in use"}`)
 	f.respondWith("networks_list", networksListLine(CecHelpNetworkID, room, CecAskNetworkID))
 
-	if err := b.RaiseHand(); err != nil {
-		t.Fatalf("RaiseHand with restored rooms: %v", err)
-	}
-	if !b.HelpAsking() {
-		t.Fatal("restored asking-room join did not raise the hand")
+	if err := b.CecOnline(); err != nil {
+		t.Fatalf("CecOnline with restored rooms: %v", err)
 	}
 	planes := subscribedChannels(f)[room]
 	for _, ch := range []string{ChannelPresence, ChannelControl, ChannelMedia, CecChannelControl} {
@@ -310,8 +304,8 @@ func TestRaiseHandReusesDaemonRestoredCecRooms(t *testing.T) {
 			t.Errorf("channel %q not re-subscribed on restored room %s; got %v", ch, room, planes)
 		}
 	}
-	if got := len(f.requests("network_update")); got != 3 {
-		t.Errorf("restored CEC rooms refreshed %d times, want 3", got)
+	if got := len(f.requests("network_update")); got != 2 {
+		t.Errorf("restored CEC rooms refreshed %d times, want 2", got)
 	}
 }
 
@@ -343,7 +337,6 @@ func TestUnclaimedShedKeepsTheCecRooms(t *testing.T) {
 	b := connectedBridge(t, f)
 	b.nodeID = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
 	room := b.cecSessionNetworkID()
-	b.help.asking = true // hand up, so the asking room is not stale
 	f.respondWith("networks_list", networksListLine(
 		b.joiningMeshID(), CecHelpNetworkID, CecAskNetworkID, room, "den-site-mesh"))
 
@@ -356,10 +349,13 @@ func TestUnclaimedShedKeepsTheCecRooms(t *testing.T) {
 		id, _ := req["network"].(string)
 		removed[id] = true
 	}
+	if !removed[CecAskNetworkID] {
+		t.Error("retired help queue was not removed")
+	}
 	if !removed["den-site-mesh"] {
 		t.Errorf("a genuinely stale mesh was kept: %v", removed)
 	}
-	for _, id := range []string{CecHelpNetworkID, CecAskNetworkID, room} {
+	for _, id := range []string{CecHelpNetworkID, room} {
 		if removed[id] {
 			t.Errorf("CEC room %s was shed as unclaimed leftovers", id)
 		}

@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Divider, Popconfirm, Tag, Typography } from 'antd';
 import { LoaderCircleIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import {
+  armSupportApproval,
+  decideSupportRequest,
   getHelpStatus,
   getMeshStatus,
   rotateClaimCode,
-  toggleHand,
   unclaimDevice
 } from '@/api/mesh.ts';
 
@@ -18,8 +19,18 @@ type MeshMembership = {
 };
 
 type HelpStatus = {
+  canApprove?: boolean;
   enabled: boolean;
-  asking: boolean;
+  authorised: boolean;
+  expiresAt?: number;
+  approvalRemainingSeconds: number;
+  pending: Array<{
+    technician: string;
+    sessionId: string;
+    agentName: string;
+    verificationCode: string;
+  }>;
+  grantSeconds: number;
   supportId: string;
 };
 
@@ -46,7 +57,24 @@ export const Mesh = () => {
   const [help, setHelp] = useState<HelpStatus>();
   const [errMsg, setErrMsg] = useState('');
   const [rotating, setRotating] = useState(false);
-  const [toggling, setToggling] = useState(false);
+  const revision = useRef(0);
+  const mutating = useRef(false);
+  const [deciding, setDeciding] = useState(false);
+  const [remaining, setRemaining] = useState(0);
+  const [observedAt, setObservedAt] = useState(performance.now());
+  const [now, setNow] = useState(performance.now());
+  const seconds = Math.max(0, Math.ceil(remaining - Math.max(0, now - observedAt) / 1000));
+  const countdown = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  function updateHelp(next: HelpStatus) {
+    setHelp(next);
+    setRemaining(next.approvalRemainingSeconds ?? 0);
+    setObservedAt(performance.now());
+    setNow(performance.now());
+  }
+  useEffect(() => {
+    const timer = setInterval(() => setNow(performance.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const [resetting, setResetting] = useState(false);
 
   function resetDevice() {
@@ -67,22 +95,25 @@ export const Mesh = () => {
       .finally(() => setResetting(false));
   }
 
-  function toggleHelp() {
-    if (toggling) return;
-    setToggling(true);
-    toggleHand()
+  function decide(action: () => ReturnType<typeof armSupportApproval>) {
+    if (mutating.current) return;
+    mutating.current = true;
+    revision.current++;
+    setDeciding(true);
+    action()
       .then((rsp) => {
         if (rsp.code !== 0) {
           setErrMsg(rsp.msg);
           return;
         }
         setErrMsg('');
-        setHelp(rsp.data);
+        updateHelp(rsp.data);
       })
-      .catch((err) => {
-        setErrMsg(err?.message || t('settings.mesh.queryFailed'));
-      })
-      .finally(() => setToggling(false));
+      .catch((err) => setErrMsg(err?.message || t('settings.mesh.queryFailed')))
+      .finally(() => {
+        mutating.current = false;
+        setDeciding(false);
+      });
   }
 
   function rotateCode() {
@@ -120,13 +151,23 @@ export const Mesh = () => {
         });
     }
 
+    let helpReading = false;
+    let disposed = false;
     function getHelp() {
+      if (helpReading || mutating.current) return;
+      helpReading = true;
+      const version = revision.current;
       getHelpStatus()
         .then((rsp) => {
-          if (rsp.code === 0) setHelp(rsp.data);
+          if (disposed || revision.current !== version) return;
+          if (rsp.code === 0) updateHelp(rsp.data);
+          else setHelp(undefined);
         })
         .catch(() => {
-          /* non-fatal: the hand-raise section just stays hidden */
+          if (!disposed && revision.current === version) setHelp(undefined);
+        })
+        .finally(() => {
+          helpReading = false;
         });
     }
 
@@ -137,7 +178,10 @@ export const Mesh = () => {
       getStatus();
       getHelp();
     }, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+    };
   }, [t]);
 
   const attached = status?.attachedLabel || status?.attachedTo;
@@ -177,35 +221,76 @@ export const Mesh = () => {
           </div>
           <Divider className="opacity-50" />
 
-          {/* CEC hand raise (Ask for help) */}
+          {/* Support-number requests require a decision or a single-use approval window. */}
           {help?.enabled && (
             <>
-              <div className="text-neutral-400">{t('settings.mesh.handRaise')}</div>
+              <div className="text-neutral-400">{t('settings.mesh.supportNumber')}</div>
               <div className="mt-5 flex w-full flex-col items-center space-y-3 rounded-lg bg-neutral-800/50 px-5 py-6">
-                {help.supportId && (
-                  <div className="flex w-full items-center justify-between">
-                    <span className="text-neutral-400">{t('settings.mesh.supportNumber')}</span>
-                    <Typography.Text className="font-mono text-lg" copyable>
-                      {help.supportId}
-                    </Typography.Text>
-                  </div>
-                )}
-                <span
-                  className={`text-center text-sm ${help.asking ? 'text-green-500' : 'text-neutral-400'}`}
-                >
-                  {help.asking ? t('settings.mesh.handRaised') : t('settings.mesh.handDown')}
+                <Typography.Text className="font-mono text-3xl" copyable={!!help.supportId}>
+                  {help.supportId?.replace(/^(\d{3})(\d{3})(\d{3})$/, '$1 $2 $3') || '…'}
+                </Typography.Text>
+                <p className="text-center text-sm text-neutral-400">
+                  {t('settings.mesh.supportDesc')}
+                </p>
+                <span role="status" className={seconds > 0 ? 'text-green-500' : 'text-neutral-400'}>
+                  {seconds > 0
+                    ? t('settings.mesh.approvalOpen', { time: countdown })
+                    : t('settings.mesh.approvalClosed')}
                 </span>
                 <Button
-                  type={help.asking ? 'default' : 'primary'}
-                  danger={help.asking}
-                  loading={toggling}
-                  onClick={toggleHelp}
+                  type="primary"
+                  loading={deciding}
+                  disabled={help.canApprove === false}
+                  onClick={() => decide(armSupportApproval)}
                 >
-                  {help.asking ? t('settings.mesh.lowerHand') : t('settings.mesh.raiseHand')}
+                  {seconds > 0
+                    ? t('settings.mesh.refreshApproval')
+                    : t('settings.mesh.armApproval')}
                 </Button>
-                <span className="text-center text-xs text-neutral-500">
-                  {t('settings.mesh.handRaiseDesc')}
-                </span>
+                <p className="text-center text-xs text-neutral-500">
+                  {t('settings.mesh.approvalDesc')}
+                </p>
+                {help.canApprove === false && (
+                  <p className="text-center text-xs text-neutral-400">
+                    {t('settings.mesh.approvalOwnerOnly')}
+                  </p>
+                )}
+                {help.authorised && <Tag color="green">{t('settings.mesh.accessApproved')}</Tag>}
+                {(help.pending ?? []).map((request) => (
+                  <div
+                    key={`${request.technician}:${request.sessionId}`}
+                    className="w-full space-y-2 rounded border border-neutral-600 p-3"
+                  >
+                    <strong>{request.agentName || t('settings.mesh.technician')}</strong>
+                    <p>{t('settings.mesh.requestDesc')}</p>
+                    <p>
+                      {t('settings.mesh.verifyCode')} <code>{request.verificationCode}</code>
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        type="primary"
+                        disabled={deciding || help.canApprove === false}
+                        onClick={() =>
+                          decide(() =>
+                            decideSupportRequest(request.technician, request.sessionId, true)
+                          )
+                        }
+                      >
+                        {t('settings.mesh.approveRequest')}
+                      </Button>
+                      <Button
+                        disabled={deciding || help.canApprove === false}
+                        onClick={() =>
+                          decide(() =>
+                            decideSupportRequest(request.technician, request.sessionId, false)
+                          )
+                        }
+                      >
+                        {t('settings.mesh.denyRequest')}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
               <Divider className="opacity-50" />
             </>
