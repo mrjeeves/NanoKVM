@@ -51,10 +51,11 @@ const (
 	// waits far longer before touching anything.
 	udcDeadDebounceUnseen = 3 * time.Minute
 
-	// Floor between recovery attempts, doubling up to udcRecoveryBackoffMax
-	// while the link stays dead, and reset the moment it comes back.
+	// Bounds between attempts. Only sustained health
+	// resets this: a single successful enumeration must not create a reset loop.
 	udcRecoveryBackoffMin = 30 * time.Second
-	udcRecoveryBackoffMax = 15 * time.Minute
+	udcRecoveryBackoffMax = 24 * time.Hour
+	udcHealthyDebounce    = 30 * time.Second
 
 	// A media change legitimately unbinds and rebinds the gadget. Ignore the
 	// link for this long after one so the watchdog never races the mount path.
@@ -79,6 +80,12 @@ const udcStateConfigured = "configured"
 const udcStateDetached = "not attached"
 
 var (
+	udcRecoveryBackoffs = [...]time.Duration{
+		udcRecoveryBackoffMin, time.Minute, 3 * time.Minute, 5 * time.Minute,
+		30 * time.Minute, time.Hour, 6 * time.Hour, 12 * time.Hour,
+		udcRecoveryBackoffMax,
+	}
+
 	// Overridable for tests; the real paths live under /sys.
 	udcClassDir    = usbUDCClass
 	udcReadFile    = os.ReadFile
@@ -114,14 +121,16 @@ func usbGadgetSettling() bool {
 // decision logic (shouldRecover) is a pure function of observed state and can
 // be tested without sysfs, sleeps, or a gadget.
 type udcWatchdog struct {
-	// sawConfigured records that the link worked at least once since the last
-	// recovery. It is what separates "this died" from "this was never alive",
+	// sawConfigured records that the link worked at least once in this process.
+	// It is what separates "this died" from "this was never alive",
 	// and it selects which debounce applies.
 	sawConfigured bool
 
-	// deadSince is when the link was first seen detached in the current run of
-	// detached samples; zero when the link is not currently detached.
-	deadSince time.Time
+	// deadSince covers a continuous run of known unconfigured states, even
+	// when a disconnect happened between polls. Suspended/unreadable states
+	// break that evidence; neither proves an enumeration failure.
+	deadSince       time.Time
+	configuredSince time.Time
 
 	// nextAttemptAfter throttles escalation, and attempt drives the backoff.
 	nextAttemptAfter time.Time
@@ -172,17 +181,12 @@ func (w *udcWatchdog) poll() {
 		return
 	}
 
-	w.attempt++
-	backoff := udcRecoveryBackoffMin << (w.attempt - 1)
-	if backoff > udcRecoveryBackoffMax || backoff <= 0 {
-		backoff = udcRecoveryBackoffMax
-	}
-	w.nextAttemptAfter = now.Add(backoff)
+	backoff := w.recordAttempt(now)
 
 	switch action {
 	case udcActionSoft:
-		log.Warnf("usb watchdog: link has read %q for %s (attempt %d) — rebinding the gadget",
-			udcStateDetached, now.Sub(w.deadSince).Truncate(time.Second), w.attempt)
+		log.Warnf("usb watchdog: unconfigured for %s, state %q (attempt %d, next retry no sooner than %s) — rebinding the gadget",
+			now.Sub(w.deadSince).Truncate(time.Second), state, w.attempt, backoff)
 		if err := udcRecoverSoft(); err != nil {
 			log.Errorf("usb watchdog: rebind failed: %s", err)
 		}
@@ -222,24 +226,36 @@ func (w *udcWatchdog) observe(state string, err error) {
 		w.lastState = state
 	}
 
+	if state != udcStateConfigured {
+		w.configuredSince = time.Time{}
+	}
 	switch state {
 	case udcStateConfigured:
-		if !w.deadSince.IsZero() || w.attempt > 0 {
+		if !w.deadSince.IsZero() {
 			log.Infof("usb watchdog: link healthy again")
 		}
 		w.sawConfigured = true
 		w.deadSince = time.Time{}
-		w.attempt = 0
-		w.nextAttemptAfter = time.Time{}
-	case udcStateDetached:
+		now := udcNow()
+		if w.configuredSince.IsZero() {
+			w.configuredSince = now
+		}
+		if now.Sub(w.configuredSince) >= udcHealthyDebounce {
+			if w.attempt > 0 {
+				log.Infof("usb watchdog: link stable; recovery backoff reset")
+			}
+			w.attempt = 0
+			w.nextAttemptAfter = time.Time{}
+		}
+	case udcStateDetached, "attached", "powered", "reconnecting", "unauthenticated", "default", "addressed":
 		if w.deadSince.IsZero() {
 			w.deadSince = udcNow()
 		}
 	default:
-		// Mid-enumeration (attached / powered / default / addressed) or
-		// unavailable. Not healthy, but not evidence of a dead link either —
-		// leave any running dead-timer alone rather than restarting it, so a
-		// link flapping through these states still eventually escalates.
+		// Suspend is normal USB power management. Missing/unknown readings
+		// cannot prove failure either. Keep the retry budget, but require a
+		// fresh debounce if a known failure state is subsequently observed.
+		w.deadSince = time.Time{}
 	}
 }
 
@@ -269,14 +285,29 @@ func (w *udcWatchdog) shouldRecover(now time.Time, faults int, faultsSince time.
 	if !w.nextAttemptAfter.IsZero() && now.Before(w.nextAttemptAfter) {
 		return udcActionNone
 	}
-	// Rebinding is the cheap, targeted fix and it resolves the common case
-	// (a stale session after the host went away). The PHY reset tears the
-	// controller off its driver and is reserved for a link that did not come
-	// back from one, because it is far more disruptive.
-	if w.attempt >= 2 {
+	// Two rebinds, then ONE platform-specific hard recovery per outage.
+	// If rebuilding did not help, keep trying only rebinds at the increasing
+	// interval. Never repeatedly rebuild a gadget connected to an off host.
+	if w.attempt == 2 {
 		return udcActionHard
 	}
 	return udcActionSoft
+}
+
+// Explicit retry ladder, saturating at daily rebinds. The counter is bounded
+// too, so even an indefinitely disconnected host cannot overflow the schedule.
+// No recovery path here reboots the device.
+func (w *udcWatchdog) recordAttempt(now time.Time) time.Duration {
+	index := w.attempt
+	if index >= len(udcRecoveryBackoffs) {
+		index = len(udcRecoveryBackoffs) - 1
+	}
+	backoff := udcRecoveryBackoffs[index]
+	if w.attempt < len(udcRecoveryBackoffs) {
+		w.attempt++
+	}
+	w.nextAttemptAfter = now.Add(backoff)
+	return backoff
 }
 
 // readUDCState returns the link state of the first gadget controller. The

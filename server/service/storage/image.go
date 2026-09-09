@@ -253,8 +253,8 @@ func resetUSBGadget() error {
 	if err != nil {
 		return err
 	}
-	if err := usbWriteFile(usbGadgetUDC, []byte("\n"), 0o666); err != nil {
-		return fmt.Errorf("unbind USB gadget: %w", err)
+	if err := unbindUSBGadget(); err != nil {
+		return err
 	}
 	if err := switchUSBToDeviceRole(); err != nil {
 		return err
