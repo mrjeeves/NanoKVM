@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -182,6 +183,8 @@ func TestWatchdogResetsAfterRecovery(t *testing.T) {
 	w.nextAttemptAfter = base.Add(time.Hour)
 
 	w.observe(udcStateConfigured, nil)
+	udcNow = func() time.Time { return base.Add(udcHealthyDebounce) }
+	w.observe(udcStateConfigured, nil)
 	if !w.deadSince.IsZero() || w.attempt != 0 || !w.nextAttemptAfter.IsZero() {
 		t.Fatalf("a recovered link left stale state: deadSince=%v attempt=%d next=%v",
 			w.deadSince, w.attempt, w.nextAttemptAfter)
@@ -262,8 +265,163 @@ func TestReadUDCStateReadsTheStateFile(t *testing.T) {
 	}
 }
 
-// A device with no gadget controller at all must be reported as an error, not
-// silently treated as a healthy or a dead link.
+// Enumeration may stall without a sampled disconnect (polling is only every
+// two seconds). Every known pre-configuration state must start the timer.
+func TestWatchdogRecoversEnumerationWithoutDetachedSample(t *testing.T) {
+	for _, state := range []string{"attached", "powered", "reconnecting", "unauthenticated", "default", "addressed"} {
+		for _, seen := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/seen=%t", state, seen), func(t *testing.T) {
+				now := base
+				udcNow = func() time.Time { return now }
+				defer func() { udcNow = time.Now }()
+				w := newTestWatchdog()
+				if seen {
+					w.observe(udcStateConfigured, nil)
+				}
+				w.observe(state, nil)
+				debounce := udcDeadDebounceUnseen
+				if seen {
+					debounce = udcDeadDebounceSeen
+				}
+				now = base.Add(debounce - time.Second)
+				w.observe(state, nil)
+				if a := w.shouldRecover(now, 0, time.Time{}); a != udcActionNone {
+					t.Fatalf("reset before debounce: %v", a)
+				}
+				now = base.Add(debounce)
+				w.observe(state, nil)
+				if a := w.shouldRecover(now, 0, time.Time{}); a != udcActionSoft {
+					t.Fatalf("stalled enumeration not recovered: %v", a)
+				}
+				w.attempt = 2
+				if a := w.shouldRecover(now, 0, time.Time{}); a != udcActionHard {
+					t.Fatalf("stalled enumeration did not escalate: %v", a)
+				}
+			})
+		}
+	}
+}
+
+func TestWatchdogDoesNotRecoverSuspendOrUnknownState(t *testing.T) {
+	for _, state := range []string{"suspended", "unavailable", "", "future-state"} {
+		t.Run(state, func(t *testing.T) {
+			now := base
+			udcNow = func() time.Time { return now }
+			defer func() { udcNow = time.Now }()
+			w := newTestWatchdog()
+			w.observe(udcStateConfigured, nil)
+			w.observe(udcStateDetached, nil)
+			now = base.Add(time.Hour)
+			w.observe(state, nil)
+			if a := w.shouldRecover(now, udcHidFaultThreshold, base); a != udcActionNone {
+				t.Fatalf("reset during %q: %v", state, a)
+			}
+			// An unreadable/suspended interval must not count as evidence of
+			// a continuous enumeration failure when samples resume.
+			w.observe("addressed", nil)
+			if a := w.shouldRecover(now, 0, time.Time{}); a != udcActionNone {
+				t.Fatalf("stale failure timer survived %q: %v", state, a)
+			}
+		})
+	}
+}
+
+func TestWatchdogReadErrorClearsFailureEvidence(t *testing.T) {
+	now := base
+	udcNow = func() time.Time { return now }
+	defer func() { udcNow = time.Now }()
+	w := newTestWatchdog()
+	w.observe(udcStateConfigured, nil)
+	w.observe(udcStateDetached, nil)
+	now = base.Add(time.Hour)
+	w.observe("", os.ErrNotExist)
+	if a := w.shouldRecover(now, 0, time.Time{}); a != udcActionNone {
+		t.Fatalf("acted on unreadable controller state: %v", a)
+	}
+}
+
+func TestWatchdogAllowsNormalEnumerationAndResume(t *testing.T) {
+	w := newTestWatchdog()
+	actions := feed(w, []struct {
+		at    time.Duration
+		state string
+	}{
+		{0, udcStateConfigured},
+		{time.Second, "default"},
+		{2 * time.Second, "addressed"},
+		{3 * time.Second, udcStateConfigured},
+		{4 * time.Second, "suspended"},
+		{time.Hour, "suspended"},
+		{time.Hour + time.Second, udcStateConfigured},
+	})
+	for i, a := range actions {
+		if a != udcActionNone {
+			t.Fatalf("reset healthy enumeration/resume at sample %d: %v", i, a)
+		}
+	}
+}
+
+func TestWatchdogRetryLadderAndSingleHardRecovery(t *testing.T) {
+	now := base
+	udcNow = func() time.Time { return now }
+	defer func() { udcNow = time.Now }()
+	w := newTestWatchdog()
+	w.observe(udcStateConfigured, nil)
+	w.observe("default", nil)
+	now = now.Add(udcDeadDebounceSeen)
+	wantDelays := []time.Duration{
+		30 * time.Second, time.Minute, 3 * time.Minute, 5 * time.Minute,
+		30 * time.Minute, time.Hour, 6 * time.Hour, 12 * time.Hour,
+		24 * time.Hour, 24 * time.Hour, 24 * time.Hour,
+	}
+	for i, wantDelay := range wantDelays {
+		wantAction := udcActionSoft
+		if i == 2 {
+			wantAction = udcActionHard
+		}
+		if action := w.shouldRecover(now, 0, time.Time{}); action != wantAction {
+			t.Fatalf("attempt %d: action %v, want %v", i+1, action, wantAction)
+		}
+		if delay := w.recordAttempt(now); delay != wantDelay {
+			t.Fatalf("attempt %d: delay %s, want %s", i+1, delay, wantDelay)
+		}
+		now = now.Add(wantDelay)
+		if action := w.shouldRecover(now.Add(-time.Second), 0, time.Time{}); action != udcActionNone {
+			t.Fatalf("attempt %d: ignored backoff", i+1)
+		}
+	}
+	if w.attempt != len(udcRecoveryBackoffs) {
+		t.Fatalf("attempt counter did not saturate: %d", w.attempt)
+	}
+}
+
+func TestWatchdogBriefConfigurationDoesNotRestartEscalation(t *testing.T) {
+	now := base
+	udcNow = func() time.Time { return now }
+	defer func() { udcNow = time.Now }()
+	w := newTestWatchdog()
+	w.attempt = len(udcRecoveryBackoffs)
+	w.nextAttemptAfter = base.Add(24 * time.Hour)
+	w.observe(udcStateConfigured, nil)
+	now = now.Add(udcHealthyDebounce - time.Second)
+	w.observe(udcStateConfigured, nil)
+	w.observe("addressed", nil)
+	if w.attempt != len(udcRecoveryBackoffs) || !w.nextAttemptAfter.Equal(base.Add(24*time.Hour)) {
+		t.Fatal("brief configuration reset the retry ladder")
+	}
+	now = base.Add(time.Hour)
+	if a := w.shouldRecover(now, 0, time.Time{}); a != udcActionNone {
+		t.Fatalf("brief configuration bypassed daily backoff: %v", a)
+	}
+	w.observe(udcStateConfigured, nil)
+	now = now.Add(udcHealthyDebounce)
+	w.observe(udcStateConfigured, nil)
+	if w.attempt != 0 || !w.nextAttemptAfter.IsZero() {
+		t.Fatal("sustained configuration did not re-arm recovery")
+	}
+}
+
+// A device with no gadget controller at all must be reported as an error.
 func TestReadUDCStateWithNoController(t *testing.T) {
 	orig := udcClassDir
 	udcClassDir = t.TempDir()
